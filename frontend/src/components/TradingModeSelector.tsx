@@ -1,0 +1,133 @@
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
+
+interface ModeInfo {
+  display_name: string; description: string; dte_range: string;
+  risk_per_trade: string; requires_monitoring: boolean;
+  monitoring_warning: string; ui_color: string; is_active: boolean;
+}
+
+const COLOR: Record<string, string> = {
+  green: "var(--green)", blue: "var(--cyan)", orange: "var(--orange)", red: "var(--red)",
+};
+
+export default function TradingModeSelector() {
+  const [modes, setModes]         = useState<Record<string, ModeInfo>>({});
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [warning, setWarning]     = useState<{ mode: string; text: string } | null>(null);
+  const [message, setMessage]     = useState<{ text: string; ok: boolean } | null>(null);
+
+  const load = async () => {
+    const d = await (api as any).getAllModes() as Record<string, ModeInfo>;
+    setModes(d);
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleSelect = async (key: string, info: ModeInfo) => {
+    if (info.is_active || switching) return;
+    if (key === "scalper") { setWarning({ mode: key, text: info.monitoring_warning }); return; }
+    await activate(key, false);
+  };
+
+  const activate = async (key: string, confirmed: boolean) => {
+    setSwitching(key); setMessage(null);
+    try {
+      await (api as any).setTradingMode({ mode: key, confirmed });
+      setMessage({ text: `Switched to ${modes[key]?.display_name}. Takes effect on next signal cycle.`, ok: true });
+      await load();
+    } catch {
+      setMessage({ text: "Failed to switch mode.", ok: false });
+    } finally { setSwitching(null); setWarning(null); }
+  };
+
+  const ORDER = ["conservative","balanced","aggressive","scalper"];
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+        {ORDER.map(key => {
+          const info = modes[key]; if (!info) return null;
+          const color = COLOR[info.ui_color] || "var(--cyan)";
+          const active = info.is_active;
+          return (
+            <button key={key} onClick={() => handleSelect(key, info)}
+              disabled={!!switching}
+              style={{
+                textAlign: "left", padding: 14, cursor: active ? "default" : "pointer",
+                background: active ? `${color}12` : "var(--bg-3)",
+                border: `1px solid ${active ? color + "50" : "var(--line-dim)"}`,
+                borderLeft: `2px solid ${active ? color : "transparent"}`,
+                transition: "all 0.12s",
+              }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 600, color: active ? color : "var(--ink)" }}>
+                  {info.display_name.toUpperCase()}
+                </span>
+                {active && (
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+                    background: `${color}20`, color, border: `1px solid ${color}40` }}>
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginBottom: 6 }}>
+                {info.dte_range}
+              </div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", lineHeight: 1.6, marginBottom: 8 }}>
+                {info.description}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+                  border: "1px solid var(--line-dim)", color: "var(--ink-dim)" }}>
+                  {info.risk_per_trade}/TRADE
+                </span>
+                {info.requires_monitoring && (
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+                    border: "1px solid rgba(239,68,68,0.4)", color: "var(--red)" }}>
+                    ⚠ MONITOR
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {message && (
+        <div style={{ padding: "10px 14px", marginBottom: 10,
+          background: message.ok ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+          border: `1px solid ${message.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+          fontFamily: "var(--mono)", fontSize: 11,
+          color: message.ok ? "var(--green)" : "var(--red)" }}>
+          {message.text}
+        </div>
+      )}
+
+      {warning && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+        }}>
+          <div style={{ background: "var(--bg-2)", border: "1px solid rgba(239,68,68,0.5)", maxWidth: 440, width: "100%", padding: 24 }}>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)", fontWeight: 600, marginBottom: 14, letterSpacing: "0.1em" }}>
+              ⚡ SCALPER MODE WARNING
+            </div>
+            <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", padding: 14, marginBottom: 16 }}>
+              <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", whiteSpace: "pre-line", lineHeight: 1.7 }}>
+                {warning.text}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="btn-t" onClick={() => setWarning(null)} style={{ flex: 1 }}>
+                CANCEL
+              </button>
+              <button className="btn-t danger" onClick={() => activate(warning.mode, true)} style={{ flex: 1 }}>
+                CONFIRM SCALPER
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

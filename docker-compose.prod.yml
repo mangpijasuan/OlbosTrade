@@ -1,0 +1,100 @@
+# Production Docker Compose — DigitalOcean Droplet
+#
+# Differences from docker-compose.yml (local dev):
+#   - postgres and redis are REMOVED — use DO Managed Database + Redis
+#   - No --reload flag on uvicorn (production mode)
+#   - Nginx reverse proxy added (handles SSL termination)
+#   - Resource limits set (prevents OOM on $24/mo droplet)
+#   - Restart policy: always (survives droplet reboots)
+#   - No volume mounts of source code (image is the source of truth)
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+
+version: "3.11"
+
+services:
+
+  backend:
+    image: registry.digitalocean.com/${DO_REGISTRY_NAME}/olbosquant-backend:${IMAGE_TAG:-latest}
+    container_name: olbosquant_backend
+    restart: always
+    env_file:
+      - .env.prod
+    ports:
+      - "8000:8000"
+    volumes:
+      - ml_models:/app/ml/model_registry    # persist trained models
+      - app_logs:/app/logs                   # persist logs
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: olbosquant_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/olbosquant.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: olbosquant_certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Renews SSL cert every 12h — only acts if cert expires within 30 days
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+
+  frontend:
+    image: registry.digitalocean.com/${DO_REGISTRY_NAME}/olbosquant-frontend:${IMAGE_TAG:-latest}
+    container_name: olbosquant_frontend
+    restart: always
+    expose:
+      - "3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  ml_models:
+  app_logs:
+  certbot_certs:
+  certbot_www:
