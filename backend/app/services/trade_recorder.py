@@ -94,7 +94,18 @@ class TradeRecorder:
                     )
                     session.add(trade)
 
-                    # Journal entry created separately after trade is committed
+            # ── JournalEntry stub (separate transaction so FK is satisfied) ──
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    journal = JournalEntry(
+                        trade_id=trade_id,
+                        pre_trade_thesis="",
+                        confidence_level=3,
+                        market_context=regime or "",
+                        tags=[],
+                        mistake_tags=[],
+                    )
+                    session.add(journal)
 
             logger.info(
                 "Trade recorded: %s %s %s strike=%.0f/%.0f "
