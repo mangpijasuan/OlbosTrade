@@ -253,22 +253,21 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             # Record to DB
             try:
                 from app.services.trade_recorder import trade_recorder
+                from datetime import date
                 await trade_recorder.record_fill(
-                    symbol=ticker,
                     strategy="equity",
-                    option_type=None,
-                    short_strike=None,
-                    long_strike=None,
-                    expiration=None,
-                    contracts=shares,
+                    underlying=ticker,
+                    option_type="equity",
+                    short_strike=trade_plan.get("entry_price") or 0,
+                    long_strike=trade_plan.get("stop_price") or 0,
+                    expiration=date.today(),
+                    quantity=shares,
                     entry_credit=trade_plan.get("entry_price") or 0,
-                    spread_width=0,
-                    order_id=result.order_id,
                     signal_score=signal.get("signal_score", 0),
                     iv_rank=signal.get("iv_rank", 0),
                     regime=signal.get("regime", "unknown"),
-                    trading_mode=signal.get("trading_mode", "autopilot"),
-                    notes=f"{action} {shares} shares via {approved_by}",
+                    trading_mode=approved_by,
+                    dispatch_id=result.order_id or signal.get("id", ""),
                 )
             except Exception as _rec_exc:
                 logger.warning("Failed to record trade to DB: %s", _rec_exc)
@@ -336,23 +335,21 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             # Record to DB
             try:
                 from app.services.trade_recorder import trade_recorder
-                from datetime import date
                 await trade_recorder.record_fill(
-                    symbol=ticker,
                     strategy=strategy,
+                    underlying=ticker,
                     option_type=opt_type,
                     short_strike=float(short_str),
                     long_strike=float(long_str),
                     expiration=expiry_date,
-                    contracts=1,
+                    quantity=1,
                     entry_credit=float(credit),
                     spread_width=abs(float(short_str) - float(long_str)),
-                    order_id=result.order_id,
                     signal_score=signal.get("signal_score", 0),
                     iv_rank=signal.get("iv_rank", 0),
                     regime=signal.get("regime", "unknown"),
-                    trading_mode=signal.get("trading_mode", "autopilot"),
-                    notes=f"{strategy} via {approved_by}",
+                    trading_mode=approved_by,
+                    dispatch_id=result.order_id or signal.get("id", ""),
                 )
             except Exception as _rec_exc:
                 logger.warning("Failed to record options trade to DB: %s", _rec_exc)

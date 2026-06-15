@@ -78,47 +78,23 @@ class TradeRecorder:
                         id=trade_id,
                         strategy=strategy,
                         underlying=underlying,
-                        option_type=option_type,
-                        short_strike=Decimal(str(short_strike)),
-                        long_strike=Decimal(str(long_strike)),
-                        expiration_date=expiration,
-                        quantity=quantity,
+                        spread_type=option_type or "equity",
+                        short_strike=Decimal(str(short_strike or 0)),
+                        long_strike=Decimal(str(long_strike or 0)),
+                        expiration=expiration,
                         credit_received=Decimal(str(round(entry_credit, 4))),
-                        cost_to_close=None,           # filled on exit
-                        pnl=None,                     # filled on exit
+                        cost_to_close=None,
+                        pnl=None,
                         pnl_pct=None,
                         status="open",
                         entry_date=datetime.now(timezone.utc),
                         exit_date=None,
                         exit_reason=None,
                         signal_score=Decimal(str(round(signal_score, 4))),
-                        trading_mode_at_entry=trading_mode,
                     )
                     session.add(trade)
 
-                    # ── JournalEntry stub ─────────────────────────────────────
-                    # Pre-populate all mechanical fields.
-                    # Human fields (thesis, notes, tags) start empty —
-                    # the trader fills them in via the Journal UI.
-                    journal = JournalEntry(
-                        id=uuid.uuid4(),
-                        trade_id=trade_id,
-                        # Auto-populated mechanical context
-                        pre_trade_thesis=None,   # trader fills in
-                        confidence_level=None,   # trader fills in
-                        market_context=(
-                            f"IV Rank: {iv_rank:.1f} | Regime: {regime} | "
-                            f"Mode: {trading_mode} | Signal: {signal_score:.3f}"
-                        ),
-                        # Post-trade fields — empty until trade closes
-                        post_trade_notes=None,
-                        followed_rules=None,
-                        exit_felt_right=None,
-                        tags=[strategy, underlying, trading_mode],
-                        loss_category=None,
-                        mistake_tags=[],
-                    )
-                    session.add(journal)
+                    # Journal entry created separately after trade is committed
 
             logger.info(
                 "Trade recorded: %s %s %s strike=%.0f/%.0f "
