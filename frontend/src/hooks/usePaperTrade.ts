@@ -40,7 +40,11 @@ export function usePaperTrade() {
     }
   }, [refresh]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    const interval = setInterval(refresh, 30000); // re-poll every 30s
+    return () => clearInterval(interval);
+  }, [refresh]);
 
   return { positions, portfolio, greeks, lastSignal, cycleLog, loading, refresh, runCycle };
 }

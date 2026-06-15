@@ -3,8 +3,11 @@ SQLAlchemy model for journal_entries.
 Tracks pre/post trade psychology, tags, and loss analysis.
 """
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -19,38 +22,36 @@ class JournalEntry(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    trade_id: Mapped[uuid.UUID | None] = mapped_column(
+    trade_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("trades.id", ondelete="SET NULL"), nullable=True
     )
 
     # Pre-trade psychology
-    pre_trade_thesis: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence_level: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, comment="1–5 scale"
+    pre_trade_thesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence_level: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, comment="1-5 scale"
     )
-    market_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    market_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Post-trade review
-    post_trade_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    followed_rules: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    exit_felt_right: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    post_trade_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    followed_rules: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    exit_felt_right: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     # Tagging
-    tags: Mapped[list | None] = mapped_column(
+    tags: Mapped[Optional[list]] = mapped_column(
         JSONB, nullable=True,
-        comment="high-iv | low-iv | trending | range-bound | earnings-nearby | "
-                "vix-spike | fed-day | oversold | overbought | gap-up | gap-down"
+        comment="high-iv | low-iv | trending | range-bound | earnings-nearby"
     )
 
     # Loss analysis
-    loss_category: Mapped[str | None] = mapped_column(
+    loss_category: Mapped[Optional[str]] = mapped_column(
         String(30), nullable=True,
         comment="bad-signal | good-signal-luck | rule-breach | black-swan"
     )
-    mistake_tags: Mapped[list | None] = mapped_column(
+    mistake_tags: Mapped[Optional[list]] = mapped_column(
         JSONB, nullable=True,
-        comment="overrode-exit | ignored-kill-switch | sized-too-big | "
-                "chased-entry | held-too-long"
+        comment="overrode-exit | ignored-kill-switch | sized-too-big | chased-entry"
     )
 
     created_at: Mapped[datetime] = mapped_column(

@@ -136,13 +136,16 @@ def test_expired_cooling_off_allows_trading(engine):
 # ── Daily trade cap ───────────────────────────────────────────────────────────
 
 def test_trade_cap_blocks_at_limit(engine):
-    status = engine.check_all(make_portfolio(trades_today=3))
+    # Use the engine's configured limit so the test doesn't hardcode the cap value
+    limit = engine.max_trades_per_day
+    status = engine.check_all(make_portfolio(trades_today=limit))
     assert status.trading_allowed is False
     assert "daily_trade_cap" in status.flags
 
 
 def test_trade_cap_allows_below_limit(engine):
-    status = engine.check_all(make_portfolio(trades_today=2))
+    limit = engine.max_trades_per_day
+    status = engine.check_all(make_portfolio(trades_today=max(0, limit - 1)))
     assert status.trading_allowed is True
 
 

@@ -38,9 +38,9 @@ export default function Strategy() {
             </div>
             <span style={{
               fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
-              background: s.type === "CREDIT" ? "rgba(0,212,170,0.1)" : "rgba(59,130,246,0.1)",
+              background: s.type === "CREDIT" ? "rgba(212,175,55,0.1)" : "rgba(59,130,246,0.1)",
               color: s.type === "CREDIT" ? "var(--cyan)" : "var(--blue)",
-              border: `1px solid ${s.type === "CREDIT" ? "rgba(0,212,170,0.3)" : "rgba(59,130,246,0.3)"}`,
+              border: `1px solid ${s.type === "CREDIT" ? "rgba(212,175,55,0.3)" : "rgba(59,130,246,0.3)"}`,
             }}>{s.type}</span>
           </button>
         ))}

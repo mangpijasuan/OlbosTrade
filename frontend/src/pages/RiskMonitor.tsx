@@ -45,7 +45,9 @@ export default function RiskMonitor() {
 
   const daily_loss  = Math.abs(guardrailStatus?.daily_loss_pct  || 0) * 100;
   const weekly_loss = Math.abs(guardrailStatus?.weekly_loss_pct || 0) * 100;
-  const pv          = riskState?.portfolio_value || 25000;
+  // riskState comes from /api/risk/portfolio-state → response.state (IBKR account + DB P&L windows)
+  const pv          = riskState?.state?.account_value ?? riskState?.portfolio_value ?? 25000;
+  const daily_pnl   = riskState?.state?.daily_pnl ?? 0;
 
   return (
     <div style={{ padding: 16, overflowY: "auto", height: "100%" }}>
@@ -54,9 +56,9 @@ export default function RiskMonitor() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16, background: "var(--bg-2)", border: "1px solid var(--line-dim)" }}>
         <Stat label="Portfolio Value" value={`$${(pv/1000).toFixed(2)}k`} color="var(--cyan)" />
         <Stat label="Daily P&L"
-          value={`${guardrailStatus?.daily_pnl >= 0 ? "+" : ""}$${Math.abs(guardrailStatus?.daily_pnl || 0).toFixed(0)}`}
-          color={guardrailStatus?.daily_pnl >= 0 ? "var(--green)" : "var(--red)"} />
-        <Stat label="Open Positions" value={riskState?.open_position_count || 0} />
+          value={`${daily_pnl >= 0 ? "+" : ""}$${Math.abs(daily_pnl).toFixed(0)}`}
+          color={daily_pnl >= 0 ? "var(--green)" : "var(--red)"} />
+        <Stat label="Open Positions" value={riskState?.state?.open_positions || 0} />
         <Stat label="Status"
           value={guardrailStatus?.trading_allowed ? "ACTIVE" : "SUSPENDED"}
           color={guardrailStatus?.trading_allowed ? "var(--green)" : "var(--red)"} />
@@ -72,7 +74,7 @@ export default function RiskMonitor() {
           <Section title="Position Limits">
             <Meter label="Trades Today" val={guardrailStatus?.trades_today||0} max={3} unit="" warn={0.5} crit={0.85} />
             <Meter label="Consecutive Losses" val={guardrailStatus?.consecutive_losses||0} max={3} unit="" warn={0.4} crit={0.7} />
-            <Meter label="Open Positions" val={riskState?.open_position_count||0} max={5} unit="" />
+            <Meter label="Open Positions" val={riskState?.state?.open_positions||0} max={5} unit="" />
           </Section>
         </div>
         <div>

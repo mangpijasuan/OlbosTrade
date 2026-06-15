@@ -3,7 +3,10 @@
  * All fetch calls go through this module — never fetch directly in components.
  */
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+// When running via Vite dev server (Docker or local), use "" so fetch calls
+// go to /api/... — Vite's proxy forwards them to the backend container.
+// Set VITE_API_URL only if you need to bypass the proxy (e.g. direct calls from a static build).
+const BASE_URL = "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -75,6 +78,17 @@ export const api = {
   setTradingMode:   (body: { mode: string; confirmed: boolean }) =>
     request("/api/mode/set", { method: "POST", body: JSON.stringify(body) }),
   resetToBalanced:  () => request("/api/mode/reset-to-balanced", { method: "POST" }),
+
+  // ── Trade Desk (Execution Modes) ───────────────────────────────────────────
+  getExecutionMode:   () => request("/api/trade-desk/execution-mode"),
+  setExecutionMode:   (mode: string) =>
+    request("/api/trade-desk/execution-mode", { method: "POST", body: JSON.stringify({ mode }) }),
+  getPendingApprovals: () => request("/api/trade-desk/pending"),
+  approveSignal:       (id: string) =>
+    request(`/api/trade-desk/approve/${id}`, { method: "POST" }),
+  rejectSignal:        (id: string) =>
+    request(`/api/trade-desk/reject/${id}`, { method: "POST" }),
+  getExecutionLog:     () => request("/api/trade-desk/execution-log"),
 
   // ── Mode Analytics ──────────────────────────────────────────────────────────
   getModeAnalytics: (params?: { date_from?: string; date_to?: string }) => {

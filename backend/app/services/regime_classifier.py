@@ -52,7 +52,10 @@ REGIME_CONFIG: dict[RegimeType, dict] = {
     RegimeType.LOW_VOL_TRENDING: {
         "description": "Calm trending market — low IV, directional",
         "strategies_allowed": ["bull_call_debit_spread"],  # Debit spreads only
+        "equity_strategies_allowed": ["momentum_long"],
         "size_multiplier": 0.75,      # Smaller size — less premium to collect
+        "equity_size_multiplier": 1.0,
+        "options_size_multiplier": 0.75,
         "signal_threshold_override": None,  # Use default
         "iron_condor_allowed": False,
         "credit_spread_allowed": False,
@@ -62,7 +65,10 @@ REGIME_CONFIG: dict[RegimeType, dict] = {
         "strategies_allowed": [
             "bull_put_spread", "bear_call_spread", "iron_condor"
         ],
+        "equity_strategies_allowed": ["momentum_long", "momentum_short"],
         "size_multiplier": 1.0,       # Full size
+        "equity_size_multiplier": 0.75,
+        "options_size_multiplier": 1.0,
         "signal_threshold_override": None,
         "iron_condor_allowed": True,
         "credit_spread_allowed": True,
@@ -70,7 +76,10 @@ REGIME_CONFIG: dict[RegimeType, dict] = {
     RegimeType.HIGH_VOL_TRENDING: {
         "description": "Elevated vol with directional bias — single-direction credit spreads",
         "strategies_allowed": ["bull_put_spread", "bear_call_spread"],
+        "equity_strategies_allowed": ["momentum_long"],   # reduced size
         "size_multiplier": 0.75,      # Reduced size — higher risk
+        "equity_size_multiplier": 0.6,
+        "options_size_multiplier": 0.75,
         "signal_threshold_override": 0.72,  # Tighter gate
         "iron_condor_allowed": False,  # Too directional for condors
         "credit_spread_allowed": True,
@@ -78,7 +87,10 @@ REGIME_CONFIG: dict[RegimeType, dict] = {
     RegimeType.CRISIS: {
         "description": "Vol spike / market dislocation — no new positions",
         "strategies_allowed": [],      # NOTHING trades in crisis
+        "equity_strategies_allowed": [],
         "size_multiplier": 0.0,
+        "equity_size_multiplier": 0.0,
+        "options_size_multiplier": 0.0,
         "signal_threshold_override": 1.1,  # Effectively impossible threshold
         "iron_condor_allowed": False,
         "credit_spread_allowed": False,
@@ -86,7 +98,10 @@ REGIME_CONFIG: dict[RegimeType, dict] = {
     RegimeType.UNKNOWN: {
         "description": "Insufficient data to classify regime",
         "strategies_allowed": ["bull_put_spread", "bear_call_spread"],
+        "equity_strategies_allowed": ["momentum_long", "momentum_short"],
         "size_multiplier": 0.5,       # Half size when uncertain
+        "equity_size_multiplier": 0.3,
+        "options_size_multiplier": 0.5,
         "signal_threshold_override": 0.75,
         "iron_condor_allowed": False,
         "credit_spread_allowed": True,
@@ -117,23 +132,35 @@ class RegimeState:
     Current regime classification with all downstream parameters.
     Passed into paper_trader.run_signal_cycle() to control execution.
     """
-    regime:                 RegimeType
-    description:            str
-    confidence:             float           # 0.0–1.0 classifier confidence
-    strategies_allowed:     list[str]
-    size_multiplier:        float
-    signal_threshold:       Optional[float]  # None = use system default
-    iron_condor_allowed:    bool
-    credit_spread_allowed:  bool
-    classified_at:          datetime = field(
+    regime:                    RegimeType
+    description:               str
+    confidence:                float           # 0.0–1.0 classifier confidence
+    strategies_allowed:        list[str]
+    equity_strategies_allowed: list[str]
+    size_multiplier:           float
+    equity_size_multiplier:    float
+    options_size_multiplier:   float
+    signal_threshold:          Optional[float]  # None = use system default
+    iron_condor_allowed:       bool
+    credit_spread_allowed:     bool
+    classified_at:             datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
-    features_used:          Optional[RegimeFeatures] = None
-    reasoning:              list[str] = field(default_factory=list)
+    features_used:             Optional[RegimeFeatures] = None
+    reasoning:                 list[str] = field(default_factory=list)
 
     @property
     def is_tradeable(self) -> bool:
-        return len(self.strategies_allowed) > 0 and self.size_multiplier > 0
+        return (len(self.strategies_allowed) > 0 or len(self.equity_strategies_allowed) > 0) \
+               and self.size_multiplier >= 0
+
+    @property
+    def equity_allowed(self) -> bool:
+        return len(self.equity_strategies_allowed) > 0 and self.equity_size_multiplier > 0
+
+    @property
+    def options_allowed(self) -> bool:
+        return len(self.strategies_allowed) > 0 and self.options_size_multiplier > 0
 
 
 class RegimeClassifier:
@@ -387,7 +414,10 @@ class RegimeClassifier:
             description=config["description"],
             confidence=confidence,
             strategies_allowed=config["strategies_allowed"],
+            equity_strategies_allowed=config.get("equity_strategies_allowed", []),
             size_multiplier=config["size_multiplier"],
+            equity_size_multiplier=config.get("equity_size_multiplier", 0.5),
+            options_size_multiplier=config.get("options_size_multiplier", config["size_multiplier"]),
             signal_threshold=config["signal_threshold_override"] or default_threshold,
             iron_condor_allowed=config["iron_condor_allowed"],
             credit_spread_allowed=config["credit_spread_allowed"],
@@ -404,3 +434,15 @@ class RegimeClassifier:
             state.signal_threshold or 0,
         )
         return state
+
+
+# ── Module-level helpers ────────────────────────────────────────────────────
+
+def classify_equity_allowed(regime_state: RegimeState) -> bool:
+    """Return True if equity trading is permitted in this regime."""
+    return regime_state.equity_allowed
+
+
+def classify_options_allowed(regime_state: RegimeState) -> bool:
+    """Return True if options trading is permitted in this regime."""
+    return regime_state.options_allowed

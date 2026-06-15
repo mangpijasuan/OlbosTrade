@@ -13,7 +13,7 @@ RUN npm run build
 FROM nginx:1.25-alpine AS runtime
 
 # Copy built React app
-COPY --from=builder /app/build /usr/share/nginx/html
+COPY --from=builder /app/dist /usr/share/nginx/html
 
 # SPA routing: all routes fall back to index.html
 RUN echo 'server { \

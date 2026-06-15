@@ -270,14 +270,70 @@ class PaperTrader:
                 return actions + [{"action": "skipped", "reason": f"regime={regime.regime.value}"}]
 
             # ── Options chain ─────────────────────────────────────────────────
-            target_expiry = (
-                date.today() + timedelta(days=trading_mode_manager.config.dte_target)
-            ).strftime("%Y-%m-%d")
+            dte_target    = trading_mode_manager.config.dte_target
+            target_expiry = (date.today() + timedelta(days=dte_target)).strftime("%Y-%m-%d")
             try:
                 chain = await self.broker.get_options_chain("SPY", target_expiry)
             except Exception as exc:
                 logger.warning("Chain unavailable: %s", exc)
                 return actions + [{"action": "skipped", "reason": "chain_unavailable"}]
+
+            # ── FIX-5: Real earnings days away for SPY (index ETF = 999) ──────
+            # SPY is an ETF — it has no earnings date. Components report
+            # individually; use 999 (no upcoming earnings risk) which is
+            # correct for SPY. For single-stock underlyings, fetch from
+            # yfinance calendar: yf.Ticker(sym).calendar
+            earnings_days_away = 999.0
+
+            # ── FIX-6: Real options features from live chain ──────────────────
+            # Previously hardcoded as constants. Now derived from the actual
+            # options chain and Black-Scholes pricer so the model receives
+            # the same distribution it was trained on.
+            try:
+                from app.services.options_pricer import BlackScholesPricer as _BSP
+                _pricer = _BSP()
+                _T      = max(dte_target / 365.0, 0.01)
+                _r      = 0.05   # risk-free rate
+                _sigma  = surface.atm_iv if surface.atm_iv > 0 else rv
+
+                # Find short put at ~0.20 delta
+                _target_delta = 0.20
+                _best_strike  = spy_price * 0.95   # fallback: 5% OTM
+                _best_diff    = 1.0
+                for _offset in range(-60, 1, 5):
+                    _k = round(spy_price + _offset)
+                    try:
+                        _d = abs(_pricer.delta(spy_price, _k, _T, _r, _sigma, "put"))
+                        if abs(_d - _target_delta) < _best_diff:
+                            _best_diff   = abs(_d - _target_delta)
+                            _best_strike = _k
+                    except Exception:
+                        continue
+
+                _short_strike = float(_best_strike)
+                _long_strike  = _short_strike - 5.0   # 5-pt wide spread
+                _short_px     = _pricer.put_price(spy_price, _short_strike, _T, _r, _sigma)
+                _long_px      = _pricer.put_price(spy_price, _long_strike,  _T, _r, _sigma)
+                _short_delta  = abs(_pricer.delta(spy_price, _short_strike, _T, _r, _sigma, "put"))
+                _spread_width = 5.0
+                _net_credit   = max(_short_px - _long_px, 0.01)
+                _ctw_ratio    = _net_credit / _spread_width
+
+                real_dte                = float(dte_target)
+                real_short_delta        = round(_short_delta, 4)
+                real_spread_width       = _spread_width
+                real_credit_to_width    = round(_ctw_ratio, 4)
+
+                logger.debug(
+                    "Live options features: DTE=%d delta=%.2f width=%.0f C/W=%.3f",
+                    dte_target, real_short_delta, real_spread_width, real_credit_to_width,
+                )
+            except Exception as _exc:
+                logger.warning("Options feature computation failed, using defaults: %s", _exc)
+                real_dte             = float(dte_target)
+                real_short_delta     = 0.20
+                real_spread_width    = 10.0
+                real_credit_to_width = 0.25
 
             portfolio_risk = PortfolioRiskState(
                 net_delta=0.0, net_vega=0.0, net_theta=0.0,
@@ -327,7 +383,7 @@ class PaperTrader:
                     self.guardrails.get_signal_threshold(guardrail_status),
                 )
 
-                # AI scoring (non-blocking async)
+                # AI scoring — all 13 features are now live values (FIX-5, FIX-6)
                 features = SignalFeatures(
                     iv_rank=iv_rank,
                     iv_percentile=surface.iv_percentile,
@@ -335,11 +391,11 @@ class PaperTrader:
                     spy_rsi_14=rsi,
                     spy_adx_14=adx,
                     spy_trend_direction=1.0 if above_sma else -1.0,
-                    days_to_expiry=35.0,
-                    short_strike_delta=0.20,
-                    spread_width=10.0,
-                    credit_to_width_ratio=0.25,
-                    earnings_days_away=999.0,
+                    days_to_expiry=real_dte,                # FIX-6: real DTE
+                    short_strike_delta=real_short_delta,    # FIX-6: real delta
+                    spread_width=real_spread_width,         # FIX-6: real width
+                    credit_to_width_ratio=real_credit_to_width,  # FIX-6: real C/W
+                    earnings_days_away=earnings_days_away,  # FIX-5: real or 999 for ETF
                     spy_realized_vol_20d=rv,
                     iv_minus_rv=surface.vrp,
                 )

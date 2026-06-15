@@ -35,24 +35,112 @@ const ICONS: Record<string, string> = {
 };
 
 const NAV_ITEMS = [
-  { key: "dashboard",  label: "Dashboard",  icon: "dashboard"  },
-  { key: "backtest",   label: "Backtest",   icon: "backtest"   },
-  { key: "paper",      label: "Paper Trade",icon: "paper"      },
-  { key: "risk",       label: "Risk",       icon: "risk"       },
-  { key: "guardrails", label: "Guardrails", icon: "guardrails" },
-  { key: "strategy",   label: "Strategy",   icon: "strategy"   },
-  { key: "journal",    label: "Journal",    icon: "journal"    },
-  { key: "research",   label: "Research",   icon: "research"   },
-  { key: "analytics",  label: "Analytics",  icon: "analytics"  },
+  { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
+  { key: "equity",     label: "Equity Signals",icon: "backtest"  },
+  { key: "backtest",   label: "Backtest",     icon: "backtest"   },
+  { key: "paper",      label: "Trade Desk",   icon: "paper"      },
+  { key: "risk",       label: "Risk",         icon: "risk"       },
+  { key: "guardrails", label: "Guardrails",   icon: "guardrails" },
+  { key: "strategy",   label: "Strategy",     icon: "strategy"   },
+  { key: "journal",    label: "Journal",      icon: "journal"    },
+  { key: "research",   label: "Research",     icon: "research"   },
+  { key: "analytics",  label: "Analytics",    icon: "analytics"  },
 ];
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────
-function TickerStrip() {
+type SnapShot = { last_close: number | null; prev_close: number | null; change_pct: number | null };
+
+function TickerCell({ label, snap }: { label: string; snap: SnapShot }) {
+  const price = snap.last_close;
+  const pct   = snap.change_pct;
+  const up    = pct !== null && pct >= 0;
+  return (
+    <>
+      <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>{label}</span>
+      <span style={{ color: "var(--ink)", fontWeight: 600, marginRight: 4 }}>
+        {price !== null ? price.toFixed(2) : "—"}
+      </span>
+      <span style={{ color: pct === null ? "var(--ink-faint)" : up ? "var(--green)" : "var(--red)", marginRight: 20 }}>
+        {pct !== null ? `${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(2)}%` : ""}
+      </span>
+    </>
+  );
+}
+
+function TickerStrip({ onToggle }: { onToggle: () => void }) {
   const [time, setTime] = useState(new Date());
-  const [spy]  = useState({ price: 455.32, change: +1.24, pct: +0.27 });
-  const [vix]  = useState(18.4);
-  const [ivr]  = useState(42);
-  const [mode] = useState("balanced");
+  const [spy,  setSpy]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [qqq,  setQqq]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [nvda, setNvda] = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [iwm,  setIwm]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [tlt,  setTlt]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [gld,  setGld]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [uso,  setUso]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [uup,  setUup]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  const [vix,  setVix]  = useState<number | null>(null);
+  const [ivr,  setIvr]  = useState<number | null>(null);
+  const [mode, setMode] = useState("balanced");
+  const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
+
+  const fetchSnapshot = (sym: string, setter: (s: SnapShot) => void) => {
+    fetch(`/api/market/snapshot/${sym}`)
+      .then(r => r.json())
+      .then(d => setter({ last_close: d.last_close, prev_close: d.prev_close, change_pct: d.change_pct }))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    // Initial fetch
+    fetchSnapshot("SPY",  setSpy);
+    fetchSnapshot("QQQ",  setQqq);
+    fetchSnapshot("NVDA", setNvda);
+    fetchSnapshot("IWM",  setIwm);
+    fetchSnapshot("TLT",  setTlt);
+    fetchSnapshot("GLD",  setGld);
+    fetchSnapshot("USO",  setUso);
+    fetchSnapshot("UUP",  setUup);
+
+    fetch("/api/market/regime")
+      .then(r => r.json())
+      .then(d => {
+        setRegime(d);
+        if (d.vix    !== undefined && d.vix    !== null) setVix(d.vix);
+        if (d.iv_rank !== undefined && d.iv_rank !== null) setIvr(Math.round(d.iv_rank));
+      })
+      .catch(() => {});
+
+    const fetchMode = () =>
+      fetch("/api/mode/current")
+        .then(r => r.json())
+        .then(d => setMode(d.mode || "balanced"))
+        .catch(() => {});
+    fetchMode();
+
+    // Refresh every 5 minutes
+    const si = setInterval(() => {
+      fetchSnapshot("SPY",  setSpy);
+      fetchSnapshot("QQQ",  setQqq);
+      fetchSnapshot("NVDA", setNvda);
+      fetchSnapshot("IWM",  setIwm);
+      fetchSnapshot("TLT",  setTlt);
+      fetchSnapshot("GLD",  setGld);
+      fetchSnapshot("USO",  setUso);
+      fetchSnapshot("UUP",  setUup);
+    }, 5 * 60 * 1000);
+
+    const ri = setInterval(() => {
+      fetch("/api/market/regime").then(r => r.json()).then(d => {
+        setRegime(d);
+        if (d.vix    !== undefined && d.vix    !== null) setVix(d.vix);
+        if (d.iv_rank !== undefined && d.iv_rank !== null) setIvr(Math.round(d.iv_rank));
+      }).catch(() => {});
+    }, 60000);
+
+    // Poll mode every 15 seconds so it updates immediately after user changes it
+    const mi = setInterval(fetchMode, 15000);
+
+    return () => { clearInterval(si); clearInterval(ri); clearInterval(mi); };
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -72,74 +160,150 @@ function TickerStrip() {
     timeZone: "America/New_York", hour12: false,
   });
 
+  // Build the repeating marquee content
+  const sep = <span style={{ color: "var(--line-dim)", margin: "0 16px" }}>·</span>;
+  const marqueeContent = (
+    <span style={{ display: "inline-flex", alignItems: "center", whiteSpace: "nowrap" }}>
+      {/* Equities */}
+      <TickerCell label="SPY"  snap={spy}  />
+      {sep}
+      <TickerCell label="QQQ"  snap={qqq}  />
+      {sep}
+      <TickerCell label="IWM"  snap={iwm}  />
+      {sep}
+      <TickerCell label="NVDA" snap={nvda} />
+      {sep}
+      {/* Bonds */}
+      <TickerCell label="TLT"  snap={tlt}  />
+      {sep}
+      {/* Commodities */}
+      <TickerCell label="GOLD" snap={gld}  />
+      {sep}
+      <TickerCell label="OIL"  snap={uso}  />
+      {sep}
+      {/* Dollar */}
+      <TickerCell label="DXY"  snap={uup}  />
+      {sep}
+      {vix !== null && <>
+        <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>VIX</span>
+        <span style={{ color: vix > 25 ? "var(--amber)" : "var(--ink)", fontWeight: 600, marginRight: 20 }}>
+          {vix.toFixed(1)}
+        </span>
+        {sep}
+      </>}
+      {ivr !== null && <>
+        <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>IV RANK</span>
+        <span style={{ color: ivr > 50 ? "var(--cyan)" : "var(--ink)", fontWeight: 600, marginRight: 20 }}>
+          {ivr}
+        </span>
+        {sep}
+      </>}
+      <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>MODE</span>
+      <span className={`mode-badge ${mode}`} style={{ marginRight: 20 }}>{mode}</span>
+      {regime && <>
+        {sep}
+        <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>REGIME</span>
+        <span style={{
+          fontFamily: "var(--mono)", fontSize: 10, marginRight: 20,
+          color: regime.regime === "crisis" ? "var(--red)" :
+                 regime.regime.includes("high_vol") ? "var(--amber)" : "var(--cyan)",
+          fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em",
+        }}>
+          {regime.regime.replace(/_/g, " ")}
+        </span>
+      </>}
+      {sep}
+    </span>
+  );
+
   return (
+    <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
     <div style={{
       background: "var(--bg-3)",
       borderBottom: "1px solid var(--line-dim)",
       display: "flex",
       alignItems: "center",
-      height: 36,
-      padding: "0 16px",
-      gap: 0,
+      height: 38,
       fontFamily: "var(--mono)",
       fontSize: 11,
       flexShrink: 0,
       overflow: "hidden",
     }}>
-      {/* Logo */}
-      <span style={{ color: "var(--cyan)", fontWeight: 600, letterSpacing: "0.1em", marginRight: 20 }}>
-        OLBOS<span style={{ color: "var(--ink-dim)" }}>QUANT</span>
-      </span>
+      {/* Hamburger — pinned left, aligned to sidebar */}
+      <button
+        onClick={onToggle}
+        style={{
+          width: 48, height: "100%", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "transparent", border: "none",
+          borderRight: "1px solid var(--line-dim)",
+          color: "var(--ink-faint)", cursor: "pointer",
+          transition: "color 0.12s",
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = "var(--cyan)")}
+        onMouseLeave={e => (e.currentTarget.style.color = "var(--ink-faint)")}
+        title="Toggle sidebar"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="3.5"  width="12" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect x="2" y="7.25" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect x="2" y="11"   width="12" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+      </button>
 
-      <div style={{ width: 1, background: "var(--line-dim)", height: 20, marginRight: 20 }} />
+      {/* Logo — pinned left */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, padding: "0 16px 0 14px", borderRight: "1px solid var(--line-dim)" }}>
+        <span style={{
+          fontFamily: "'Georgia', 'Times New Roman', serif",
+          fontWeight: 700, fontSize: 17, letterSpacing: "0.06em", lineHeight: 1,
+        }}>
+          <span style={{ color: "#D4AF37", textShadow: "0 0 12px rgba(212,175,55,0.55)" }}>OLBOS</span>
+          <span style={{ color: "#D4AF37", textShadow: "0 0 12px rgba(212,175,55,0.55)" }}>&nbsp;</span>
+          <span style={{ color: "#c8d0dc", fontWeight: 400 }}>QUANT</span>
+        </span>
+        <span style={{
+          fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
+          letterSpacing: "0.55em", color: "rgba(212,175,55,0.5)", lineHeight: 1, paddingLeft: 1,
+        }}>TERMINAL</span>
+      </div>
 
-      {/* SPY */}
-      <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>SPY</span>
-      <span style={{ color: "var(--ink)", fontWeight: 600, marginRight: 4 }}>
-        {spy.price.toFixed(2)}
-      </span>
-      <span style={{ color: spy.change >= 0 ? "var(--green)" : "var(--red)", marginRight: 20 }}>
-        {spy.change >= 0 ? "▲" : "▼"} {Math.abs(spy.pct).toFixed(2)}%
-      </span>
+      {/* Marquee strip — scrolls continuously */}
+      <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+        <div style={{ display: "inline-flex", animation: "ticker-scroll 55s linear infinite" }}>
+          {marqueeContent}{marqueeContent}
+        </div>
+      </div>
 
-      {/* VIX */}
-      <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>VIX</span>
-      <span style={{ color: vix > 25 ? "var(--amber)" : "var(--ink)", fontWeight: 600, marginRight: 20 }}>
-        {vix.toFixed(1)}
-      </span>
-
-      {/* IV Rank */}
-      <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>IV RANK</span>
-      <span style={{ color: ivr > 50 ? "var(--cyan)" : "var(--ink)", fontWeight: 600, marginRight: 20 }}>
-        {ivr}
-      </span>
-
-      {/* Mode */}
-      <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>MODE</span>
-      <span className={`mode-badge ${mode}`} style={{ marginRight: 20 }}>{mode}</span>
-
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
-
-      {/* Market status */}
-      <span className={`dot ${mktOpen() ? "live" : "dead"}`} style={{ marginRight: 6 }} />
-      <span style={{ color: "var(--ink-dim)", marginRight: 20 }}>
-        {mktOpen() ? "MARKET OPEN" : "MARKET CLOSED"}
-      </span>
-
-      {/* Time */}
-      <span style={{ color: "var(--ink-faint)", marginRight: 4 }}>ET</span>
-      <span style={{ color: "var(--ink)", fontWeight: 500 }}>{etTime}</span>
+      {/* Market status + clock — pinned right */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
+        padding: "0 14px", borderLeft: "1px solid var(--line-dim)",
+      }}>
+        <span className={`dot ${mktOpen() ? "live" : "dead"}`} />
+        <span style={{ color: "var(--ink-dim)", fontSize: 10 }}>
+          {mktOpen() ? "OPEN" : "CLOSED"}
+        </span>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.25 }}>
+          <div>
+            <span style={{ color: "var(--ink-faint)", marginRight: 3, fontSize: 9 }}>ET</span>
+            <span style={{ color: "var(--ink)", fontWeight: 500, fontSize: 11 }}>{etTime}</span>
+          </div>
+          <div style={{ fontSize: 9, color: "var(--ink-faint)" }}>
+            {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
+            {" "}{Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replace("_", " ")}
+          </div>
+        </div>
+      </div>
+    </div>
     </div>
   );
 }
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
-function Sidebar({ active, onNav, expanded, onToggle }: {
+function Sidebar({ active, onNav, expanded }: {
   active: string;
   onNav: (k: string) => void;
   expanded: boolean;
-  onToggle: () => void;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const W = expanded ? 200 : 48;
@@ -160,38 +324,6 @@ function Sidebar({ active, onNav, expanded, onToggle }: {
       transition: "width 0.18s ease, min-width 0.18s ease",
       overflow: "hidden",
     }}>
-
-      {/* Hamburger toggle button */}
-      <button
-        onClick={onToggle}
-        title={expanded ? "Collapse sidebar" : "Expand sidebar"}
-        style={{
-          width: "100%",
-          height: 40,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: expanded ? "flex-end" : "center",
-          paddingRight: expanded ? 14 : 0,
-          background: "transparent",
-          border: "none",
-          borderBottom: "1px solid var(--line-dim)",
-          borderLeft: "2px solid transparent",
-          color: "var(--ink-faint)",
-          cursor: "pointer",
-          flexShrink: 0,
-          transition: "color 0.1s",
-          marginBottom: 4,
-        }}
-        onMouseEnter={e => (e.currentTarget.style.color = "var(--cyan)")}
-        onMouseLeave={e => (e.currentTarget.style.color = "var(--ink-faint)")}
-      >
-        {/* Hamburger icon — three lines */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="2" y="3.5" width="12" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="2" y="7.25" width="12" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="2" y="11" width="12" height="1.5" rx="0.75" fill="currentColor"/>
-        </svg>
-      </button>
 
       {/* Nav items */}
       {NAV_ITEMS.map(item => {
@@ -233,8 +365,6 @@ function Sidebar({ active, onNav, expanded, onToggle }: {
                   fontSize: 11,
                   letterSpacing: "0.08em",
                   textTransform: "uppercase",
-                  opacity: expanded ? 1 : 0,
-                  transition: "opacity 0.15s ease",
                 }}>
                   {item.label}
                 </span>
@@ -349,11 +479,11 @@ function StatusBar({ page }: { page: string }) {
       flexShrink: 0,
     }}>
       <span style={{ color: "var(--cyan)", textTransform: "uppercase" }}>{page}</span>
-      <span>PAPER TRADING</span>
-      <span>TRADIER SANDBOX</span>
-      <span>SPY · QQQ · IWM</span>
+      <span>TRADE DESK</span>
+      <span id="broker-status-bar">IBKR GATEWAY</span>
+      <span>SPY · QQQ · IWM · NVDA · AAPL</span>
       <div style={{ flex: 1 }} />
-      <span>OlbosQuant v5.0</span>
+      <span style={{ color: "#D4AF37", fontWeight: 700 }}>OlbosQuant v5.0</span>
     </div>
   );
 }
@@ -368,13 +498,12 @@ export default function TerminalLayout({ children, activePage, onNav }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <TickerStrip />
+      <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} />
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <Sidebar
           active={activePage}
           onNav={onNav}
           expanded={sidebarExpanded}
-          onToggle={() => setSidebarExpanded(p => !p)}
         />
         <main style={{
           flex: 1,

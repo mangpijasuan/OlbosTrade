@@ -1,16 +1,43 @@
 version: "3.11"
 
 services:
-  postgres:
-    image: postgres:15
-    container_name: options_postgres
+
+  # ── IB Gateway (headless — paper port 4002) ───────────────────────────────
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: olbosquant_ib_gateway
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-options_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-options_pass}
-      POSTGRES_DB: ${POSTGRES_DB:-options_db}
+      TWS_USERID:           ${IBKR_USERNAME}
+      TWS_PASSWORD:         ${IBKR_PASSWORD}
+      TRADING_MODE:         ${IBKR_TRADING_MODE:-paper}
+      GATEWAY_OR_TWS:       gateway
+      VNC_SERVER_PASSWORD:  ${VNC_PASSWORD:-localdev}
+      TWOFA_TIMEOUT_ACTION: restart
     ports:
-      - "5432:5432"
+      - "4002:4002"   # paper gateway socket (ib_insync connects here)
+      - "4001:4001"   # live gateway socket
+      - "5900:5900"   # VNC — open with any VNC viewer to see IB Gateway GUI
+    volumes:
+      - ib_gateway_data:/home/ibgateway/Jts
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4002 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s   # IB Gateway takes ~45s to boot on first run
+
+  # ── PostgreSQL (port 5433 locally to avoid clash with OLBOS on 5432) ─────
+  postgres:
+    image: postgres:15
+    container_name: olbosquant_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-options_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-options_pass}
+      POSTGRES_DB:       ${POSTGRES_DB:-options_db}
+    ports:
+      - "5435:5432"   # 5435 on host — 5433 used by churchhub-postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,12 +46,13 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: options_redis
+    container_name: olbosquant_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "6380:6379"   # 6380 on host — avoids any local redis conflict
     volumes:
       - redis_data:/data
     healthcheck:
@@ -33,16 +61,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── FastAPI backend (port 8001 locally to avoid clash with OLBOS on 8000) ─
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: options_backend
+    container_name: olbosquant_backend
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # IB Gateway is running natively on the Mac — reach it via host.docker.internal
+      IBKR_HOST: host.docker.internal
+      IBKR_PORT: "4002"
+      IBKR_CLIENT_ID: "10"
+      # Override DB/Redis URLs to use Docker service names
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-options_user}:${POSTGRES_PASSWORD:-options_pass}@postgres:5432/${POSTGRES_DB:-options_db}
+      REDIS_URL: redis://redis:6379
     ports:
-      - "8000:8000"
+      - "8001:8000"   # 8001 on host — OLBOS uses 8000
     volumes:
       - ./backend:/app
       - ./ml:/ml
@@ -51,8 +88,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # ib-gateway removed — gateway runs natively on the Mac at host.docker.internal:4002
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── React frontend — Vite dev server with hot reload ─────────────────────
+  # Uses node image directly (not the nginx production Dockerfile) for local dev.
+  # For production build use: docker-compose.prod.yml
+  frontend:
+    image: node:20-alpine
+    container_name: olbosquant_frontend
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "3001:3000"   # 3001 on host — OLBOS or local :3000 won't conflict
+    environment:
+      VITE_API_URL: http://backend:8000
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install --legacy-peer-deps && npm run dev -- --host 0.0.0.0 --port 3000"
 
 volumes:
   postgres_data:
   redis_data:
+  ib_gateway_data:

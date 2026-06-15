@@ -40,7 +40,8 @@ class DataFetcher:
         self, symbol: str, start: str, end: str
     ) -> pd.DataFrame:
         """
-        Fetch daily OHLCV for a symbol using yfinance.
+        Fetch daily OHLCV via the connected broker (IBKR/Alpaca).
+        Falls back to yfinance only if broker fails.
 
         Args:
             symbol: Ticker symbol (e.g. "SPY")
@@ -48,19 +49,52 @@ class DataFetcher:
             end:    End date   "YYYY-MM-DD"
 
         Returns:
-            DataFrame with columns: Open, High, Low, Close, Volume, Date
+            DataFrame with columns: Open, High, Low, Close, Volume, Date index.
         """
+        # ── Primary: broker historical bars ──────────────────────────────────
+        try:
+            from datetime import date as _date
+            start_d = _date.fromisoformat(start)
+            end_d   = _date.fromisoformat(end)
+            days    = (end_d - start_d).days + 60   # +60 for indicator warm-up
+            bars    = await self.broker.get_bars(symbol, timeframe="1Day", limit=days, end_date=end)
+
+            if bars:
+                df = pd.DataFrame([
+                    {
+                        "Date":   b.timestamp.date() if hasattr(b.timestamp, "date") else b.timestamp,
+                        "Open":   float(b.open),
+                        "High":   float(b.high),
+                        "Low":    float(b.low),
+                        "Close":  float(b.close),
+                        "Volume": b.volume,
+                    }
+                    for b in bars
+                ])
+                df["Date"] = pd.to_datetime(df["Date"])
+                df = df.set_index("Date").sort_index()
+
+                # Filter to requested window
+                df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
+
+                if not df.empty:
+                    logger.info("Fetched %d OHLCV rows for %s via broker", len(df), symbol)
+                    return df
+        except Exception as broker_exc:
+            logger.warning("Broker OHLCV fetch failed for %s (%s) — trying yfinance", symbol, broker_exc)
+
+        # ── Fallback: yfinance ────────────────────────────────────────────────
         ticker = yf.Ticker(symbol)
         df = ticker.history(start=start, end=end, auto_adjust=True)
 
         if df.empty:
-            raise ValueError(f"No OHLCV data returned for {symbol} from {start} to {end}")
+            raise ValueError(f"No OHLCV data for {symbol} from {start} to {end} (broker + yfinance both failed)")
 
         df.index = pd.to_datetime(df.index).tz_localize(None)
         df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
         df.index.name = "Date"
 
-        logger.info("Fetched %d OHLCV rows for %s", len(df), symbol)
+        logger.info("Fetched %d OHLCV rows for %s via yfinance", len(df), symbol)
         return df
 
     # ── Options chain ────────────────────────────────────────────────────────

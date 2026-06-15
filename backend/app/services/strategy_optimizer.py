@@ -94,6 +94,11 @@ class TradeRecord:
     credit_to_width: float
     hold_days:    int
     exit_reason:  str
+    # W4 FIX: regime label for stratified Sharpe optimization.
+    # Populated from RegimeClassifier at trade entry time.
+    # Valid values: "LOW_VOL_TRENDING" | "NORMAL_MEAN_REVERT" |
+    #               "HIGH_VOL_TRENDING" | "CRISIS" | "unknown"
+    regime: str = "unknown"
 
 
 class StrategyOptimizer:
@@ -377,6 +382,44 @@ class StrategyOptimizer:
         if len(simulated_pnls) < 3:
             return -999.0  # Penalize parameter sets that filter out all trades
 
+        # W4 FIX: Regime-stratified Sharpe.
+        #
+        # The old approach pooled all trades across all regimes.  A parameter
+        # set that happens to overfit to a CRISIS regime (lots of big losers
+        # that trigger stops) looks great pooled but collapses in NORMAL regime.
+        #
+        # New approach:
+        #   1. Compute Sharpe separately for each regime present in the data.
+        #   2. Return the equally-weighted average across regimes.
+        #   3. If no regime data, fall back to the pooled Sharpe (backwards compat).
+        #
+        # Equal-weighting means parameters MUST work across all regime types,
+        # not just the one most represented in the recent window.
+        regime_pnls: dict[str, list[float]] = {}
+        regime_hold: dict[str, list[int]] = {}
+        for trade, pnl, hold in zip(trades, simulated_pnls, hold_days_list):
+            r = getattr(trade, "regime", "unknown")
+            regime_pnls.setdefault(r, []).append(pnl)
+            regime_hold.setdefault(r, []).append(hold)
+
+        known_regimes = [r for r in regime_pnls if r != "unknown"]
+        if len(known_regimes) >= 2:
+            # Enough labelled regimes — use stratified Sharpe
+            sharpes: list[float] = []
+            for r in known_regimes:
+                if len(regime_pnls[r]) < 3:
+                    continue   # too few trades in this regime to be meaningful
+                m = calculate_all_metrics(
+                    pnl_series=regime_pnls[r],
+                    hold_days=regime_hold[r],
+                    starting_capital=25000.0,
+                    total_commissions=len(regime_pnls[r]) * 0.65 * 4,
+                )
+                sharpes.append(m.sharpe_ratio)
+            if sharpes:
+                return float(np.mean(sharpes))   # equal-weight across regimes
+
+        # Fallback: pooled Sharpe (backwards compatible, or when regime unknown)
         metrics = calculate_all_metrics(
             pnl_series=simulated_pnls,
             hold_days=hold_days_list,

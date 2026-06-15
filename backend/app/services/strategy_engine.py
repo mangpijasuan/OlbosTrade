@@ -329,14 +329,20 @@ class IronCondor(BaseStrategy):
         return PositionSize(contracts=contracts, risk_per_contract=max_loss,
                            total_risk=contracts * max_loss, size_multiplier=multiplier)
 
-    def check_exit(self, entry_credit, current_value, dte_remaining, short_strike_breached) -> ExitDecision:
+    def check_exit(
+        self, entry_credit, current_value, dte_remaining,
+        short_strike_breached,           # put side breach (price below short put)
+        short_call_strike_breached=False,  # call side breach (price above short call)
+    ) -> ExitDecision:
         profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
         if profit_pct >= 0.25:
             return ExitDecision(should_exit=True, reason="25% profit target reached")
         if dte_remaining <= 21:
             return ExitDecision(should_exit=True, reason="21 DTE time stop")
         if short_strike_breached:
-            return ExitDecision(should_exit=True, reason="Short strike breached", urgency="immediate")
+            return ExitDecision(should_exit=True, reason="Short put strike breached", urgency="immediate")
+        if short_call_strike_breached:
+            return ExitDecision(should_exit=True, reason="Short call strike breached", urgency="immediate")
         return ExitDecision(should_exit=False, reason=None)
 
 

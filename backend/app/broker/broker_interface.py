@@ -1,7 +1,7 @@
 """
 Abstract broker interface + all shared Pydantic v2 models.
 Every broker implementation must satisfy this contract exactly.
-Swap IBKR ↔ Tradier by changing BROKER= in .env — nothing else changes.
+Swap IBKR ↔ Alpaca by changing BROKER= in .env — nothing else changes.
 """
 
 from __future__ import annotations
@@ -95,6 +95,16 @@ class Position(BaseModel):
     greeks: Greeks | None = None
 
 
+class EquityPosition(BaseModel):
+    """A live equity (stock/ETF) position."""
+    symbol: str
+    quantity: int = Field(description="Positive = long, negative = short")
+    avg_cost: Decimal
+    current_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
+    market_value: Decimal | None = None
+
+
 class AccountSummary(BaseModel):
     """Top-level account snapshot."""
     account_id: str
@@ -105,6 +115,35 @@ class AccountSummary(BaseModel):
     trading_mode: Literal["live", "paper", "sandbox"] = "paper"
 
 
+class Bar(BaseModel):
+    """A single OHLCV bar."""
+    timestamp: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+
+
+class Quote(BaseModel):
+    """Latest bid/ask quote for an equity."""
+    symbol: str
+    bid_price: Decimal
+    ask_price: Decimal
+    bid_size: int
+    ask_size: int
+    timestamp: datetime
+
+
+class EquityOrderResult(BaseModel):
+    """Result of an equity order submission."""
+    order_id: str
+    status: Literal["submitted", "filled", "cancelled", "rejected", "pending"]
+    fill_price: Decimal | None = None
+    filled_at: datetime | None = None
+    message: str | None = None
+
+
 # ── Abstract Interface ──────────────────────────────────────────────────────
 
 class BrokerInterface(ABC):
@@ -113,6 +152,18 @@ class BrokerInterface(ABC):
     No strategy or risk code should ever import a concrete client directly —
     always depend on BrokerInterface.
     """
+
+    @property
+    @abstractmethod
+    def supports_options(self) -> bool:
+        """True if this broker supports options trading."""
+        ...
+
+    @property
+    @abstractmethod
+    def supports_equities(self) -> bool:
+        """True if this broker supports equity trading."""
+        ...
 
     @abstractmethod
     async def get_options_chain(self, symbol: str, expiry: str) -> OptionsChain:
@@ -133,10 +184,36 @@ class BrokerInterface(ABC):
 
     @abstractmethod
     async def get_positions(self) -> list[Position]:
-        """Return all currently open positions."""
+        """Return all currently open options positions."""
         ...
 
     @abstractmethod
     async def get_account_summary(self) -> AccountSummary:
         """Return top-level account figures."""
+        ...
+
+    @abstractmethod
+    async def place_equity_order(
+        self,
+        ticker: str,
+        qty: int,
+        side: Literal["BUY", "SELL"],
+        order_type: Literal["market", "limit", "stop", "stop_limit"] = "market",
+        limit_price: float | None = None,
+        stop: float | None = None,
+        take_profit: float | None = None,
+    ) -> EquityOrderResult:
+        """Submit an equity order with optional bracket (stop + take-profit)."""
+        ...
+
+    @abstractmethod
+    async def get_bars(
+        self, ticker: str, timeframe: str = "1Day", limit: int = 100
+    ) -> list[Bar]:
+        """Fetch OHLCV bars for an equity symbol."""
+        ...
+
+    @abstractmethod
+    async def get_latest_quote(self, ticker: str) -> Quote:
+        """Fetch the latest bid/ask quote for an equity."""
         ...

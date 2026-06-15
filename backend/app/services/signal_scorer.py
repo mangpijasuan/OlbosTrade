@@ -1,17 +1,26 @@
 """
-AI Signal Scorer — XGBoost classifier with SHAP explainability.
-Score range: 0.0 to 1.0. Threshold: 0.65 normal / 0.80 preservation mode.
+AI Signal Scorer — XGBoost regressor with SHAP explainability.
+Predicts continuous return-on-risk (RoR). Threshold: predicted RoR > 12%.
 
 FIX #4: SHAP TreeExplainer cached at load time — never rebuilt per inference call.
 FIX #4: Scoring runs in ThreadPoolExecutor to avoid blocking the asyncio event loop.
 FIX #5: Counterfactual scoring method added for walk-forward training integrity.
 FIX #6: Uncertainty quantification — rejects trades in the ambiguous zone near threshold.
+
+SUGGESTIONS IMPLEMENTED:
+- S1: Two new features in SignalFeatures (credit_theta_rate, vix_term_slope).
+      Both have safe defaults so existing callers don't break.
+- S2: Superseded by S3 — no calibration needed for a regressor.
+- S3: Model is now XGBRegressor predicting RoR. Inference uses predict() not
+      predict_proba(). Legacy classifier models are still supported via auto-detection.
+- S4: Staleness check at load time — logs WARNING if model data is >90 days old.
 """
 
 import asyncio
 import pickle
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +31,8 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# S1: Updated feature list — 15 features (was 13).
+# New: credit_theta_rate, vix_term_slope
 FEATURE_NAMES = [
     "iv_rank", "iv_percentile", "vix_level",
     "spy_rsi_14", "spy_adx_14", "spy_trend_direction",
@@ -29,7 +40,13 @@ FEATURE_NAMES = [
     "spread_width", "credit_to_width_ratio",
     "earnings_days_away", "spy_realized_vol_20d",
     "iv_minus_rv",
+    # S1 new features
+    "credit_theta_rate",   # daily credit as % of max risk (theta efficiency)
+    "vix_term_slope",      # VIX3M / VIX (>1 = contango = normal)
 ]
+
+# S3: Default RoR threshold — predicted RoR must exceed 12% to approve
+DEFAULT_ROR_THRESHOLD = 0.12
 
 # FIX #6: Trades scoring within this band of the threshold are rejected
 # as "uncertain" — the model is not confident enough to approve
@@ -41,20 +58,28 @@ _INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scor
 
 @dataclass
 class SignalFeatures:
-    """All 13 features used by the signal scorer."""
+    """All 15 features used by the signal scorer (13 original + 2 S1 additions)."""
     iv_rank: float
     iv_percentile: float
     vix_level: float
     spy_rsi_14: float
     spy_adx_14: float
-    spy_trend_direction: float          # 1.0 = above SMA, -1.0 = below SMA
+    spy_trend_direction: float           # 1.0 = above SMA, -1.0 = below SMA
     days_to_expiry: float
     short_strike_delta: float
     spread_width: float
     credit_to_width_ratio: float
-    earnings_days_away: float           # 999 if no earnings soon
+    earnings_days_away: float            # capped at 60 (C2)
     spy_realized_vol_20d: float
     iv_minus_rv: float
+    # S1 new features — safe defaults for backward compatibility
+    credit_theta_rate: float = 0.0      # credit_to_width / DTE; computed if 0
+    vix_term_slope: float = 1.05        # VIX3M / VIX; default = mild contango
+
+    def __post_init__(self) -> None:
+        # S1: Auto-compute credit_theta_rate from existing fields if not set
+        if self.credit_theta_rate == 0.0 and self.days_to_expiry > 0:
+            self.credit_theta_rate = self.credit_to_width_ratio / max(self.days_to_expiry, 1.0)
 
     def to_array(self) -> np.ndarray:
         return np.array([[
@@ -64,6 +89,7 @@ class SignalFeatures:
             self.spread_width, self.credit_to_width_ratio,
             self.earnings_days_away, self.spy_realized_vol_20d,
             self.iv_minus_rv,
+            self.credit_theta_rate, self.vix_term_slope,
         ]])
 
 
@@ -79,13 +105,14 @@ class FeatureImpact:
 @dataclass
 class ScoreResult:
     """Full result from scoring a signal."""
-    score: float
+    score: float                # S3: predicted RoR (e.g. 0.18 = 18% RoR) or classifier proba
     approved: bool
-    threshold: float
+    threshold: float            # S3: min_ror threshold (e.g. 0.12)
     uncertain: bool             # FIX #6: True if score is in uncertainty band
     features: SignalFeatures
     feature_impacts: list[FeatureImpact]
     model_version: str
+    model_type: str = "classifier"   # S3: "regressor" or "classifier"
     rejection_reason: Optional[str] = None
 
 
@@ -97,11 +124,15 @@ class SignalScorer:
 
     FIX #4: SHAP explainer is cached once at load time.
     FIX #4: score_async() runs inference off the asyncio event loop.
+    S3: Auto-detects regressor vs classifier from saved model metadata.
+    S4: Warns if model training data is >90 days stale.
     """
 
     def __init__(self) -> None:
         self.model = None
         self.model_version = "untrained"
+        self.model_type = "classifier"   # S3: "regressor" or "classifier"
+        self._ror_threshold = DEFAULT_ROR_THRESHOLD
         # FIX #4: Explainer cached here — never rebuilt per call
         self._explainer = None
         self._load_model()
@@ -109,28 +140,64 @@ class SignalScorer:
     def _load_model(self) -> None:
         """Load model and build SHAP explainer once."""
         model_path = Path(settings.model_path)
-        if model_path.exists():
-            with open(model_path, "rb") as f:
-                saved = pickle.load(f)
-                self.model = saved.get("model")
-                self.model_version = saved.get("version", "v1")
-
-            # FIX #4: Build TreeExplainer at load time, not per-call
-            try:
-                import shap
-                self._explainer = shap.TreeExplainer(self.model)
-                logger.info(
-                    "Signal scorer loaded: %s | SHAP explainer cached",
-                    self.model_version,
-                )
-            except Exception as exc:
-                logger.warning("SHAP explainer build failed: %s — scores will lack explanations", exc)
-        else:
+        if not model_path.exists():
             logger.warning(
                 "No trained model at %s — using heuristic scoring. "
                 "Run ml/train_signal_scorer.py after backtesting.",
                 model_path,
             )
+            return
+
+        with open(model_path, "rb") as f:
+            saved = pickle.load(f)
+
+        self.model = saved.get("model")
+        self.model_version = saved.get("version", "v1")
+
+        # S3: Detect model type — use saved metadata first, fall back to class check
+        saved_type = saved.get("model_type", "")
+        if saved_type == "regressor":
+            self.model_type = "regressor"
+        elif saved_type == "classifier":
+            self.model_type = "classifier"
+        else:
+            # Auto-detect from class name for models saved before v2
+            cls_name = type(self.model).__name__
+            self.model_type = "regressor" if "Regressor" in cls_name else "classifier"
+
+        # S3: Load RoR threshold (saved in pkl by trainer, default 0.12)
+        self._ror_threshold = float(saved.get("ror_threshold", DEFAULT_ROR_THRESHOLD))
+
+        # S4: Staleness check
+        date_range = saved.get("date_range", {})
+        staleness_days = int(date_range.get("staleness_days", 90))
+        cutoff_str = date_range.get("to", "")
+        if cutoff_str:
+            try:
+                cutoff_date = date.fromisoformat(cutoff_str)
+                age_days = (date.today() - cutoff_date).days
+                if age_days > staleness_days:
+                    logger.warning(
+                        "STALE MODEL: signal scorer was trained on data through %s "
+                        "(%d days ago, limit=%d). Market conditions may have shifted. "
+                        "Run ml/train_signal_scorer.py to retrain.",
+                        cutoff_str, age_days, staleness_days,
+                    )
+                else:
+                    logger.info("Model freshness: %d days old (limit=%d)", age_days, staleness_days)
+            except ValueError:
+                pass
+
+        # FIX #4: Build TreeExplainer at load time, not per-call
+        try:
+            import shap
+            self._explainer = shap.TreeExplainer(self.model)
+            logger.info(
+                "Signal scorer loaded: %s (%s) | threshold=%.2f | SHAP explainer cached",
+                self.model_version, self.model_type, self._ror_threshold,
+            )
+        except Exception as exc:
+            logger.warning("SHAP explainer build failed: %s — scores will lack explanations", exc)
 
     def score(
         self,
@@ -140,11 +207,20 @@ class SignalScorer:
         """
         Score a signal synchronously.
         Use score_async() in async contexts to avoid blocking the event loop.
+
+        S3: For regressor models, threshold is minimum predicted RoR (default 0.12).
+            For legacy classifier models, threshold is minimum probability (default 0.65).
         """
-        effective_threshold = threshold or settings.signal_score_threshold
+        # S3: Use RoR threshold for regressor, probability threshold for classifier
+        if self.model_type == "regressor":
+            effective_threshold = threshold or self._ror_threshold
+        else:
+            effective_threshold = threshold or settings.signal_score_threshold
 
         if self.model is not None:
             raw_score, impacts = self._model_score(features)
+            # W3: Check SHAP economic direction
+            self._check_shap_directions(impacts)
         else:
             raw_score, impacts = self._heuristic_score(features)
 
@@ -182,6 +258,7 @@ class SignalScorer:
             features=features,
             feature_impacts=impacts,
             model_version=self.model_version,
+            model_type=self.model_type,
             rejection_reason=rejection_reason,
         )
 
@@ -206,31 +283,53 @@ class SignalScorer:
     def _model_score(self, features: SignalFeatures) -> tuple[float, list[FeatureImpact]]:
         """
         FIX #4: Uses cached self._explainer — not rebuilt per call.
+        S3: Uses predict() for regressors, predict_proba() for classifiers.
+
+        For regressors: returns predicted RoR (e.g. 0.18 = 18%).
+        For classifiers: returns win probability (0.0 – 1.0).
         """
         try:
             X = features.to_array()
-            proba = float(self.model.predict_proba(X)[0][1])
+
+            # S3: Branch on model type
+            if self.model_type == "regressor":
+                # Regressor: predict returns RoR directly
+                raw = float(self.model.predict(X)[0])
+                # Clip to reasonable range — RoR can't be below -1 or above 1
+                score = float(np.clip(raw, -1.0, 1.0))
+            else:
+                # Legacy classifier: predict_proba returns win probability
+                score = float(self.model.predict_proba(X)[0][1])
 
             impacts: list[FeatureImpact] = []
             if self._explainer is not None:
                 # FIX #4: Cached explainer — O(1) lookup, not O(n_trees) build
-                shap_values = self._explainer.shap_values(X)[0]
+                raw_shap = self._explainer.shap_values(X)
+                # Regressors return shape (n_samples, n_features),
+                # classifiers may return (n_samples, n_features) or list thereof
+                if isinstance(raw_shap, list):
+                    shap_values = raw_shap[1][0]   # class 1 for classifiers
+                else:
+                    shap_values = raw_shap[0]      # regressors
+
+                feat_names = FEATURE_NAMES
+                n_feats = min(len(feat_names), len(shap_values))
                 impacts = [
                     FeatureImpact(
-                        feature_name=FEATURE_NAMES[i],
+                        feature_name=feat_names[i],
                         value=float(X[0][i]),
                         shap_value=float(shap_values[i]),
                         direction=(
-                            "positive" if shap_values[i] > 0.01
-                            else "negative" if shap_values[i] < -0.01
+                            "positive" if shap_values[i] > 0.005
+                            else "negative" if shap_values[i] < -0.005
                             else "neutral"
                         ),
                     )
-                    for i in range(len(FEATURE_NAMES))
+                    for i in range(n_feats)
                 ]
                 impacts.sort(key=lambda x: abs(x.shap_value), reverse=True)
 
-            return proba, impacts
+            return score, impacts
 
         except Exception as exc:
             logger.error("Model scoring failed, falling back to heuristic: %s", exc)
@@ -283,15 +382,62 @@ class SignalScorer:
         ]
         return min(score, 1.0), sorted(impacts, key=lambda x: abs(x.shap_value), reverse=True)
 
+    def _check_shap_directions(self, impacts: list[FeatureImpact]) -> None:
+        """
+        W3 FIX: Sanity-check that economically positive features have positive
+        SHAP values for this signal.  A strong negative SHAP on iv_rank or
+        iv_minus_rv when those values are high suggests the model learned
+        something backwards — worth surfacing as a log warning.
+
+        This is a per-inference check, not a per-training check.  It catches
+        model drift (e.g. retrained model on bad data) before it silently
+        affects live decisions.
+        """
+        EXPECTED_POSITIVE: set[str] = {
+            "iv_rank", "iv_minus_rv", "credit_to_width_ratio",
+            "earnings_days_away", "vix_level",
+        }
+        for impact in impacts:
+            if impact.feature_name not in EXPECTED_POSITIVE:
+                continue
+            # Only flag when the feature value is actually elevated (top 40th pct)
+            # AND SHAP is strongly negative — avoids noise from near-zero values
+            value_is_high = {
+                "iv_rank": impact.value > 40,
+                "iv_minus_rv": impact.value > 0.02,
+                "credit_to_width_ratio": impact.value > 0.25,
+                "earnings_days_away": impact.value > 14,
+                "vix_level": impact.value > 18,
+            }.get(impact.feature_name, False)
+
+            if value_is_high and impact.shap_value < -0.05:
+                logger.warning(
+                    "SHAP DIRECTION ANOMALY: %s=%.3f has SHAP=%.3f (expected positive). "
+                    "May indicate model drift or label construction issue — "
+                    "consider retraining.",
+                    impact.feature_name, impact.value, impact.shap_value,
+                )
+
     def explain(self, result: ScoreResult) -> dict:
         """Return a human-readable explanation of the score."""
         top_pos = [f for f in result.feature_impacts if f.direction == "positive"][:3]
         top_neg = [f for f in result.feature_impacts if f.direction == "negative"][:3]
+
+        # S3: Tailor score label to model type
+        if result.model_type == "regressor":
+            score_label = f"Predicted RoR: {result.score*100:+.1f}%"
+            threshold_label = f"Min RoR threshold: {result.threshold*100:.0f}%"
+        else:
+            score_label = f"Win probability: {result.score:.3f}"
+            threshold_label = f"Min probability threshold: {result.threshold:.2f}"
+
         return {
             "score": result.score,
+            "score_label": score_label,
             "approved": result.approved,
             "uncertain": result.uncertain,
             "threshold": result.threshold,
+            "threshold_label": threshold_label,
             "decision": "APPROVE" if result.approved else "REJECT",
             "rejection_reason": result.rejection_reason,
             "top_positive_factors": [
@@ -303,4 +449,5 @@ class SignalScorer:
                 for f in top_neg
             ],
             "model_version": result.model_version,
+            "model_type": result.model_type,
         }

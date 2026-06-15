@@ -266,14 +266,26 @@ class TradingModeManager:
       - frontend reads mode for display and user switching
     """
 
+    _PERSIST_PATH = "/tmp/olbosquant_trading_mode.json"
+
     def __init__(self) -> None:
+        # Try to restore previously persisted mode
+        persisted_mode = TradingModeType.BALANCED
+        try:
+            import json, os
+            if os.path.exists(self._PERSIST_PATH):
+                data = json.loads(open(self._PERSIST_PATH).read())
+                persisted_mode = TradingModeType(data.get("mode", "balanced"))
+        except Exception:
+            pass
+
         self._current = TradingModeState(
-            active_mode=TradingModeType.BALANCED,
-            config=TRADING_MODES[TradingModeType.BALANCED],
+            active_mode=persisted_mode,
+            config=TRADING_MODES[persisted_mode],
             activated_at=datetime.now(timezone.utc),
-            activated_by="default",
+            activated_by="restored",
         )
-        logger.info("TradingModeManager initialized — mode: BALANCED")
+        logger.info("TradingModeManager initialized — mode: %s", persisted_mode.value.upper())
 
     @property
     def current(self) -> TradingModeState:
@@ -324,6 +336,13 @@ class TradingModeManager:
             "Trading mode changed: %s → %s (by %s)",
             previous.value, mode.value, activated_by,
         )
+        # Persist mode so it survives backend restarts
+        try:
+            import json
+            with open(self._PERSIST_PATH, "w") as f:
+                json.dump({"mode": mode.value}, f)
+        except Exception as e:
+            logger.warning("Could not persist trading mode: %s", e)
         return self._current
 
     def auto_downgrade(self, reason: str) -> TradingModeState:

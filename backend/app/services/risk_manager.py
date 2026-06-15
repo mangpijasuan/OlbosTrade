@@ -87,6 +87,31 @@ class RiskManager:
         contracts = int(target_risk / max(max_loss_per_spread, 1.0))
         return max(contracts, 1)
 
+    def kelly_position_size(
+        self,
+        portfolio_value: float,
+        win_rate: float,
+        avg_win_pct: float,
+        avg_loss_pct: float,
+        kelly_fraction: float = 0.25,
+    ) -> float:
+        """
+        Kelly-optimal position size in dollars, fractional Kelly at 0.25.
+        Falls back to 2% risk when inputs are invalid.
+        """
+        if avg_win_pct <= 0 or win_rate <= 0 or win_rate >= 1:
+            return portfolio_value * self.RISK_PER_TRADE_PCT
+
+        edge = win_rate * avg_win_pct - (1 - win_rate) * abs(avg_loss_pct)
+        kelly_full = edge / avg_win_pct if avg_win_pct > 0 else 0.0
+
+        if kelly_full <= 0:
+            return portfolio_value * self.RISK_PER_TRADE_PCT
+
+        position_dollars = portfolio_value * kelly_full * kelly_fraction
+        # Clamp: never more than 8% or less than 1% of portfolio
+        return max(min(position_dollars, portfolio_value * 0.08), portfolio_value * 0.01)
+
     def approve_trade(
         self,
         trade: ProposedTrade,

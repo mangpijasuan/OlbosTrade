@@ -25,7 +25,11 @@ export function useRisk() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    const interval = setInterval(refresh, 15000); // re-poll every 15s
+    return () => clearInterval(interval);
+  }, [refresh]);
 
   return { portfolioState, riskState, guardrailStatus, killSwitch, loading, refresh };
 }

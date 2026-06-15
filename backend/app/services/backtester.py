@@ -34,8 +34,11 @@ from app.utils.metrics import PerformanceMetrics, calculate_all_metrics
 logger = get_logger(__name__)
 
 RISK_FREE_RATE = 0.05
-# Minimum credit-to-width ratio to enter — filters marginal trades
-MIN_CREDIT_TO_WIDTH = 0.20
+# Minimum credit-to-width ratio to enter.
+# Real SPY bull-put / bear-call spreads at 35 DTE 0.20-delta typically yield
+# 8–15% of spread width as net credit.  The old 0.20 (20%) threshold was
+# rejecting every qualifying trade.  0.08 matches observed market pricing.
+MIN_CREDIT_TO_WIDTH = 0.08
 
 
 @dataclass
@@ -60,6 +63,13 @@ class BacktestTrade:
     hold_days: int = 0
     entry_vix: float = 20.0
     partial_fill_occurred: bool = False
+    # W1 FIX: Store spread geometry so label construction in ml/features.py
+    # can compute return-on-risk (ror) instead of sign(P&L).
+    # Previously these defaulted to 10.0 / 0.25 for EVERY training row,
+    # giving the model zero signal from these features.
+    spread_width: float = 0.0           # short_strike - long_strike (points)
+    credit_to_width_ratio: float = 0.0  # entry_credit / spread_width
+    credit_received: float = 0.0        # entry_credit * 100 per contract (dollars)
     # FIX #5: Store what the model WOULD have scored (counterfactual)
     counterfactual_signal_score: Optional[float] = None
 
@@ -169,15 +179,33 @@ class Backtester:
         # FIX #1: Build shifted indicator frame — no look-ahead after this point
         ind = self._build_indicator_frame(df)
 
-        # FIX #3: Load real VIX history for IV rank if provided
+        # FIX #3: Load real VIX history for IV rank
+        # Auto-fetch ^VIX from yfinance if not provided — real IV rank is critical
+        # for strategy gating (bull_put/bear_call need IV rank >30, condor >40).
+        # The RV proxy keeps SPY IV rank near 0–17, causing 0 trades every backtest.
         vix_close: Optional[pd.Series] = None
         if vix_df is not None:
             vix_close = vix_df["Close"].reindex(df.index, method="ffill")
         else:
-            logger.warning(
-                "No VIX data provided — using RV proxy for IV rank. "
-                "Pass vix_df for production-grade backtests."
-            )
+            try:
+                import asyncio as _asyncio
+                import yfinance as _yf
+
+                loop = _asyncio.get_running_loop()
+                _vix_raw = await loop.run_in_executor(
+                    None,
+                    lambda: _yf.Ticker("^VIX").history(
+                        start=warmup_start, end=end_date, auto_adjust=True
+                    )
+                )
+                if not _vix_raw.empty:
+                    _vix_raw.index = pd.to_datetime(_vix_raw.index).tz_localize(None)
+                    vix_close = _vix_raw["Close"].reindex(df.index, method="ffill")
+                    logger.info("Loaded ^VIX history (%d rows) for IV rank", len(_vix_raw))
+                else:
+                    logger.warning("^VIX empty — using RV proxy for IV rank")
+            except Exception as _vix_exc:
+                logger.warning("Failed to fetch ^VIX (%s) — using RV proxy", _vix_exc)
 
         # Trim to actual backtest window (after warm-up)
         backtest_start = pd.Timestamp(start_date)
@@ -258,11 +286,13 @@ class Backtester:
                 sigma = current_rv if current_rv > 0.05 else 0.15
 
                 try:
-                    current_short_val = self.pricer.put_price(
+                    _use_calls = trade.strategy in ("bear_call_spread", "bull_call_debit_spread")
+                    _pricer_fn = self.pricer.call_price if _use_calls else self.pricer.put_price
+                    current_short_val = _pricer_fn(
                         fill_close, trade.short_strike, T_remaining,
                         RISK_FREE_RATE, sigma
                     )
-                    current_long_val = self.pricer.put_price(
+                    current_long_val = _pricer_fn(
                         fill_close, trade.long_strike, T_remaining,
                         RISK_FREE_RATE, sigma
                     )
@@ -437,19 +467,25 @@ class Backtester:
             spread_width = abs(signal.short_strike - long_strike)
 
             # FIX #1: Entry pricing also uses signal_close (prior bar), not fill_close
+            # Use call_price for call-based strategies, put_price for put-based
             try:
-                entry_short = self.pricer.put_price(
+                _use_calls = strategy_name in ("bear_call_spread", "bull_call_debit_spread")
+                _entry_pricer = self.pricer.call_price if _use_calls else self.pricer.put_price
+                entry_short = _entry_pricer(
                     signal_close, signal.short_strike,
                     T_entry, RISK_FREE_RATE, sigma_entry
                 )
-                entry_long = self.pricer.put_price(
+                entry_long = _entry_pricer(
                     signal_close, long_strike,
                     T_entry, RISK_FREE_RATE, sigma_entry
                 )
             except Exception:
                 continue
 
-            # FIX #7: Entry fills use VIX-adjusted slippage + partial fill simulation
+            # FIX #7: Entry fills use VIX-adjusted slippage.
+            # Partial fill simulation is DISABLED in backtesting — we already model
+            # friction via B-S slippage + commissions. The stochastic partial fill
+            # model is only meaningful for live order routing, not synthetic prices.
             spread_result: SpreadFillResult = self.fill_sim.simulate_spread_fill(
                 legs=[
                     {"bid": max(entry_short - 0.05, 0.01),
@@ -459,17 +495,8 @@ class Backtester:
                 ],
                 contracts=1,
                 vix=vix,
-                simulate_partial_fills=True,
+                simulate_partial_fills=False,  # disabled in backtesting
             )
-
-            # FIX #7: Partial fill = do NOT enter the trade
-            if not spread_result.combo_complete:
-                logger.debug(
-                    "Partial fill — skipping entry. %s",
-                    spread_result.partial_fill_reason,
-                )
-                partial_fill_count += 1
-                continue
 
             fill_short = spread_result.leg_fills[0]
             fill_long  = spread_result.leg_fills[1]
@@ -483,6 +510,10 @@ class Backtester:
 
             total_commission = fill_short.commission + fill_long.commission
 
+            # W1 FIX: populate spread geometry so ml/features.py _ror_label()
+            # can compute return-on-risk.  spread_width = short - long for
+            # bull-put; long - short for bear-call. We store as positive points.
+            _sw = abs(signal.short_strike - long_strike)
             new_trade = BacktestTrade(
                 strategy=strategy_name,
                 underlying="SPY",
@@ -495,6 +526,10 @@ class Backtester:
                 commission_paid=total_commission,
                 contracts=1,
                 entry_vix=vix,
+                # W1: real spread geometry (not hardcoded defaults)
+                spread_width=_sw,
+                credit_to_width_ratio=(net_credit / _sw) if _sw > 0 else 0.0,
+                credit_received=net_credit * 100,   # dollars per contract
             )
             open_trades.append(new_trade)
             trades_today += 1
