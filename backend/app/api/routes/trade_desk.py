@@ -45,6 +45,14 @@ class KillSwitchRequest(BaseModel):
     engaged: bool
 
 
+class ManualTradeRequest(BaseModel):
+    ticker:      str
+    action:      str            # BUY | SELL
+    shares:      int   = 1
+    order_type:  str   = "market"   # market | limit
+    limit_price: Optional[float] = None
+
+
 # ── Kill switch endpoints ──────────────────────────────────────────────────────
 
 @router.get("/kill-switch")
@@ -131,6 +139,60 @@ async def reject_signal(signal_id: str):
     return entry
 
 
+# ── Manual trade ──────────────────────────────────────────────────────────────
+
+@router.post("/manual-trade")
+async def manual_trade(req: ManualTradeRequest):
+    """Force a manual equity order — bypasses signal scoring and IV filters."""
+    if _is_kill_switch_active():
+        raise HTTPException(403, "Kill switch is engaged — reset it first")
+
+    signal = {
+        "id":         str(uuid.uuid4()),
+        "ticker":     req.ticker.upper(),
+        "action":     req.action.upper(),
+        "asset_type": "equity",
+        "trade_plan": {
+            "shares":      req.shares,
+            "entry_price": req.limit_price,
+            "stop_price":  None,
+            "target_price": None,
+        },
+        "manual":     True,
+        "order_type": req.order_type,
+    }
+
+    try:
+        from app.broker.broker_factory import get_broker
+        broker = get_broker()
+        result = await broker.place_equity_order(
+            ticker=req.ticker.upper(),
+            qty=req.shares,
+            side=req.action.upper(),
+            order_type=req.order_type,
+            limit_price=req.limit_price,
+        )
+        entry = {
+            "signal_id":    signal["id"],
+            "ticker":       req.ticker.upper(),
+            "asset_type":   "equity",
+            "action":       req.action.upper(),
+            "shares":       req.shares,
+            "order_type":   req.order_type,
+            "limit_price":  req.limit_price,
+            "order_id":     result.order_id,
+            "order_status": result.status,
+            "result":       "submitted",
+            "approved_by":  "manual",
+            "executed_at":  datetime.now(timezone.utc).isoformat(),
+        }
+        _execution_log.insert(0, entry)
+        del _execution_log[200:]
+        return entry
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
 # ── Execution log ──────────────────────────────────────────────────────────────
 
 @router.get("/execution-log")
@@ -187,6 +249,30 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 limit_price=trade_plan.get("entry_price"),
                 stop=trade_plan.get("stop_price"),
             )
+
+            # Record to DB
+            try:
+                from app.services.trade_recorder import trade_recorder
+                await trade_recorder.record_fill(
+                    symbol=ticker,
+                    strategy="equity",
+                    option_type=None,
+                    short_strike=None,
+                    long_strike=None,
+                    expiration=None,
+                    contracts=shares,
+                    entry_credit=trade_plan.get("entry_price") or 0,
+                    spread_width=0,
+                    order_id=result.order_id,
+                    signal_score=signal.get("signal_score", 0),
+                    iv_rank=signal.get("iv_rank", 0),
+                    regime=signal.get("regime", "unknown"),
+                    trading_mode=signal.get("trading_mode", "autopilot"),
+                    notes=f"{action} {shares} shares via {approved_by}",
+                )
+            except Exception as _rec_exc:
+                logger.warning("Failed to record trade to DB: %s", _rec_exc)
+
             return {
                 "signal_id":   signal.get("id"),
                 "ticker":      ticker,
@@ -246,6 +332,31 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 time_in_force="DAY",
             )
             result = await broker.place_order(order)
+
+            # Record to DB
+            try:
+                from app.services.trade_recorder import trade_recorder
+                from datetime import date
+                await trade_recorder.record_fill(
+                    symbol=ticker,
+                    strategy=strategy,
+                    option_type=opt_type,
+                    short_strike=float(short_str),
+                    long_strike=float(long_str),
+                    expiration=expiry_date,
+                    contracts=1,
+                    entry_credit=float(credit),
+                    spread_width=abs(float(short_str) - float(long_str)),
+                    order_id=result.order_id,
+                    signal_score=signal.get("signal_score", 0),
+                    iv_rank=signal.get("iv_rank", 0),
+                    regime=signal.get("regime", "unknown"),
+                    trading_mode=signal.get("trading_mode", "autopilot"),
+                    notes=f"{strategy} via {approved_by}",
+                )
+            except Exception as _rec_exc:
+                logger.warning("Failed to record options trade to DB: %s", _rec_exc)
+
             return {
                 "signal_id":    signal.get("id"),
                 "ticker":       ticker,
