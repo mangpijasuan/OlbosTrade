@@ -523,15 +523,60 @@ async def _run_options_scan() -> None:
 
 
 async def _poll_fills() -> None:
-    """Poll open order fills — does NOT call get_account_summary to avoid
-    IBKR error 322 (subscription accumulation)."""
+    """
+    Compare live broker positions against open DB trades.
+    When a position disappears from IBKR (fully closed), mark the
+    corresponding DB trade as closed and compute realized P&L.
+    """
     try:
         from app.broker.broker_factory import get_broker
+        from app.core.database import AsyncSessionLocal
+        from app.models.trade import Trade
+        from app.services.trade_recorder import trade_recorder
+        from sqlalchemy import select
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
         broker = get_broker()
-        # Only fetch positions — lightweight, no subscription overhead
-        await broker.get_positions()
-    except Exception:
-        pass  # non-fatal
+        live_positions = await broker.get_positions()
+
+        # Build set of symbols currently held at IBKR
+        live_symbols = {
+            getattr(p, "symbol", getattr(p, "underlying", "")).upper()
+            for p in live_positions
+        }
+
+        # Load all open trades from DB
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Trade).where(Trade.status == "open")
+            )
+            open_trades = result.scalars().all()
+
+        for trade in open_trades:
+            underlying = (trade.underlying or "").upper()
+            if underlying and underlying not in live_symbols:
+                # Position gone from broker — it was closed
+                # Use credit_received as a proxy for cost_to_close=0 (full profit)
+                # The real exit price isn't available without order history,
+                # so we record cost_to_close=0 and flag exit_reason for review.
+                credit = float(trade.credit_received or 0)
+                qty    = float(getattr(trade, "quantity", 1) or 1)
+                pnl    = credit * qty * 100  # rough: full credit kept
+
+                await trade_recorder.record_exit(
+                    trade_id=str(trade.id),
+                    cost_to_close=0.0,
+                    exit_reason="position_closed_at_broker",
+                )
+                logger.info(
+                    "Auto-closed trade %s (%s) — no longer in IBKR positions. "
+                    "Estimated P&L=%.2f",
+                    trade.id, underlying, pnl,
+                )
+
+    except Exception as exc:
+        logger.debug("_poll_fills: %s", exc)  # non-fatal
 
 
 async def _update_portfolio_greeks() -> None:
