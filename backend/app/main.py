@@ -525,8 +525,8 @@ async def _run_options_scan() -> None:
 async def _poll_fills() -> None:
     """
     Compare live broker positions against open DB trades.
-    When a position disappears from IBKR (fully closed), mark the
-    corresponding DB trade as closed and compute realized P&L.
+    When a position disappears from IBKR (fully closed), fetch the actual
+    fill price from IBKR execution history and record the real P&L.
     """
     try:
         from app.broker.broker_factory import get_broker
@@ -534,8 +534,6 @@ async def _poll_fills() -> None:
         from app.models.trade import Trade
         from app.services.trade_recorder import trade_recorder
         from sqlalchemy import select
-        from datetime import datetime, timezone
-        from decimal import Decimal
 
         broker = get_broker()
         live_positions = await broker.get_positions()
@@ -553,27 +551,62 @@ async def _poll_fills() -> None:
             )
             open_trades = result.scalars().all()
 
+        if not open_trades:
+            return
+
+        # Fetch recent IBKR executions once — keyed by symbol → avg fill price
+        exit_prices: dict[str, float] = {}
+        try:
+            ib = getattr(broker, "ib", None)
+            if ib is not None:
+                import asyncio
+                from ib_insync import ExecutionFilter
+                fills = await asyncio.wait_for(
+                    ib.reqExecutionsAsync(ExecutionFilter()),
+                    timeout=5.0,
+                )
+                # Group fills by symbol, average the fill prices weighted by shares
+                sym_total: dict[str, float] = {}
+                sym_shares: dict[str, float] = {}
+                for fill in fills:
+                    sym = (fill.contract.symbol or "").upper()
+                    shares = abs(fill.execution.shares or 0)
+                    price  = fill.execution.price or 0
+                    if sym and shares > 0:
+                        sym_total[sym]  = sym_total.get(sym, 0) + price * shares
+                        sym_shares[sym] = sym_shares.get(sym, 0) + shares
+                for sym, total in sym_total.items():
+                    exit_prices[sym] = round(total / sym_shares[sym], 4)
+        except Exception as _exec_exc:
+            logger.debug("Could not fetch IBKR executions: %s", _exec_exc)
+
         for trade in open_trades:
             underlying = (trade.underlying or "").upper()
-            if underlying and underlying not in live_symbols:
-                # Position gone from broker — it was closed
-                # Use credit_received as a proxy for cost_to_close=0 (full profit)
-                # The real exit price isn't available without order history,
-                # so we record cost_to_close=0 and flag exit_reason for review.
-                credit = float(trade.credit_received or 0)
-                qty    = float(getattr(trade, "quantity", 1) or 1)
-                pnl    = credit * qty * 100  # rough: full credit kept
+            if not underlying or underlying in live_symbols:
+                continue  # still open — skip
 
-                await trade_recorder.record_exit(
-                    trade_id=str(trade.id),
-                    cost_to_close=0.0,
-                    exit_reason="position_closed_at_broker",
-                )
-                logger.info(
-                    "Auto-closed trade %s (%s) — no longer in IBKR positions. "
-                    "Estimated P&L=%.2f",
-                    trade.id, underlying, pnl,
-                )
+            # Get actual exit price from execution history, fall back to entry price
+            exit_price = exit_prices.get(underlying)
+            entry_price = float(trade.credit_received or trade.short_strike or 0)
+
+            if exit_price is not None:
+                cost_to_close = exit_price
+                exit_reason   = "position_closed_at_broker"
+            else:
+                # No execution data — use entry price so P&L = 0 (neutral, not fake profit)
+                cost_to_close = entry_price
+                exit_reason   = "position_closed_at_broker_estimated"
+
+            await trade_recorder.record_exit(
+                trade_id=str(trade.id),
+                cost_to_close=cost_to_close,
+                exit_reason=exit_reason,
+            )
+            logger.info(
+                "Auto-closed %s (%s) — exit_price=%.4f source=%s",
+                trade.id, underlying, cost_to_close,
+                "ibkr_execution" if exit_price is not None else "estimated",
+            )
 
     except Exception as exc:
         logger.debug("_poll_fills: %s", exc)  # non-fatal
