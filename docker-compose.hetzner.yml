@@ -1,17 +1,49 @@
-# OlbosQuant — Hetzner VPS Production
+# OlbosQuant — Hetzner VPS Production (IBKR headless)
 #
-# All services self-hosted on a single VPS (no managed DB/Redis needed).
+# All services self-hosted on a single VPS — replaces MacBook local setup.
+# IB Gateway runs headlessly in Docker (paper port 4002).
 # Images are built directly on the server — no external registry required.
 #
-# Usage:
+# Usage (first deploy):
 #   docker compose -f docker-compose.hetzner.yml up -d --build
-#
-# On first deploy also run migrations:
 #   docker compose -f docker-compose.hetzner.yml exec backend alembic upgrade head
+#
+# To view IB Gateway GUI remotely (VNC):
+#   ssh -L 5900:localhost:5900 deploy@YOUR_SERVER_IP
+#   Then open any VNC viewer → localhost:5900 (password from VNC_PASSWORD env)
 
 version: "3.11"
 
 services:
+
+  # ── IB Gateway (headless paper trading) ───────────────────────────────────
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: olbosquant_ib_gateway
+    restart: always
+    environment:
+      TWS_USERID:           ${IBKR_USERNAME}
+      TWS_PASSWORD:         ${IBKR_PASSWORD}
+      TRADING_MODE:         ${IBKR_TRADING_MODE:-paper}
+      GATEWAY_OR_TWS:       gateway
+      VNC_SERVER_PASSWORD:  ${VNC_PASSWORD}
+      TWOFA_TIMEOUT_ACTION: restart
+    ports:
+      - "127.0.0.1:4002:4002"   # paper socket — localhost only (not public)
+      - "127.0.0.1:5900:5900"   # VNC — SSH tunnel to access remotely
+    volumes:
+      - ib_gateway_data:/home/ibgateway/Jts
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4002 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s   # IB Gateway takes ~60-90s to boot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
@@ -66,6 +98,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-options_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-options_db}
       REDIS_URL: redis://redis:6379
+      IBKR_HOST: ib-gateway
+      IBKR_PORT: "4002"
+      IBKR_CLIENT_ID: "1"
     expose:
       - "8000"
     volumes:
@@ -75,6 +110,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ib-gateway:
         condition: service_healthy
     deploy:
       resources:
@@ -161,3 +198,4 @@ volumes:
   app_logs:
   certbot_certs:
   certbot_www:
+  ib_gateway_data:
