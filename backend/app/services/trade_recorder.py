@@ -91,6 +91,8 @@ class TradeRecorder:
                         exit_date=None,
                         exit_reason=None,
                         signal_score=Decimal(str(round(signal_score, 4))),
+                        quantity=int(quantity or 1),
+                        trading_mode_at_entry=trading_mode or "balanced",
                     )
                     session.add(trade)
 
@@ -152,7 +154,8 @@ class TradeRecorder:
                         return False
 
                     credit = float(trade.credit_received or 0)
-                    pnl    = (credit - cost_to_close) * float(trade.quantity or 1) * 100
+                    qty    = int(getattr(trade, "quantity", None) or 1)
+                    pnl    = (credit - cost_to_close) * qty * 100
                     pnl_pct = pnl / 25000.0  # vs starting capital
 
                     trade.cost_to_close = Decimal(str(round(cost_to_close, 4)))

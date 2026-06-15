@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Enum, Numeric, String, func
+from sqlalchemy import Date, DateTime, Enum, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -55,6 +55,10 @@ class Trade(Base):
         String(50), nullable=True,
         comment="profit_target | stop_loss | expiration | manual | dte_exit"
     )
+
+    # Quantity and mode
+    quantity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=1)
+    trading_mode_at_entry: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # AI & execution
     signal_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4), nullable=True)

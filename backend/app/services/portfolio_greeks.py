@@ -64,6 +64,7 @@ class PortfolioGreeksTracker:
         vega: float,
         theta: float,
         qty: int,
+        side: str = "long",
     ) -> None:
         """Add or update an options position with broker-provided Greeks."""
         self._positions[symbol] = PositionGreeks(
