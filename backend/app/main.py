@@ -675,6 +675,7 @@ async def guardrail_status():
     # Read real P&L from DB
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
     try:
         async with AsyncSessionLocal() as session:
             def _pnl_window(from_date):
@@ -683,6 +684,7 @@ async def guardrail_status():
                 )
             daily_pnl   = float((await session.execute(_pnl_window(today))).scalar() or 0)
             weekly_pnl  = float((await session.execute(_pnl_window(week_start))).scalar() or 0)
+            monthly_pnl = float((await session.execute(_pnl_window(month_start))).scalar() or 0)
             trades_today = int((await session.execute(
                 select(func.count(Trade.id)).where(
                     and_(Trade.status == "closed", func.date(Trade.exit_date) == today)
@@ -697,7 +699,7 @@ async def guardrail_status():
                 if (p or 0) < 0: consecutive_losses += 1
                 else: break
     except Exception:
-        daily_pnl = weekly_pnl = 0.0
+        daily_pnl = weekly_pnl = monthly_pnl = 0.0
         trades_today = consecutive_losses = 0
 
     # Get real broker account value
@@ -713,7 +715,7 @@ async def guardrail_status():
         starting_capital=settings.starting_capital,
         daily_pnl=daily_pnl,
         weekly_pnl=weekly_pnl,
-        monthly_pnl=0.0,
+        monthly_pnl=monthly_pnl,
         consecutive_losses=consecutive_losses,
         trades_today=trades_today,
     )
@@ -728,6 +730,9 @@ async def guardrail_status():
         "trading_mode":          trading_mode,
         "reason":                status.reason,
         "flags":                 status.flags,
+        "daily_pnl":             daily_pnl,
+        "weekly_pnl":            weekly_pnl,
+        "monthly_pnl":           monthly_pnl,
         "daily_loss_pct":        status.daily_loss_pct,
         "weekly_loss_pct":       status.weekly_loss_pct,
         "monthly_loss_pct":      status.monthly_loss_pct,

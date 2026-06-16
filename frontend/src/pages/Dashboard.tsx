@@ -207,8 +207,10 @@ export default function Dashboard() {
   const { positions, portfolio, greeks } = usePaperTrade();
   const { guardrailStatus, portfolioState } = useRisk();
 
-  const pv    = portfolio?.account_value ?? portfolio?.net_liquidation ?? 25000;
-  const daily = portfolioState?.state?.daily_pnl ?? portfolio?.total_pnl ?? 0;
+  const pv      = portfolio?.account_value ?? portfolio?.net_liquidation ?? 25000;
+  const daily   = guardrailStatus?.daily_pnl   ?? portfolioState?.state?.daily_pnl   ?? portfolio?.total_pnl ?? 0;
+  const weekly  = guardrailStatus?.weekly_pnl  ?? 0;
+  const monthly = guardrailStatus?.monthly_pnl ?? 0;
 
   const [range, setRange]           = useState("ALL");
   const [allPoints, setAllPoints]   = useState<ChartPoint[]>([]);
@@ -285,7 +287,7 @@ export default function Dashboard() {
     <div style={{ display: "grid", gridTemplateRows: "auto 1fr auto", height: "100%", gap: 0 }}>
 
       {/* Top stat bar */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
         <StatCell
           label="Portfolio Value"
           value={`$${(pv / 1000).toFixed(2)}k`}
@@ -297,6 +299,16 @@ export default function Dashboard() {
           value={`${daily >= 0 ? "+" : ""}$${Math.abs(daily).toFixed(0)}`}
           sub={portfolio?.win_rate != null ? `Win rate: ${(portfolio.win_rate * 100).toFixed(1)}%` : undefined}
           color={daily >= 0 ? "var(--green)" : "var(--red)"}
+        />
+        <StatCell
+          label="Week P&L"
+          value={`${weekly >= 0 ? "+" : ""}$${Math.abs(weekly).toFixed(0)}`}
+          color={weekly >= 0 ? "var(--green)" : "var(--red)"}
+        />
+        <StatCell
+          label="Month P&L"
+          value={`${monthly >= 0 ? "+" : ""}$${Math.abs(monthly).toFixed(0)}`}
+          color={monthly >= 0 ? "var(--green)" : "var(--red)"}
         />
         <StatCell label="Buying Power"     value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
         <StatCell label="Net Delta"        value={(greeks?.net_delta || 0).toFixed(3)} />
