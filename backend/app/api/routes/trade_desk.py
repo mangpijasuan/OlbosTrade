@@ -232,6 +232,31 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     action     = signal.get("action", "")
     executed_at = datetime.now(timezone.utc).isoformat()
 
+    # Block duplicate: skip if an open trade for this symbol already exists in DB
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.models.trade import Trade
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as _db:
+            existing = (await _db.execute(
+                select(Trade.id).where(
+                    Trade.underlying == ticker,
+                    Trade.status == "open",
+                )
+            )).first()
+        if existing:
+            logger.info("Skipping %s — open trade already exists in DB", ticker)
+            return {
+                "signal_id":  signal.get("id"),
+                "ticker":     ticker,
+                "asset_type": asset_type,
+                "result":     "skipped",
+                "reason":     "already_open",
+                "executed_at": executed_at,
+            }
+    except Exception as _dup_exc:
+        logger.warning("Duplicate check failed for %s: %s", ticker, _dup_exc)
+
     try:
         from app.broker.broker_factory import get_broker
         broker = get_broker()
