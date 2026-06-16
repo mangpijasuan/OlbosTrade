@@ -156,7 +156,7 @@ async def _background_scheduler() -> None:
     global _current_regime
 
     equity_interval_s  = settings.equity_signal_interval_minutes * 60
-    options_interval_s = 60 * 60   # 1 hour (options signals less frequent)
+    options_interval_s = 30 * 60   # 30 minutes
     regime_interval_s  = 30 * 60   # 30 minutes
     greeks_interval_s  = 60        # 1 minute
     fills_interval_s   = 30        # 30 seconds
