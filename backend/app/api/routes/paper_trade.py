@@ -96,6 +96,26 @@ async def get_positions():
     except Exception:
         db_trades = {}
 
+    # Fetch current prices for all symbols via yfinance
+    import asyncio, yfinance as yf
+    symbols = list({getattr(p, "symbol", "") for p in broker_positions if getattr(p, "symbol", "")})
+    price_map: dict[str, float] = {}
+    if symbols:
+        def _fetch_prices():
+            try:
+                tickers = yf.Tickers(" ".join(symbols))
+                for sym in symbols:
+                    try:
+                        hist = tickers.tickers[sym].history(period="1d")
+                        if not hist.empty:
+                            price_map[sym] = float(hist["Close"].iloc[-1])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _fetch_prices)
+
     positions = []
     seen = set()
 
@@ -103,12 +123,22 @@ async def get_positions():
         sym = getattr(pos, "symbol", str(pos))
         seen.add(sym)
         db = db_trades.get(sym)
+        qty      = getattr(pos, "quantity", 0)
+        avg_cost = float(getattr(pos, "avg_cost", 0) or 0)
+        cur_price = price_map.get(sym)
+        if cur_price is not None and avg_cost > 0:
+            market_value   = round(cur_price * qty, 2)
+            unrealized_pnl = round((cur_price - avg_cost) * qty, 2)
+        else:
+            market_value   = None
+            unrealized_pnl = None
         positions.append({
             "symbol":         sym,
-            "quantity":       getattr(pos, "quantity", 0),
-            "avg_cost":       getattr(pos, "avg_cost", None),
-            "market_value":   getattr(pos, "market_value", None),
-            "unrealized_pnl": getattr(pos, "unrealized_pnl", None),
+            "quantity":       qty,
+            "avg_cost":       avg_cost,
+            "current_price":  cur_price,
+            "market_value":   market_value,
+            "unrealized_pnl": unrealized_pnl,
             "strategy":       db.strategy if db else "unknown",
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
         })
