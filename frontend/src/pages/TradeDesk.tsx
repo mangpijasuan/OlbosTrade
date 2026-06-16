@@ -377,6 +377,27 @@ function PnLBreakdown() {
 export default function TradeDesk() {
   const { positions, lastSignal, cycleLog, loading, runCycle } = usePaperTrade();
   const [tab, setTab] = useState<Tab>("signals");
+  const [trades, setTrades]       = useState<any[]>([]);
+  const [tradesLoading, setTradesLoading] = useState(true);
+
+  useEffect(() => {
+    const load = () => {
+      setTradesLoading(true);
+      (api.getTradeHistory() as any)
+        .then((h: any) => setTrades(h.trades || []))
+        .finally(() => setTradesLoading(false));
+    };
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  const holdDays = (entry: string | null, exit: string | null) => {
+    if (!entry) return null;
+    const from = new Date(entry);
+    const to   = exit ? new Date(exit) : new Date();
+    return Math.floor((to.getTime() - from.getTime()) / 86400000);
+  };
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "signals",   label: "SIGNALS" },
@@ -433,28 +454,35 @@ export default function TradeDesk() {
             )}
             <table className="t-table">
               <thead><tr>
-                {["Date","Symbol","Strategy","Status","Credit","P&L","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
+                {["Entry Date","Symbol","Strategy","Status","Entry Price","P&L","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {(cycleLog || []).length === 0 ? (
+                {tradesLoading ? (
+                  <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                    LOADING…
+                  </td></tr>
+                ) : trades.length === 0 ? (
                   <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
                     NO TRADE HISTORY — RUN A CYCLE OR WAIT FOR NEXT SCAN
                   </td></tr>
-                ) : (cycleLog || []).map((l: any, i: number) => {
-                  const pnl = l.pnl || 0;
+                ) : trades.map((t: any, i: number) => {
+                  const pnl  = t.pnl || 0;
+                  const days = holdDays(t.entry_date, t.exit_date);
                   return (
                     <tr key={i}>
-                      <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{l.entry_date?.slice(0,10) || "—"}</td>
-                      <td className="mono" style={{ color: "var(--cyan)" }}>{l.underlying || l.symbol || "SPY"}</td>
-                      <td className="mono" style={{ fontSize: 10 }}>{l.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
-                      <td><Badge text={l.status?.toUpperCase() || "OPEN"}
-                        color={l.status === "closed" ? "var(--green)" : "var(--cyan)"} /></td>
-                      <td className="mono">${(l.credit_received || 0).toFixed(2)}</td>
-                      <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
-                        {pnl !== 0 ? `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : "—"}
+                      <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{t.entry_date?.slice(0,10) || "—"}</td>
+                      <td className="mono" style={{ color: "var(--cyan)" }}>{t.underlying || t.symbol || "—"}</td>
+                      <td className="mono" style={{ fontSize: 10 }}>{t.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
+                      <td><Badge text={t.status?.toUpperCase() || "OPEN"}
+                        color={t.status === "closed" ? "var(--green)" : "var(--cyan)"} /></td>
+                      <td className="mono">${(t.credit_received || t.short_strike || 0).toFixed(2)}</td>
+                      <td className="mono" style={{ color: t.status === "open" ? "var(--ink-dim)" : pnl >= 0 ? "var(--green)" : "var(--red)", fontWeight: pnl !== 0 ? 600 : 400 }}>
+                        {t.status === "open" ? "—" : pnl !== 0 ? `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : "$0.00"}
                       </td>
-                      <td className="mono">{l.hold_days != null ? `${l.hold_days}d` : "—"}</td>
-                      <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{l.exit_reason?.replace(/_/g," ").toUpperCase() || "—"}</td>
+                      <td className="mono">{days != null ? `${days}d` : "—"}</td>
+                      <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>
+                        {t.exit_reason?.replace(/_/g," ").toUpperCase() || (t.status === "open" ? "OPEN" : "—")}
+                      </td>
                     </tr>
                   );
                 })}
