@@ -191,6 +191,7 @@ async def get_trade_history(
                     "expiration":      t.expiration.isoformat() if t.expiration else None,
                     "short_strike":    float(t.short_strike),
                     "long_strike":     float(t.long_strike),
+                    "quantity":        int(getattr(t, "quantity", None) or 0),
                     "credit_received": float(t.credit_received or 0),
                     "cost_to_close":   float(t.cost_to_close or 0),
                     "pnl":             float(t.pnl or 0),

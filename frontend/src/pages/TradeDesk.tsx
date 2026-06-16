@@ -454,15 +454,15 @@ export default function TradeDesk() {
             )}
             <table className="t-table">
               <thead><tr>
-                {["Entry Date","Symbol","Strategy","Status","Entry Price","P&L","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
+                {["Entry Date","Symbol","Qty","Strategy","Status","Entry Price","P&L","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {tradesLoading ? (
-                  <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                  <tr><td colSpan={9} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
                     LOADING…
                   </td></tr>
                 ) : trades.length === 0 ? (
-                  <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                  <tr><td colSpan={9} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
                     NO TRADE HISTORY — RUN A CYCLE OR WAIT FOR NEXT SCAN
                   </td></tr>
                 ) : trades.map((t: any, i: number) => {
@@ -472,6 +472,12 @@ export default function TradeDesk() {
                     <tr key={i}>
                       <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{t.entry_date?.slice(0,10) || "—"}</td>
                       <td className="mono" style={{ color: "var(--cyan)" }}>{t.underlying || t.symbol || "—"}</td>
+                      <td className="mono" style={{ color: t.quantity > 0 ? "var(--green)" : t.quantity < 0 ? "var(--red)" : "var(--ink-dim)", fontWeight: 600 }}>
+                        {t.quantity > 0 ? `+${t.quantity}` : t.quantity < 0 ? `${t.quantity}` : "—"}
+                        <span style={{ fontSize: 9, marginLeft: 3, opacity: 0.7 }}>
+                          {t.quantity > 0 ? "LONG" : t.quantity < 0 ? "SHORT" : ""}
+                        </span>
+                      </td>
                       <td className="mono" style={{ fontSize: 10 }}>{t.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
                       <td><Badge text={t.status?.toUpperCase() || "OPEN"}
                         color={t.status === "closed" ? "var(--green)" : "var(--cyan)"} /></td>
