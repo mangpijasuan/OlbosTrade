@@ -33,6 +33,11 @@ def get_broker() -> BrokerInterface:
         _broker_instance = IBKRClient()
         logger.info("Active broker: IBKR (host=%s port=%s)", settings.ibkr_host, settings.ibkr_port)
 
+    elif name == "ibkr_cp":
+        from app.broker.client_portal_client import ClientPortalClient
+        _broker_instance = ClientPortalClient()
+        logger.info("Active broker: IBKR Client Portal (gateway=%s)", settings.cp_gateway_url)
+
     elif name == "alpaca":
         from app.broker.alpaca_client import AlpacaClient
         _broker_instance = AlpacaClient()
@@ -41,7 +46,7 @@ def get_broker() -> BrokerInterface:
 
     else:
         raise ValueError(
-            f"Unknown broker '{name}'. Set BROKER=ibkr or BROKER=alpaca in .env."
+            f"Unknown broker '{name}'. Set BROKER=ibkr, BROKER=ibkr_cp, or BROKER=alpaca in .env."
         )
 
     return _broker_instance

@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     ibkr_client_id: int = Field(default=1)
     ibkr_trading_mode: str = Field(default="paper")
 
+    # ── IBKR Client Portal Web API (used when BROKER=ibkr_cp) ─────────────
+    # REST/WebSocket gateway (clientportal.gw) — a different API from the
+    # ib_insync socket connection. Runs headless on the droplet; authenticate
+    # once via browser. See deploy/clientportal/README.md.
+    cp_gateway_url: str = Field(default="https://127.0.0.1:5000")
+    cp_gateway_verify_ssl: bool = Field(default=False)  # gateway ships self-signed cert
+    cp_account_id: str = Field(default="")              # blank = auto-detect
+    cp_tickle_interval_s: int = Field(default=60)       # session keepalive cadence
+
     # ── Alpaca ────────────────────────────────────────────────────────────
     alpaca_api_key: str = Field(default="")
     alpaca_secret_key: str = Field(default="")

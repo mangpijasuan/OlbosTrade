@@ -15,6 +15,13 @@ build/
 .venv/
 venv/
 
+# Vendored IBKR Client Portal gateway — keep its dist/ and build/ jars
+# (overrides the generic Python dist/ build/ ignores above)
+!deploy/clientportal/dist/
+!deploy/clientportal/dist/**
+!deploy/clientportal/build/
+!deploy/clientportal/build/**
+
 # Node
 node_modules/
 frontend/node_modules/

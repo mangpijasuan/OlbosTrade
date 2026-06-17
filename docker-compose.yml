@@ -27,6 +27,25 @@ services:
       retries: 10
       start_period: 60s   # IB Gateway takes ~45s to boot on first run
 
+  # ── IBKR Client Portal Web API gateway (REST/WS on :5000) ─────────────────
+  # Alternative to ib-gateway (TWS socket). Used when BROKER=ibkr_cp.
+  # Auth: tunnel to it and log in via browser at https://localhost:5000.
+  # Bound to 127.0.0.1 only — never expose the auth gateway publicly.
+  ib-gateway-cp:
+    build:
+      context: ./deploy/clientportal
+      dockerfile: Dockerfile
+    container_name: olbosquant_ibgw_cp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -skf https://localhost:5000/ -o /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   # ── PostgreSQL (port 5433 locally to avoid clash with OLBOS on 5432) ─────
   postgres:
     image: postgres:15
