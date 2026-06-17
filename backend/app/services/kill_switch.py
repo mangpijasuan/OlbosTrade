@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.broker.broker_interface import BrokerInterface, SpreadLeg, SpreadOrder
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.risk_state import GuardrailEvent
 from app.utils.logger import get_logger
