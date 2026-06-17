@@ -44,11 +44,11 @@ class Trade(Base):
     credit_received: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     cost_to_close: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4), nullable=True)
-    pnl_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6), nullable=True)
+    pnl_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6), nullable=True)
 
     # Status
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="open",
+        String(20), nullable=False, default="open", index=True,
         comment="open | closed | expired"
     )
     exit_reason: Mapped[Optional[str]] = mapped_column(

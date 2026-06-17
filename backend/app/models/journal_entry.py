@@ -23,7 +23,8 @@ class JournalEntry(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     trade_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trades.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("trades.id", ondelete="SET NULL"),
+        nullable=True, index=True,
     )
 
     # Pre-trade psychology

@@ -8,6 +8,7 @@ manually resolved to prevent position doubling on restart.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import select
@@ -197,15 +198,20 @@ class PositionReconciler:
         positions = await self.broker.get_positions()
         account = await self.broker.get_account_summary()
 
+        # Money columns are Numeric — pass Decimal(str(...)) so binary-float
+        # rounding doesn't leak into the ledger.
+        def _money(v) -> Decimal:
+            return Decimal(str(round(float(v), 4)))
+
         async with AsyncSessionLocal() as session:
             snap = PortfolioSnapshot(
                 timestamp=datetime.now(timezone.utc),
-                total_value=portfolio_value,
-                cash=float(account.cash_balance),
+                total_value=_money(portfolio_value),
+                cash=_money(account.cash_balance),
                 open_position_count=len(positions),
-                daily_pnl=daily_pnl,
-                weekly_pnl=weekly_pnl,
-                monthly_pnl=monthly_pnl,
+                daily_pnl=_money(daily_pnl),
+                weekly_pnl=_money(weekly_pnl),
+                monthly_pnl=_money(monthly_pnl),
                 trading_mode=trading_mode,
                 consecutive_losses=consecutive_losses,
                 trades_today=trades_today,

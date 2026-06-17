@@ -37,7 +37,13 @@ def _to_out(e: JournalEntry, trade: Optional[Trade] = None) -> JournalEntryOut:
         mistake_tags=e.mistake_tags or [],
         pnl=float(trade.pnl) if (trade and trade.pnl is not None) else None,
         signal_score=float(trade.signal_score) if (trade and trade.signal_score) else None,
-        entry_date=e.created_at.date() if e.created_at else date.today(),
+        # Prefer the trade's real entry_date; fall back to the journal row's
+        # creation time only when no trade is linked. (created_at is the journal
+        # write time, which can be a different day than the trade entry.)
+        entry_date=(
+            trade.entry_date.date() if (trade and trade.entry_date)
+            else (e.created_at.date() if e.created_at else date.today())
+        ),
         exit_date=trade.exit_date.date() if (trade and trade.exit_date) else None,
     )
 

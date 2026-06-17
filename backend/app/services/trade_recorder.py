@@ -146,12 +146,19 @@ class TradeRecorder:
 
             async with AsyncSessionLocal() as session:
                 async with session.begin():
+                    # Lock the row and only match if still open — prevents two
+                    # concurrent close paths (e.g. profit-target watcher + manual
+                    # close) from both applying the exit and double-counting P&L.
                     result = await session.execute(
-                        select(Trade).where(Trade.id == uuid.UUID(trade_id))
+                        select(Trade)
+                        .where(Trade.id == uuid.UUID(trade_id), Trade.status == "open")
+                        .with_for_update()
                     )
                     trade = result.scalar_one_or_none()
                     if trade is None:
-                        logger.warning("record_exit: trade %s not found", trade_id)
+                        logger.warning(
+                            "record_exit: trade %s not found or already closed", trade_id
+                        )
                         return False
 
                     from app.core.config import settings

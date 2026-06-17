@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.core.database import Base  # noqa: F401
 from app.models import (  # noqa: F401
     backtest_result,
+    equity_signal,
     journal_entry,
     options_flow,
+    portfolio_greeks_snapshot,
     position,
     risk_state,
     trade,
