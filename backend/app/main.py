@@ -755,9 +755,14 @@ async def guardrail_status():
             for p in recent:
                 if (p or 0) < 0: consecutive_losses += 1
                 else: break
+            # All-time realized P&L — used to back out current open (unrealized) P&L.
+            realized_all_time = float((await session.execute(
+                select(func.coalesce(func.sum(Trade.pnl), 0)).where(Trade.status == "closed")
+            )).scalar() or 0)
     except Exception:
         daily_pnl = weekly_pnl = monthly_pnl = 0.0
         trades_today = consecutive_losses = 0
+        realized_all_time = 0.0
 
     # Get real broker account value
     try:
@@ -766,6 +771,15 @@ async def guardrail_status():
         current_value = float(acct.net_liquidation)
     except Exception:
         current_value = settings.starting_capital
+
+    # Fold OPEN-position (unrealized) P&L into the loss windows so the daily/
+    # weekly/monthly stops respond to a bleeding open book — previously they used
+    # realized-only P&L, so the daily stop was bypassable simply by not closing
+    # losers. Unrealized = net_liq - starting_capital - all-time realized.
+    unrealized_pnl = current_value - settings.starting_capital - realized_all_time
+    daily_pnl   += unrealized_pnl
+    weekly_pnl  += unrealized_pnl
+    monthly_pnl += unrealized_pnl
 
     portfolio = PortfolioState(
         current_value=current_value,

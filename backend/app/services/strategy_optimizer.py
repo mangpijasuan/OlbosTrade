@@ -529,9 +529,19 @@ class StrategyOptimizer:
         # Where W = win rate, L = loss rate, W_avg = avg win / avg loss
         win_loss_ratio = avg_win / avg_loss
         kelly_full = win_rate - (1 - win_rate) / win_loss_ratio
-        kelly_frac = kelly_full * fractional
 
-        # Hard cap at 3% risk per trade
+        # Non-positive full Kelly = no edge → size to ZERO (skip the strategy).
+        # Previously this was floored to 0.5%, so negative-expectancy strategies
+        # kept getting capital allocated.
+        if kelly_full <= 0:
+            logger.info(
+                "Kelly: %s has non-positive edge (full_kelly=%.3f) — sizing to 0",
+                strategy_name, kelly_full,
+            )
+            return 0.0
+
+        kelly_frac = kelly_full * fractional
+        # Hard cap at 3% risk per trade (floor 0.5% only once edge is positive)
         kelly_capped = min(max(kelly_frac, 0.005), 0.03)
 
         logger.info(
