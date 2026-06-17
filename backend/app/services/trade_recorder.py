@@ -70,10 +70,13 @@ class TradeRecorder:
 
             trade_id = uuid.uuid4()
 
+            # Both rows are written in ONE transaction. flush() inserts the
+            # Trade first so the JournalEntry FK is satisfied; if the journal
+            # insert fails, the trade is rolled back too — no orphaned trade
+            # with no journal (which previously made callers see None and retry,
+            # duplicating the position).
             async with AsyncSessionLocal() as session:
                 async with session.begin():
-
-                    # ── Trade row ──────────────────────────────────────────────
                     trade = Trade(
                         id=trade_id,
                         strategy=strategy,
@@ -95,10 +98,8 @@ class TradeRecorder:
                         trading_mode_at_entry=trading_mode or "balanced",
                     )
                     session.add(trade)
+                    await session.flush()  # insert Trade so the FK below resolves
 
-            # ── JournalEntry stub (separate transaction so FK is satisfied) ──
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
                     journal = JournalEntry(
                         trade_id=trade_id,
                         pre_trade_thesis="",
@@ -153,10 +154,22 @@ class TradeRecorder:
                         logger.warning("record_exit: trade %s not found", trade_id)
                         return False
 
-                    credit = float(trade.credit_received or 0)
-                    qty    = int(getattr(trade, "quantity", None) or 1)
-                    pnl    = (credit - cost_to_close) * qty * 100
-                    pnl_pct = pnl / 25000.0  # vs starting capital
+                    from app.core.config import settings
+
+                    credit     = float(trade.credit_received or 0)
+                    qty        = int(getattr(trade, "quantity", None) or 1)
+                    commission = float(getattr(trade, "commission_paid", None) or 0)
+
+                    # Debit spreads pay a debit at entry and receive value at
+                    # exit, so their P&L sign is the inverse of a credit spread.
+                    # Treating everything as a credit spread inverted debit P&L.
+                    is_debit = "debit" in (trade.strategy or "").lower()
+                    if is_debit:
+                        gross = (cost_to_close - credit) * qty * 100
+                    else:
+                        gross = (credit - cost_to_close) * qty * 100
+                    pnl = gross - commission
+                    pnl_pct = pnl / float(settings.starting_capital or 25000)
 
                     trade.cost_to_close = Decimal(str(round(cost_to_close, 4)))
                     trade.pnl           = Decimal(str(round(pnl, 2)))

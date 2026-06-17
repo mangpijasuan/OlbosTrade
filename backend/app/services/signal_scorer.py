@@ -43,6 +43,11 @@ FEATURE_NAMES = [
     # S1 new features
     "credit_theta_rate",   # daily credit as % of max risk (theta efficiency)
     "vix_term_slope",      # VIX3M / VIX (>1 = contango = normal)
+    # Options Intelligence flow features — MUST stay in the same order as
+    # ml/features.FEATURE_NAMES so train/serve columns line up. Older models
+    # trained without these still work via n_features alignment in _model_score.
+    "flow_sentiment_score",
+    "flow_large_sweep_bullish_count",
 ]
 
 # S3: Default RoR threshold — predicted RoR must exceed 12% to approve
@@ -75,6 +80,9 @@ class SignalFeatures:
     # S1 new features — safe defaults for backward compatibility
     credit_theta_rate: float = 0.0      # credit_to_width / DTE; computed if 0
     vix_term_slope: float = 1.05        # VIX3M / VIX; default = mild contango
+    # Options Intelligence flow features — neutral defaults (0.5 = balanced)
+    flow_sentiment_score: float = 0.5
+    flow_large_sweep_bullish_count: float = 0.0
 
     def __post_init__(self) -> None:
         # S1: Auto-compute credit_theta_rate from existing fields if not set
@@ -90,6 +98,7 @@ class SignalFeatures:
             self.earnings_days_away, self.spy_realized_vol_20d,
             self.iv_minus_rv,
             self.credit_theta_rate, self.vix_term_slope,
+            self.flow_sentiment_score, self.flow_large_sweep_bullish_count,
         ]])
 
 
@@ -132,6 +141,7 @@ class SignalScorer:
         self.model = None
         self.model_version = "untrained"
         self.model_type = "classifier"   # S3: "regressor" or "classifier"
+        self._n_features: Optional[int] = None  # feature count the model expects
         self._ror_threshold = DEFAULT_ROR_THRESHOLD
         # FIX #4: Explainer cached here — never rebuilt per call
         self._explainer = None
@@ -153,6 +163,16 @@ class SignalScorer:
 
         self.model = saved.get("model")
         self.model_version = saved.get("version", "v1")
+        # Capture how many features the model was trained on so inference can
+        # align its feature vector (prevents train/serve column skew when
+        # FEATURE_NAMES grows ahead of a retrain).
+        self._n_features = getattr(self.model, "n_features_in_", None)
+        if self._n_features is not None and self._n_features != len(FEATURE_NAMES):
+            logger.warning(
+                "Model expects %d features but FEATURE_NAMES has %d — inference "
+                "will align to the model's count (retrain to use all features).",
+                self._n_features, len(FEATURE_NAMES),
+            )
 
         # S3: Detect model type — use saved metadata first, fall back to class check
         saved_type = saved.get("model_type", "")
@@ -291,6 +311,16 @@ class SignalScorer:
         try:
             X = features.to_array()
 
+            # Align to the model's trained feature count. New features are
+            # appended last in FEATURE_NAMES, so trimming to the model's
+            # n_features keeps the existing columns correctly aligned.
+            if self._n_features is not None and X.shape[1] != self._n_features:
+                if X.shape[1] > self._n_features:
+                    X = X[:, : self._n_features]
+                else:
+                    pad = np.zeros((X.shape[0], self._n_features - X.shape[1]))
+                    X = np.hstack([X, pad])
+
             # S3: Branch on model type
             if self.model_type == "regressor":
                 # Regressor: predict returns RoR directly
@@ -312,7 +342,7 @@ class SignalScorer:
                 else:
                     shap_values = raw_shap[0]      # regressors
 
-                feat_names = FEATURE_NAMES
+                feat_names = FEATURE_NAMES[: X.shape[1]]
                 n_feats = min(len(feat_names), len(shap_values))
                 impacts = [
                     FeatureImpact(

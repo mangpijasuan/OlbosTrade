@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Enum, Integer, Numeric, String, func
+from sqlalchemy import Date, DateTime, Enum, Float, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,6 +65,20 @@ class Trade(Base):
     commission_paid: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     fill_price_short: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     fill_price_long: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+
+    # Unified equity/options fields (added in migration 0003 — previously
+    # present in the DB but missing from this model, so this data was
+    # unreadable via the ORM and autogenerate wanted to drop the columns).
+    instrument_type: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="option", server_default="option",
+        comment="equity | option"
+    )
+    broker_used: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    signal_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    orderflow_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    iv_overlay_boost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    regime_at_entry: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    kelly_fraction_used: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -207,6 +207,14 @@ class Backtester:
             except Exception as _vix_exc:
                 logger.warning("Failed to fetch ^VIX (%s) — using RV proxy", _vix_exc)
 
+        # Avoid look-ahead bias: use the PRIOR bar's VIX close for gating/IV-rank,
+        # consistent with the .shift(1) applied to every other signal indicator.
+        # The current bar's VIX close is not knowable at entry time; reading it
+        # leaked contemporaneous volatility into entry decisions and inflated
+        # backtest results (and the labels that feed model training).
+        if vix_close is not None:
+            vix_close = vix_close.shift(1)
+
         # Trim to actual backtest window (after warm-up)
         backtest_start = pd.Timestamp(start_date)
         ind = ind[ind.index >= backtest_start]
