@@ -11,6 +11,7 @@ import Journal         from "./pages/Journal";
 import Research        from "./pages/Research";
 import ModeAnalytics   from "./pages/ModeAnalytics";
 import EquitySignals   from "./pages/EquitySignals";
+import OptionsFlow     from "./pages/OptionsFlow";
 
 const PAGES: Record<string, React.ComponentType> = {
   dashboard:  Dashboard,
@@ -23,6 +24,7 @@ const PAGES: Record<string, React.ComponentType> = {
   journal:    Journal,
   research:   Research,
   analytics:  ModeAnalytics,
+  flow:       OptionsFlow,
 };
 
 export default function App() {

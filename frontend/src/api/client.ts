@@ -97,4 +97,24 @@ export const api = {
   },
   getModeDetail:         (mode: string) => request(`/api/analytics/mode/${mode}`),
   getSignalScoreImpact:  ()             => request("/api/analytics/signal-score-impact"),
+
+  // ── Options Flow (Options Intelligence module) ──────────────────────────────
+  getOptionsFlow: (params?: Record<string, string | number | undefined>) => {
+    const clean = Object.fromEntries(
+      Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== "")
+    ) as Record<string, string>;
+    const q = Object.keys(clean).length ? "?" + new URLSearchParams(clean).toString() : "";
+    return request<{ count: number; results: any[] }>(`/api/options-flow${q}`);
+  },
+  getOptionsFlowSummary: () => request<any>("/api/options-flow/summary"),
 };
+
+/** Build the absolute WebSocket URL for the options-flow live stream. */
+export function optionsFlowWsUrl(params?: Record<string, string | number | undefined>): string {
+  const clean = Object.fromEntries(
+    Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== "")
+  ) as Record<string, string>;
+  const q = Object.keys(clean).length ? "?" + new URLSearchParams(clean).toString() : "";
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/api/options-flow/ws${q}`;
+}

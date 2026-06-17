@@ -44,6 +44,14 @@ FEATURE_NAMES = [
     # S1: New options-specific features
     "credit_theta_rate",   # daily credit earned as % of max risk
     "vix_term_slope",      # VIX3M / VIX — vol term structure shape
+    # ── Options Intelligence flow features (prefix 'flow_') ───────────────────
+    # Added by the Options Intelligence module. Sourced at trade entry from the
+    # options_flow table via regime_classifier.compute_flow_features('SPY').
+    # Historical trades predate the flow feed, so build_feature_matrix backfills
+    # neutral defaults (0.5 / 0); the next walk-forward retrain picks these up
+    # automatically once live flow has accumulated.
+    "flow_sentiment_score",            # 30-min SPY bullish_premium / total
+    "flow_large_sweep_bullish_count",  # large bullish SPY sweeps, last 2h
 ]
 
 
@@ -199,6 +207,10 @@ def build_feature_matrix(
             # S1 new features
             "credit_theta_rate":     round(theta_rate, 6),
             "vix_term_slope":        round(vix_slope, 4),
+            # Options Intelligence flow features — neutral default for trades
+            # that predate the flow feed (0.5 = balanced, 0 = no sweeps).
+            "flow_sentiment_score":           float(trade.get("flow_sentiment_score", 0.5)),
+            "flow_large_sweep_bullish_count": float(trade.get("flow_large_sweep_bullish_count", 0)),
             # S3: continuous RoR target (replaces binary label)
             "label":                 _ror_value(trade),
         }
