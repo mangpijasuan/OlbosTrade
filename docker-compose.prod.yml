@@ -21,8 +21,10 @@ services:
     restart: always
     env_file:
       - .env.prod
-    ports:
-      - "8000:8000"
+    # Do NOT publish 8000 to the host — nginx (below) is the only ingress, so
+    # all traffic goes through TLS + rate-limiting + the auth-gated routes.
+    expose:
+      - "8000"
     volumes:
       - ml_models:/app/ml/model_registry    # persist trained models
       - app_logs:/app/logs                   # persist logs

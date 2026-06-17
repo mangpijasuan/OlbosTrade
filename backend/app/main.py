@@ -137,6 +137,9 @@ async def on_startup() -> None:
         # Wire kill switch — must happen after broker is available
         from app.services.kill_switch import kill_switch_service
         kill_switch_service.configure(broker)
+        # Restore engaged state from DB so a restart can't silently re-enable
+        # trading after the switch fired (fail-safe).
+        await kill_switch_service.rehydrate()
         logger.info("Kill switch wired to broker")
     except Exception as exc:
         logger.warning("Broker initialization failed (non-fatal): %s", exc)

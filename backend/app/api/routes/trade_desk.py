@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.security import require_api_key
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.kill_switch import kill_switch_service
 
@@ -20,15 +20,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ── Kill switch ────────────────────────────────────────────────────────────────
-# Single source of truth: kill_switch_service (from services/kill_switch.py).
-# _kill_switch is a fast thread-safe mirror so the hot path doesn't need an
-# async call — it is synced from kill_switch_service on every engage/reset.
-_kill_switch = threading.Event()
+# Single source of truth: kill_switch_service (services/kill_switch.py). Its
+# `is_engaged` is a cheap sync property, so the hot path reads it directly — no
+# separate mirror to drift out of sync.
 
 
 def _is_kill_switch_active() -> bool:
-    """Check both the local event and the authoritative service."""
-    return _kill_switch.is_set() or kill_switch_service.is_engaged
+    return kill_switch_service.is_engaged
 
 # ── In-memory pending approvals (Copilot mode) ────────────────────────────────
 # Populated by main.py background scanner when mode == copilot
@@ -61,15 +59,13 @@ async def get_kill_switch():
     return {"engaged": _is_kill_switch_active()}
 
 
-@router.post("/kill-switch")
+@router.post("/kill-switch", dependencies=[Depends(require_api_key)])
 async def set_kill_switch(body: KillSwitchRequest):
-    """Engage or reset the kill switch — syncs both the service and the local event."""
+    """Engage or reset the kill switch (authoritative service is the single source of truth)."""
     if body.engaged:
-        _kill_switch.set()
         await kill_switch_service.engage("manual via trade-desk API")
         logger.warning("KILL SWITCH ENGAGED via API — all order submission halted")
     else:
-        _kill_switch.clear()
         await kill_switch_service.reset("OLBOSQUANT_MANUAL_RESET")
         logger.info("Kill switch reset via API — order submission resumed")
     return {"engaged": _is_kill_switch_active()}
@@ -82,7 +78,7 @@ async def get_execution_mode():
     return execution_mode_manager.summary()
 
 
-@router.post("/execution-mode")
+@router.post("/execution-mode", dependencies=[Depends(require_api_key)])
 async def set_execution_mode(body: SetExecutionModeRequest):
     try:
         mode = ExecutionMode(body.mode)
@@ -105,7 +101,7 @@ async def get_pending():
     }
 
 
-@router.post("/approve/{signal_id}")
+@router.post("/approve/{signal_id}", dependencies=[Depends(require_api_key)])
 async def approve_signal(signal_id: str):
     """User approves a pending signal → executes order."""
     if signal_id not in _pending_approvals:
@@ -118,7 +114,7 @@ async def approve_signal(signal_id: str):
     return result
 
 
-@router.post("/reject/{signal_id}")
+@router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key)])
 async def reject_signal(signal_id: str):
     """User rejects a pending signal — no order sent."""
     if signal_id not in _pending_approvals:
@@ -141,7 +137,7 @@ async def reject_signal(signal_id: str):
 
 # ── Manual trade ──────────────────────────────────────────────────────────────
 
-@router.post("/manual-trade")
+@router.post("/manual-trade", dependencies=[Depends(require_api_key)])
 async def manual_trade(req: ManualTradeRequest):
     """Force a manual equity order — bypasses signal scoring and IV filters."""
     if _is_kill_switch_active():

@@ -3,9 +3,10 @@ Trading mode API routes.
 Allows frontend to read and switch trading modes.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.security import require_api_key
 from app.services.trading_mode import (
     TradingModeType,
     TRADING_MODES,
@@ -45,7 +46,7 @@ async def get_all_modes():
     }
 
 
-@router.post("/set")
+@router.post("/set", dependencies=[Depends(require_api_key)])
 async def set_trading_mode(body: SetModeRequest):
     """
     Switch to a new trading mode.
@@ -84,7 +85,7 @@ async def set_trading_mode(body: SetModeRequest):
     }
 
 
-@router.post("/reset-to-balanced")
+@router.post("/reset-to-balanced", dependencies=[Depends(require_api_key)])
 async def reset_to_balanced():
     """Reset to default Balanced mode."""
     trading_mode_manager.set_mode(TradingModeType.BALANCED, activated_by="user")

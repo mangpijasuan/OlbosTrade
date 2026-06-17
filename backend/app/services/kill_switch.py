@@ -53,6 +53,36 @@ class KillSwitch:
         self._broker = broker
         self._scheduler = scheduler
 
+    async def rehydrate(self) -> None:
+        """
+        Restore engaged state from the DB after a restart.
+
+        Without this a crash/redeploy after the switch fired would silently
+        re-enable trading. We read the most recent kill_switch / reset event:
+        if the latest is an engage with no subsequent reset, stay ENGAGED.
+        """
+        try:
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(GuardrailEvent)
+                    .where(GuardrailEvent.event_type.in_(("kill_switch", "kill_switch_reset")))
+                    .order_by(GuardrailEvent.timestamp.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
+            if row is not None and row.event_type == "kill_switch":
+                self._engaged = True
+                self._engaged_at = row.timestamp
+                self._reason = f"restored after restart ({row.notes or 'kill_switch'})"
+                logger.critical(
+                    "🛑 Kill switch RESTORED as ENGAGED from DB — trading remains halted "
+                    "until manually reset"
+                )
+                if self._scheduler is not None:
+                    self._scheduler.pause()
+        except Exception as exc:
+            logger.error("Kill switch rehydrate failed: %s", exc)
+
     @property
     def is_engaged(self) -> bool:
         return self._engaged
@@ -240,6 +270,18 @@ class KillSwitch:
 
         if self._scheduler is not None:
             self._scheduler.resume()
+
+        # Record the reset so rehydrate() after a restart knows the latest
+        # state is "reset", not "engaged".
+        try:
+            async with AsyncSessionLocal() as session:
+                session.add(GuardrailEvent(
+                    event_type="kill_switch_reset",
+                    notes="manual reset — trading re-enabled",
+                ))
+                await session.commit()
+        except Exception as exc:
+            logger.error("Kill switch: failed to persist reset event: %s", exc)
 
         logger.warning("Kill switch RESET — trading re-enabled after manual review")
         return {"reset": True, "trading_enabled": True}
