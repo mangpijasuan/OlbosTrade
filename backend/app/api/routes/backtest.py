@@ -11,10 +11,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, desc
 
+from app.api.auth import require_admin_api_key
 from app.core.database import AsyncSessionLocal
 from app.models.backtest_result import BacktestRun
 
@@ -158,7 +159,7 @@ async def _execute_backtest(run_id: str, req: BacktestRunRequest) -> None:
     await _persist_run(run_id, _runs[run_id])
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_admin_api_key)])
 async def run_backtest(req: BacktestRunRequest):
     """Kick off a backtest run. Poll GET /{run_id}/results for status."""
     valid = {"bull_put_spread", "bear_call_spread", "iron_condor", "bull_call_debit_spread"}
@@ -260,7 +261,7 @@ async def get_backtest_history(limit: int = 20):
         }
 
 
-@router.post("/compare")
+@router.post("/compare", dependencies=[Depends(require_admin_api_key)])
 async def compare_strategies(req: BacktestCompareRequest):
     """Run all 4 strategies on the same date range in parallel."""
     strategies = ["bull_put_spread", "bear_call_spread", "iron_condor", "bull_call_debit_spread"]

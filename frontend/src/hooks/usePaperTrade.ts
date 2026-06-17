@@ -32,8 +32,7 @@ export function usePaperTrade() {
   const runCycle = useCallback(async () => {
     setLoading(true);
     try {
-      // Trigger a manual signal cycle via the paper-trade toggle endpoint
-      await (api as any).runSignalCycle?.();
+      await api.runSignalCycle();
       await refresh();
     } catch {
       await refresh();

@@ -26,6 +26,7 @@ services:
     volumes:
       - ml_models:/app/ml/model_registry    # persist trained models
       - app_logs:/app/logs                   # persist logs
+      - options_flow_archive:/data/archive   # persist nightly options-flow archives
     deploy:
       resources:
         limits:
@@ -98,3 +99,4 @@ volumes:
   app_logs:
   certbot_certs:
   certbot_www:
+  options_flow_archive:

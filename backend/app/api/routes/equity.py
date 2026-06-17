@@ -8,8 +8,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import require_admin_api_key
 from app.broker.broker_factory import get_broker
 from app.core.config import settings
 from app.services.equity_signal_engine import (
@@ -54,7 +55,7 @@ async def _yf_bars_route(ticker: str, limit: int = 120):
     return await loop.run_in_executor(None, _fetch)
 
 
-@router.post("/scan")
+@router.post("/scan", dependencies=[Depends(require_admin_api_key)])
 async def scan_equity_signals():
     """
     Run equity signal scan across the configured watchlist.
@@ -179,7 +180,7 @@ async def list_equity_signals(limit: int = 50):
     return {"signals": _recent_signals[:limit], "total": len(_recent_signals)}
 
 
-@router.post("/signals/{signal_id}/approve")
+@router.post("/signals/{signal_id}/approve", dependencies=[Depends(require_admin_api_key)])
 async def approve_signal(signal_id: str):
     """Manually approve a pending equity signal."""
     for sig in _recent_signals:

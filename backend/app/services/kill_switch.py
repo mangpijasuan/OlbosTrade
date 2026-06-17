@@ -226,11 +226,15 @@ class KillSwitch:
         Reset kill switch after manual review.
         Requires explicit authorization to prevent accidental re-enable.
         """
-        if authorization_code != "OLBOSQUANT_MANUAL_RESET":
+        if not settings.kill_switch_reset_code:
             return {
                 "reset": False,
-                "reason": "Invalid authorization code. "
-                          "Pass authorization_code='OLBOSQUANT_MANUAL_RESET' to confirm.",
+                "reason": "Kill switch reset code is not configured.",
+            }
+        if authorization_code != settings.kill_switch_reset_code:
+            return {
+                "reset": False,
+                "reason": "Invalid authorization code.",
             }
 
         async with self._lock:

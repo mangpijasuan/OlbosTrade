@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.api.auth import require_admin_api_key
 
 router = APIRouter()
 
@@ -71,7 +73,7 @@ async def get_comparison():
     return {"comparison": _comparison_result}
 
 
-@router.post("/run-comparison")
+@router.post("/run-comparison", dependencies=[Depends(require_admin_api_key)])
 async def run_comparison(
     start_date: str = "2023-01-01",
     end_date:   str = "2024-12-31",

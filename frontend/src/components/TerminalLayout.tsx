@@ -150,9 +150,19 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
   }, []);
 
   const mktOpen = () => {
-    const h = time.getHours(), m = time.getMinutes();
-    const day = time.getDay();
-    if (day === 0 || day === 6) return false;
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(time);
+    const byType = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const h = Number(byType.hour);
+    const m = Number(byType.minute);
+    const day = byType.weekday;
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return false;
+    if (day === "Sun" || day === "Sat") return false;
     const mins = h * 60 + m;
     return mins >= 570 && mins < 960; // 9:30–4:00 ET
   };
@@ -406,7 +416,10 @@ function Sidebar({ active, onNav, expanded }: {
         onMouseLeave={() => setHovered(null)}
         style={{ position: "relative", width: "100%" }}
       >
-        <button style={{
+        <button
+          onClick={() => onNav("risk")}
+          title="Open Risk Monitor kill switch"
+          style={{
           width: "100%",
           height: 38,
           display: "flex",

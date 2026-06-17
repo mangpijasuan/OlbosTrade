@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from sqlalchemy import select, func, and_, case
 
@@ -15,14 +15,12 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.trade import Trade
 from app.models.risk_state import PortfolioSnapshot
+from app.api.auth import require_admin_api_key
 from app.services.kill_switch import kill_switch_service
 
 
 def _require_api_key(x_api_key: str = Header(default="")) -> None:
-    if not settings.secret_key:
-        raise HTTPException(status_code=503, detail="SECRET_KEY not configured")
-    if x_api_key != settings.secret_key:
-        raise HTTPException(status_code=403, detail="Invalid API key")
+    require_admin_api_key(x_api_key)
 
 router = APIRouter()
 
@@ -204,11 +202,11 @@ async def trigger_kill_switch(
     }
 
 
-@router.post("/kill-switch/reset")
+@router.post("/kill-switch/reset", dependencies=[Depends(require_admin_api_key)])
 async def reset_kill_switch(body: KillSwitchResetRequest):
     """
     Reset kill switch after manual review.
-    Requires authorization_code='OLBOSQUANT_MANUAL_RESET' to prevent accidents.
+    Requires X-Api-Key plus the configured KILL_SWITCH_RESET_CODE to prevent accidents.
     """
     result = await kill_switch_service.reset(body.authorization_code)
     if not result.get("reset"):

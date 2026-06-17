@@ -10,9 +10,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api.auth import require_admin_api_key
+from app.core.config import settings
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.kill_switch import kill_switch_service
 
@@ -61,7 +63,7 @@ async def get_kill_switch():
     return {"engaged": _is_kill_switch_active()}
 
 
-@router.post("/kill-switch")
+@router.post("/kill-switch", dependencies=[Depends(require_admin_api_key)])
 async def set_kill_switch(body: KillSwitchRequest):
     """Engage or reset the kill switch — syncs both the service and the local event."""
     if body.engaged:
@@ -69,8 +71,10 @@ async def set_kill_switch(body: KillSwitchRequest):
         await kill_switch_service.engage("manual via trade-desk API")
         logger.warning("KILL SWITCH ENGAGED via API — all order submission halted")
     else:
+        if not settings.kill_switch_reset_code:
+            raise HTTPException(503, "KILL_SWITCH_RESET_CODE not configured")
         _kill_switch.clear()
-        await kill_switch_service.reset("OLBOSQUANT_MANUAL_RESET")
+        await kill_switch_service.reset(settings.kill_switch_reset_code)
         logger.info("Kill switch reset via API — order submission resumed")
     return {"engaged": _is_kill_switch_active()}
 
@@ -82,7 +86,7 @@ async def get_execution_mode():
     return execution_mode_manager.summary()
 
 
-@router.post("/execution-mode")
+@router.post("/execution-mode", dependencies=[Depends(require_admin_api_key)])
 async def set_execution_mode(body: SetExecutionModeRequest):
     try:
         mode = ExecutionMode(body.mode)
@@ -105,7 +109,7 @@ async def get_pending():
     }
 
 
-@router.post("/approve/{signal_id}")
+@router.post("/approve/{signal_id}", dependencies=[Depends(require_admin_api_key)])
 async def approve_signal(signal_id: str):
     """User approves a pending signal → executes order."""
     if signal_id not in _pending_approvals:
@@ -118,7 +122,7 @@ async def approve_signal(signal_id: str):
     return result
 
 
-@router.post("/reject/{signal_id}")
+@router.post("/reject/{signal_id}", dependencies=[Depends(require_admin_api_key)])
 async def reject_signal(signal_id: str):
     """User rejects a pending signal — no order sent."""
     if signal_id not in _pending_approvals:
@@ -141,7 +145,7 @@ async def reject_signal(signal_id: str):
 
 # ── Manual trade ──────────────────────────────────────────────────────────────
 
-@router.post("/manual-trade")
+@router.post("/manual-trade", dependencies=[Depends(require_admin_api_key)])
 async def manual_trade(req: ManualTradeRequest):
     """Force a manual equity order — bypasses signal scoring and IV filters."""
     if _is_kill_switch_active():
@@ -448,7 +452,7 @@ async def handle_signal(signal: dict) -> None:
         trades_today = 0
         try:
             from datetime import date, timedelta
-            from sqlalchemy import select, func
+            from sqlalchemy import select, func, and_
             from app.core.database import AsyncSessionLocal
             from app.models.trade import Trade
             today = date.today()
@@ -458,9 +462,11 @@ async def handle_signal(signal: dict) -> None:
             async with AsyncSessionLocal() as _db:
                 async def _sum_pnl(from_date):
                     result = await _db.execute(
-                        select(func.sum(Trade.realized_pnl)).where(
-                            Trade.closed_at >= from_date,
-                            Trade.realized_pnl.isnot(None),
+                        select(func.coalesce(func.sum(Trade.pnl), 0)).where(
+                            and_(
+                                Trade.status == "closed",
+                                func.date(Trade.exit_date) >= from_date,
+                            )
                         )
                     )
                     return float(result.scalar() or 0.0)
@@ -470,11 +476,25 @@ async def handle_signal(signal: dict) -> None:
                 monthly_pnl = await _sum_pnl(month_start)
 
                 count_today = await _db.execute(
-                    select(func.count()).where(Trade.opened_at >= today)
+                    select(func.count(Trade.id)).where(
+                        func.date(Trade.entry_date) == today
+                    )
                 )
                 trades_today = int(count_today.scalar() or 0)
-        except Exception:
-            pass  # DB unavailable — fall back to zeros (conservative)
+
+                recent = (await _db.execute(
+                    select(Trade.pnl)
+                    .where(Trade.status == "closed")
+                    .order_by(Trade.exit_date.desc())
+                    .limit(20)
+                )).scalars().all()
+                for pnl in recent:
+                    if (pnl or 0) < 0:
+                        consecutive_losses += 1
+                    else:
+                        break
+        except Exception as exc:
+            logger.warning("Autopilot guardrail DB query failed; using zero P&L windows: %s", exc)
 
         engine = GuardrailEngine()
         portfolio = PortfolioState(

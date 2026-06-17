@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useState } from "react";
+import { api } from "../api/client";
 import { useRisk } from "../hooks/useRisk";
 
 export default function RiskMonitor() {
-  const { guardrailStatus, riskState } = useRisk();
+  const { guardrailStatus, riskState, killSwitch, greeks, error, loading, refresh } = useRisk();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [engaging, setEngaging] = useState(false);
 
   const Section = ({ title, children }: any) => (
     <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", marginBottom: 16 }}>
@@ -48,9 +51,37 @@ export default function RiskMonitor() {
   // riskState comes from /api/risk/portfolio-state → response.state (IBKR account + DB P&L windows)
   const pv          = riskState?.state?.account_value ?? riskState?.portfolio_value ?? 25000;
   const daily_pnl   = riskState?.state?.daily_pnl ?? 0;
+  const killSwitchEngaged = !!(killSwitch?.engaged ?? killSwitch?.is_engaged);
+
+  const engageKillSwitch = async () => {
+    if (killSwitchEngaged || engaging) return;
+    const confirmed = window.confirm(
+      "Engage kill switch now? This cancels open orders, attempts to flatten positions, and halts trading until manually reset."
+    );
+    if (!confirmed) return;
+    setEngaging(true);
+    setActionError(null);
+    try {
+      await api.triggerKillSwitch("manual-risk-monitor");
+      await refresh();
+    } catch (e: any) {
+      setActionError(e.message || "Failed to engage kill switch.");
+    } finally {
+      setEngaging(false);
+    }
+  };
 
   return (
     <div style={{ padding: 16, overflowY: "auto", height: "100%" }}>
+      {(error || actionError) && (
+        <div style={{
+          marginBottom: 16, padding: "10px 14px", fontFamily: "var(--mono)", fontSize: 11,
+          color: "var(--red)", background: "rgba(239,68,68,0.08)",
+          border: "1px solid rgba(239,68,68,0.35)",
+        }}>
+          {actionError || error}
+        </div>
+      )}
 
       {/* Header stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16, background: "var(--bg-2)", border: "1px solid var(--line-dim)" }}>
@@ -80,10 +111,10 @@ export default function RiskMonitor() {
         <div>
           <Section title="Portfolio Greeks">
             {[
-              { label: "Net Delta",  val: (riskState?.net_delta || 0).toFixed(4), warn: 0.30 },
-              { label: "Net Gamma",  val: (riskState?.net_gamma || 0).toFixed(4), warn: null },
-              { label: "Net Vega",   val: (riskState?.net_vega  || 0).toFixed(4), warn: null },
-              { label: "Net Theta",  val: (riskState?.net_theta || 0).toFixed(4), warn: null },
+              { label: "Net Delta",  val: (greeks?.net_delta || 0).toFixed(4), warn: 0.30 },
+              { label: "Net Gamma",  val: (greeks?.net_gamma || 0).toFixed(4), warn: null },
+              { label: "Net Vega",   val: (greeks?.net_vega  || 0).toFixed(4), warn: null },
+              { label: "Net Theta",  val: (greeks?.net_theta || 0).toFixed(4), warn: null },
             ].map(g => (
               <div key={g.label} style={{
                 padding: "14px 16px",
@@ -101,8 +132,16 @@ export default function RiskMonitor() {
                 Immediately cancel all open orders, flatten all positions,
                 and halt the signal cycle. Cannot be undone without manual reset.
               </p>
-              <button className="btn-t danger" style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}>
-                ⚡ ENGAGE KILL SWITCH
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: killSwitchEngaged ? "var(--red)" : "var(--green)" }}>
+                STATUS: {killSwitchEngaged ? "ENGAGED" : "READY"}
+              </div>
+              <button
+                className="btn-t danger"
+                onClick={engageKillSwitch}
+                disabled={killSwitchEngaged || engaging || loading}
+                style={{ padding: "10px 0", justifyContent: "center", display: "flex", opacity: killSwitchEngaged ? 0.55 : 1 }}
+              >
+                {engaging ? "ENGAGING..." : killSwitchEngaged ? "KILL SWITCH ENGAGED" : "⚡ ENGAGE KILL SWITCH"}
               </button>
             </div>
           </Section>

@@ -123,6 +123,10 @@ class Settings(BaseSettings):
 
     # ── Security ─────────────────────────────────────────────────────────
     secret_key: str = Field(default="", description="API secret key for admin endpoints")
+    kill_switch_reset_code: str = Field(
+        default="",
+        description="Separate authorization code required after manual kill-switch review",
+    )
 
     # ── Alerts ────────────────────────────────────────────────────────────
     sendgrid_api_key: str = Field(default="")

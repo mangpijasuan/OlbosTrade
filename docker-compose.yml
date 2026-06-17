@@ -102,7 +102,9 @@ services:
     ports:
       - "3001:3000"   # 3001 on host — OLBOS or local :3000 won't conflict
     environment:
-      VITE_API_URL: http://backend:8000
+      # Browser requests should stay same-origin so Vite can proxy them to BACKEND_URL.
+      VITE_API_URL: ""
+      VITE_ADMIN_API_KEY: ${SECRET_KEY:-}
       BACKEND_URL: http://backend:8000
     depends_on:
       - backend

@@ -31,8 +31,7 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# S1: Updated feature list — 15 features (was 13).
-# New: credit_theta_rate, vix_term_slope
+# S1: Updated feature list — 17 features (13 original + 2 options features + 2 flow features).
 FEATURE_NAMES = [
     "iv_rank", "iv_percentile", "vix_level",
     "spy_rsi_14", "spy_adx_14", "spy_trend_direction",
@@ -43,6 +42,9 @@ FEATURE_NAMES = [
     # S1 new features
     "credit_theta_rate",   # daily credit as % of max risk (theta efficiency)
     "vix_term_slope",      # VIX3M / VIX (>1 = contango = normal)
+    # Options Intelligence flow features. Neutral defaults keep older callers safe.
+    "flow_sentiment_score",
+    "flow_large_sweep_bullish_count",
 ]
 
 # S3: Default RoR threshold — predicted RoR must exceed 12% to approve
@@ -58,7 +60,7 @@ _INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scor
 
 @dataclass
 class SignalFeatures:
-    """All 15 features used by the signal scorer (13 original + 2 S1 additions)."""
+    """All features used by the signal scorer."""
     iv_rank: float
     iv_percentile: float
     vix_level: float
@@ -75,6 +77,8 @@ class SignalFeatures:
     # S1 new features — safe defaults for backward compatibility
     credit_theta_rate: float = 0.0      # credit_to_width / DTE; computed if 0
     vix_term_slope: float = 1.05        # VIX3M / VIX; default = mild contango
+    flow_sentiment_score: float = 0.5   # neutral flow when no options-flow data exists
+    flow_large_sweep_bullish_count: float = 0.0
 
     def __post_init__(self) -> None:
         # S1: Auto-compute credit_theta_rate from existing fields if not set
@@ -90,6 +94,7 @@ class SignalFeatures:
             self.earnings_days_away, self.spy_realized_vol_20d,
             self.iv_minus_rv,
             self.credit_theta_rate, self.vix_term_slope,
+            self.flow_sentiment_score, self.flow_large_sweep_bullish_count,
         ]])
 
 
@@ -132,6 +137,7 @@ class SignalScorer:
         self.model = None
         self.model_version = "untrained"
         self.model_type = "classifier"   # S3: "regressor" or "classifier"
+        self.feature_names = FEATURE_NAMES
         self._ror_threshold = DEFAULT_ROR_THRESHOLD
         # FIX #4: Explainer cached here — never rebuilt per call
         self._explainer = None
@@ -153,6 +159,12 @@ class SignalScorer:
 
         self.model = saved.get("model")
         self.model_version = saved.get("version", "v1")
+        saved_features = saved.get("feature_names")
+        if isinstance(saved_features, list) and saved_features:
+            self.feature_names = [str(name) for name in saved_features]
+        else:
+            expected = getattr(self.model, "n_features_in_", len(FEATURE_NAMES))
+            self.feature_names = FEATURE_NAMES[:int(expected)]
 
         # S3: Detect model type — use saved metadata first, fall back to class check
         saved_type = saved.get("model_type", "")
@@ -289,7 +301,7 @@ class SignalScorer:
         For classifiers: returns win probability (0.0 – 1.0).
         """
         try:
-            X = features.to_array()
+            X = self._model_input(features)
 
             # S3: Branch on model type
             if self.model_type == "regressor":
@@ -312,7 +324,7 @@ class SignalScorer:
                 else:
                     shap_values = raw_shap[0]      # regressors
 
-                feat_names = FEATURE_NAMES
+                feat_names = self.feature_names
                 n_feats = min(len(feat_names), len(shap_values))
                 impacts = [
                     FeatureImpact(
@@ -334,6 +346,11 @@ class SignalScorer:
         except Exception as exc:
             logger.error("Model scoring failed, falling back to heuristic: %s", exc)
             return self._heuristic_score(features)
+
+    def _model_input(self, features: SignalFeatures) -> np.ndarray:
+        """Return features ordered for the loaded artifact, supporting legacy models."""
+        values = dict(zip(FEATURE_NAMES, features.to_array()[0]))
+        return np.array([[float(values.get(name, 0.0)) for name in self.feature_names]])
 
     def _heuristic_score(self, features: SignalFeatures) -> tuple[float, list[FeatureImpact]]:
         """

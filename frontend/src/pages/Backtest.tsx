@@ -2,10 +2,10 @@ import React, { useState } from "react";
 import { useBacktest } from "../hooks/useBacktest";
 
 export default function Backtest() {
-  const { results, loading, runBacktest } = useBacktest();
+  const { results, loading, error, runBacktest } = useBacktest();
   const [form, setForm] = useState({
     strategy: "bull_put_spread", start_date: "2022-01-01",
-    end_date: "2024-12-31", mode: "balanced",
+    end_date: "2024-12-31",
   });
 
   const Panel = ({ title, children }: any) => (
@@ -31,14 +31,19 @@ export default function Backtest() {
   };
 
   const selectStyle = { ...inputStyle };
+  const completed = results?.status === "completed";
+  const pct = (value: unknown) =>
+    typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "—";
+  const num = (value: unknown, digits = 2) =>
+    typeof value === "number" ? value.toFixed(digits) : "—";
 
   const metrics = [
-    { label: "Total Return",   val: results ? `${(results.total_return * 100).toFixed(1)}%` : "—",   color: results?.total_return >= 0 ? "var(--green)" : "var(--red)" },
-    { label: "Sharpe Ratio",   val: results ? results.sharpe_ratio.toFixed(2) : "—",                 color: results?.sharpe_ratio >= 1 ? "var(--cyan)" : "var(--ink)" },
-    { label: "Win Rate",       val: results ? `${(results.win_rate * 100).toFixed(1)}%` : "—",        color: "var(--ink)" },
-    { label: "Max Drawdown",   val: results ? `${(results.max_drawdown * 100).toFixed(1)}%` : "—",    color: "var(--red)" },
-    { label: "Profit Factor",  val: results ? results.profit_factor?.toFixed(2) : "—",               color: "var(--ink)" },
-    { label: "Total Trades",   val: results ? results.total_trades : "—",                            color: "var(--ink)" },
+    { label: "Total Return",   val: completed ? pct(results.total_return_pct) : "—",                 color: (results?.total_return_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" },
+    { label: "Sharpe Ratio",   val: completed ? num(results.sharpe_ratio) : "—",                     color: (results?.sharpe_ratio ?? 0) >= 1 ? "var(--cyan)" : "var(--ink)" },
+    { label: "Win Rate",       val: completed ? pct(results.win_rate) : "—",                         color: "var(--ink)" },
+    { label: "Max Drawdown",   val: completed ? pct(results.max_drawdown_pct) : "—",                 color: "var(--red)" },
+    { label: "Profit Factor",  val: completed ? num(results.profit_factor) : "—",                    color: "var(--ink)" },
+    { label: "Total Trades",   val: completed ? results.total_trades : "—",                          color: "var(--ink)" },
   ];
 
   return (
@@ -55,14 +60,6 @@ export default function Backtest() {
             <option value="bull_call_debit_spread">Bull Call Debit</option>
           </select>
         </Field>
-        <Field label="Mode">
-          <select style={selectStyle} value={form.mode}
-            onChange={e => setForm({ ...form, mode: e.target.value })}>
-            {["conservative","balanced","aggressive","scalper"].map(m => (
-              <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
-            ))}
-          </select>
-        </Field>
         <Field label="Start Date">
           <input type="date" style={inputStyle} value={form.start_date}
             onChange={e => setForm({ ...form, start_date: e.target.value })} />
@@ -75,6 +72,22 @@ export default function Backtest() {
           style={{ width: "100%", marginTop: 8, padding: "10px", justifyContent: "center", display: "flex" }}>
           {loading ? "RUNNING..." : "RUN BACKTEST ↗"}
         </button>
+        {results?.status && (
+          <div style={{ marginTop: 10, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+            STATUS: <span style={{ color: results.status === "failed" ? "var(--red)" : results.status === "completed" ? "var(--green)" : "var(--amber)" }}>
+              {String(results.status).toUpperCase()}
+            </span>
+          </div>
+        )}
+        {error && (
+          <div style={{
+            marginTop: 10, padding: "8px 10px", fontFamily: "var(--mono)", fontSize: 11,
+            color: "var(--red)", border: "1px solid rgba(239,68,68,0.35)",
+            background: "rgba(239,68,68,0.08)",
+          }}>
+            {error}
+          </div>
+        )}
       </div>
 
       {/* Right: results */}
@@ -100,10 +113,14 @@ export default function Backtest() {
             height: 200, background: "var(--bg-3)",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {results
+            {completed
               ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--cyan)" }}>
                   BACKTEST COMPLETE — {results.total_trades} TRADES
                 </span>
+              : results
+                ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)" }}>
+                    BACKTEST {String(results.status || "QUEUED").toUpperCase()}
+                  </span>
               : <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
                   CONFIGURE AND RUN BACKTEST
                 </span>
@@ -112,7 +129,7 @@ export default function Backtest() {
         </Panel>
 
         {/* Trade log */}
-        {results?.trades && (
+        {completed && results?.trades && (
           <Panel title="Trade Log">
             <table className="t-table">
               <thead><tr>

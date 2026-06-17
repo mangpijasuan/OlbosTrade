@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
 import BrokerStatus from "../components/BrokerStatus";
 import PortfolioGreeks from "../components/PortfolioGreeks";
 
@@ -197,8 +198,7 @@ export default function EquitySignals() {
   const [error, setError] = useState<string | null>(null);
 
   const loadSignals = () => {
-    fetch("/api/equity/signals")
-      .then(r => r.json())
+    (api.getEquitySignals() as Promise<any>)
       .then(d => setSignals(d.signals || []))
       .catch(e => setError(String(e)));
   };
@@ -213,7 +213,7 @@ export default function EquitySignals() {
     setScanning(true);
     setError(null);
     try {
-      await fetch("/api/equity/scan", { method: "POST" });
+      await api.scanEquitySignals();
       loadSignals();
     } catch (e) {
       setError(String(e));

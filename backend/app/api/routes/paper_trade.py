@@ -6,9 +6,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, and_, case
 
+from app.api.auth import require_admin_api_key
 from app.broker.broker_factory import get_broker
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -218,6 +219,16 @@ async def toggle_strategy(strategy: str):
         "toggled":  True,
         "message":  "Use /api/mode/set to change active trading mode and allowed strategies.",
     }
+
+
+@router.post("/run-cycle", dependencies=[Depends(require_admin_api_key)])
+async def run_signal_cycle():
+    """Run one manual signal cycle through the same execution-aware path as the scheduler."""
+    from app.main import _run_equity_scan, _run_options_scan
+
+    await _run_equity_scan()
+    await _run_options_scan()
+    return {"status": "completed", "message": "Manual signal cycle completed."}
 
 
 # ── Greeks summary ────────────────────────────────────────────────────────────

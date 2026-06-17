@@ -23,6 +23,7 @@ const Badge = ({ text, color }: { text: string; color: string }) => (
 function ExecModeBar() {
   const [mode, setMode]     = useState<ExecMode>("manual");
   const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
 
   useEffect(() => {
     (api.getExecutionMode() as any)
@@ -32,10 +33,19 @@ function ExecModeBar() {
 
   const select = async (m: ExecMode) => {
     if (m === mode) return;
+    if (m === "autopilot") {
+      const confirmed = window.confirm(
+        "Enable AUTOPILOT? Signals that pass guardrails will execute automatically."
+      );
+      if (!confirmed) return;
+    }
     setSaving(true);
+    setError(null);
     try {
       await (api.setExecutionMode(m) as any);
       setMode(m);
+    } catch (e: any) {
+      setError(e.message || "Failed to change execution mode.");
     } finally {
       setSaving(false);
     }
@@ -98,6 +108,7 @@ function ExecModeBar() {
       )}
       <div style={{ flex: 1 }} />
       {saving && <span className="kicker">SAVING…</span>}
+      {error && <span className="kicker" style={{ color: "var(--red)" }}>{error}</span>}
     </div>
   );
 }

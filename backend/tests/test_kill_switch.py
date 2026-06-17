@@ -76,7 +76,8 @@ async def test_kill_switch_double_engage_is_idempotent(ks, mock_broker, mock_sch
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_reset_requires_auth_code(ks):
+async def test_kill_switch_reset_requires_auth_code(ks, monkeypatch):
+    monkeypatch.setattr("app.services.kill_switch.settings.kill_switch_reset_code", "test-reset-code")
     ks._engaged = True
     result = await ks.reset("wrong_code")
     assert result["reset"] is False
@@ -84,10 +85,11 @@ async def test_kill_switch_reset_requires_auth_code(ks):
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_reset_with_correct_code(ks, mock_scheduler):
+async def test_kill_switch_reset_with_correct_code(ks, mock_scheduler, monkeypatch):
+    monkeypatch.setattr("app.services.kill_switch.settings.kill_switch_reset_code", "test-reset-code")
     ks._engaged = True
     ks._scheduler = mock_scheduler
-    result = await ks.reset("OLBOSQUANT_MANUAL_RESET")
+    result = await ks.reset("test-reset-code")
     assert result["reset"] is True
     assert ks.is_engaged is False
     mock_scheduler.resume.assert_called_once()

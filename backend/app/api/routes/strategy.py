@@ -1,9 +1,11 @@
 """Strategy config and signal routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
+
+from app.api.auth import require_admin_api_key
 
 router = APIRouter()
 
@@ -40,7 +42,7 @@ async def get_strategy_config():
         }
 
 
-@router.put("/config")
+@router.put("/config", dependencies=[Depends(require_admin_api_key)])
 async def update_strategy_config(config: StrategyConfig):
     return {"updated": True, "strategy": config.strategy,
             "message": "Use /api/mode/set to change the active trading mode and strategy set."}
