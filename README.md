@@ -23,7 +23,7 @@ olbosquant/
 │       ├── components/   TerminalLayout · BrokerStatus · PortfolioGreeks
 │       └── pages/        Dashboard · TradeDesk · Backtest · Journal · …
 ├── ml/                   XGBoost signal scorer training pipeline
-│   ├── features.py       15-feature engineering (point-in-time, no look-ahead)
+│   ├── features.py       17-feature engineering (point-in-time, no look-ahead)
 │   ├── train_signal_scorer.py   XGBRegressor on continuous return-on-risk
 │   └── model_registry/   Trained model pkl (created after first training run)
 ├── start.sh              One-command startup script
@@ -46,6 +46,9 @@ olbosquant/
 ---
 
 ## Daily Startup (Before Market Open)
+
+> Local Mac startup is still supported, but production deployment should use the
+> Hetzner/GitHub path below so your MacBook does not need to stay on.
 
 **This is the correct procedure every trading day:**
 
@@ -97,6 +100,31 @@ Go to **http://localhost:3000** and confirm:
 ```bash
 ./stop.sh
 ```
+
+---
+
+## Remote deployment on Hetzner from GitHub
+
+Use this path when you want OlbosQuant to run from a server instead of your
+MacBook.
+
+- GitHub Actions workflow: `.github/workflows/deploy-hetzner.yml`
+- Compose stack: `docker-compose.hetzner.yml`
+- Server scripts and docs: `deploy/hetzner/`
+
+The Hetzner stack runs IB Gateway in Docker beside the backend and binds broker
+ports/VNC to `127.0.0.1` on the server. To complete IBKR login and 2FA, SSH
+tunnel VNC to the server:
+
+```bash
+ssh -L 5900:127.0.0.1:5900 deploy@YOUR_SERVER_IP
+```
+
+Then open VNC at `127.0.0.1:5900`, log into IB Gateway, and leave the server
+running. Your MacBook can be closed after login is complete.
+
+See `deploy/hetzner/README.md` for the full setup, GitHub secrets, `.env`
+template, safety checklist, and notes about IBKR Client Portal limitations.
 
 ---
 

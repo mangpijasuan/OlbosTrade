@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # ── IBKR ──────────────────────────────────────────────────────────────
     ibkr_host: str = Field(default="127.0.0.1")
-    ibkr_port: int = Field(default=7497)
+    ibkr_port: int = Field(default=4002)
     ibkr_client_id: int = Field(default=1)
     ibkr_trading_mode: str = Field(default="paper")
 

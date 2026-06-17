@@ -1,0 +1,94 @@
+name: Deploy to Hetzner
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to publish/deploy"
+        required: false
+        default: "latest"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
+      HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+      HETZNER_USER: ${{ secrets.HETZNER_USER || 'deploy' }}
+      HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+      HETZNER_APP_DIR: ${{ secrets.HETZNER_APP_DIR || '/opt/olbosquant' }}
+      VITE_ADMIN_API_KEY: ${{ secrets.VITE_ADMIN_API_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Compute image prefix
+        run: echo "GHCR_IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build backend image
+        run: |
+          docker build \
+            -t "${GHCR_IMAGE_PREFIX}/olbosquant-backend:${IMAGE_TAG}" \
+            -t "${GHCR_IMAGE_PREFIX}/olbosquant-backend:latest" \
+            ./backend
+
+      - name: Build frontend image
+        run: |
+          docker build \
+            --build-arg VITE_API_URL="" \
+            --build-arg VITE_ADMIN_API_KEY="${VITE_ADMIN_API_KEY}" \
+            -t "${GHCR_IMAGE_PREFIX}/olbosquant-frontend:${IMAGE_TAG}" \
+            -t "${GHCR_IMAGE_PREFIX}/olbosquant-frontend:latest" \
+            ./frontend
+
+      - name: Push images
+        run: |
+          docker push "${GHCR_IMAGE_PREFIX}/olbosquant-backend:${IMAGE_TAG}"
+          docker push "${GHCR_IMAGE_PREFIX}/olbosquant-backend:latest"
+          docker push "${GHCR_IMAGE_PREFIX}/olbosquant-frontend:${IMAGE_TAG}"
+          docker push "${GHCR_IMAGE_PREFIX}/olbosquant-frontend:latest"
+
+      - name: Stop if Hetzner secrets are not configured
+        run: |
+          if [ -z "${HETZNER_HOST}" ] || [ -z "${HETZNER_SSH_KEY}" ]; then
+            echo "Hetzner SSH secrets are not configured; images were built and pushed only."
+            exit 0
+          fi
+
+      - name: Configure SSH
+        if: env.HETZNER_HOST != '' && env.HETZNER_SSH_KEY != ''
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${HETZNER_SSH_KEY}" > ~/.ssh/hetzner
+          chmod 600 ~/.ssh/hetzner
+          ssh-keyscan -H "${HETZNER_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Copy deployment assets
+        if: env.HETZNER_HOST != '' && env.HETZNER_SSH_KEY != ''
+        run: |
+          ssh -i ~/.ssh/hetzner "${HETZNER_USER}@${HETZNER_HOST}" "mkdir -p '${HETZNER_APP_DIR}/deploy/hetzner' '${HETZNER_APP_DIR}/deploy/nginx'"
+          scp -i ~/.ssh/hetzner docker-compose.hetzner.yml "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_APP_DIR}/docker-compose.hetzner.yml"
+          scp -i ~/.ssh/hetzner deploy/hetzner/deploy.sh deploy/hetzner/olbosquant.conf.template "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_APP_DIR}/deploy/hetzner/"
+          scp -i ~/.ssh/hetzner deploy/nginx/nginx.conf "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_APP_DIR}/deploy/nginx/nginx.conf"
+
+      - name: Deploy on Hetzner
+        if: env.HETZNER_HOST != '' && env.HETZNER_SSH_KEY != ''
+        run: |
+          ssh -i ~/.ssh/hetzner "${HETZNER_USER}@${HETZNER_HOST}" \
+            "cd '${HETZNER_APP_DIR}' && \
+             DEPLOY_GHCR_IMAGE_PREFIX='${GHCR_IMAGE_PREFIX}' \
+             DEPLOY_IMAGE_TAG='${IMAGE_TAG}' \
+             DEPLOY_GHCR_USERNAME='${{ github.actor }}' \
+             DEPLOY_GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' \
+             bash deploy/hetzner/deploy.sh"

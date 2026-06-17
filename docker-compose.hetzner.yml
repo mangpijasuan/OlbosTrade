@@ -1,0 +1,140 @@
+version: "3.11"
+
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: olbosquant_ib_gateway
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${IBKR_USERNAME}
+      TWS_PASSWORD: ${IBKR_PASSWORD}
+      TRADING_MODE: ${IBKR_TRADING_MODE:-paper}
+      GATEWAY_OR_TWS: gateway
+      VNC_SERVER_PASSWORD: ${VNC_PASSWORD}
+      TWOFA_TIMEOUT_ACTION: restart
+    ports:
+      # Keep broker and VNC ports private to the server. Use an SSH tunnel for VNC:
+      # ssh -L 5900:127.0.0.1:5900 deploy@your-server
+      - "127.0.0.1:4002:4002"
+      - "127.0.0.1:4001:4001"
+      - "127.0.0.1:5900:5900"
+    volumes:
+      - ib_gateway_data:/home/ibgateway/Jts
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4002 || nc -z localhost 4001 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  postgres:
+    image: postgres:15
+    container_name: olbosquant_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-options_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-options_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-options_user} -d ${POSTGRES_DB:-options_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: olbosquant_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${GHCR_IMAGE_PREFIX}/olbosquant-backend:${IMAGE_TAG:-latest}
+    container_name: olbosquant_backend
+    restart: unless-stopped
+    env_file:
+      - .env.hetzner
+    environment:
+      BROKER: ibkr
+      IBKR_HOST: ib-gateway
+      IBKR_PORT: ${IBKR_PORT:-4002}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-options_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-options_db}
+      REDIS_URL: redis://redis:6379
+      OPTIONS_FLOW_ARCHIVE_DIR: /data/archive
+    expose:
+      - "8000"
+    volumes:
+      - ml_models:/app/ml/model_registry
+      - app_logs:/app/logs
+      - options_flow_archive:/data/archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ib-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    image: ${GHCR_IMAGE_PREFIX}/olbosquant-frontend:${IMAGE_TAG:-latest}
+    container_name: olbosquant_frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: olbosquant_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/hetzner/olbosquant.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: olbosquant_certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+
+volumes:
+  ib_gateway_data:
+  postgres_data:
+  redis_data:
+  ml_models:
+  app_logs:
+  options_flow_archive:
+  certbot_certs:
+  certbot_www:

@@ -220,12 +220,17 @@ async def get_broker_status():
         broker = get_broker()
         is_paper = "paper" in settings.alpaca_base_url if settings.broker == "alpaca" \
                    else settings.ibkr_port in (7497, 4002)
+        connected = True
+        if settings.broker == "ibkr":
+            connected = bool(getattr(broker, "_connected", False))
+            if hasattr(broker, "ib"):
+                connected = connected and bool(broker.ib.isConnected())
         return {
             "broker":           settings.broker,
             "supports_options": broker.supports_options,
             "supports_equities": broker.supports_equities,
             "paper_mode":       is_paper,
-            "status":           "connected",
+            "status":           "connected" if connected else "disconnected",
         }
     except Exception as exc:
         return {
