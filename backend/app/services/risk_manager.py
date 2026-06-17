@@ -81,11 +81,12 @@ class RiskManager:
             size_multiplier:    1.0 normal, 0.5 in capital preservation mode
 
         Returns:
-            Number of contracts (minimum 1).
+            Number of contracts. Returns 0 (reject) when the risk budget can't
+            afford even one contract — previously this forced 1, which could
+            blow the per-trade risk budget on small/preserving accounts.
         """
         target_risk = portfolio_value * risk_pct * size_multiplier
-        contracts = int(target_risk / max(max_loss_per_spread, 1.0))
-        return max(contracts, 1)
+        return int(target_risk / max(max_loss_per_spread, 1.0))
 
     def kelly_position_size(
         self,
@@ -179,10 +180,21 @@ class RiskManager:
         if portfolio.portfolio_value > 0:
             sector_pct = new_sector_exposure / portfolio.portfolio_value
             if sector_pct > self.MAX_SECTOR_CONCENTRATION:
-                flags.append("sector_concentration_warning")
+                # Enforce the documented limit (was warning-only — concentration
+                # risk could exceed MAX_SECTOR_CONCENTRATION unchecked).
                 logger.warning(
-                    "Sector concentration elevated: %s at %.1f%%",
-                    trade.sector, sector_pct * 100,
+                    "Sector concentration limit breached: %s at %.1f%% (max %.0f%%)",
+                    trade.sector, sector_pct * 100, self.MAX_SECTOR_CONCENTRATION * 100,
+                )
+                return TradeApproval(
+                    approved=False,
+                    reason=(
+                        f"Sector concentration {sector_pct:.1%} exceeds limit "
+                        f"{self.MAX_SECTOR_CONCENTRATION:.0%} for {trade.sector}"
+                    ),
+                    suggested_contracts=0,
+                    max_risk_dollars=0,
+                    flags=["sector_concentration"],
                 )
 
         # ── Calculate position size ────────────────────────────────────────
@@ -191,6 +203,17 @@ class RiskManager:
             max_loss_per_spread=trade.max_loss_dollars,
             size_multiplier=size_multiplier,
         )
+        if contracts <= 0:
+            return TradeApproval(
+                approved=False,
+                reason=(
+                    "Risk budget too small for one contract "
+                    f"(max loss/contract ${trade.max_loss_dollars:.0f})"
+                ),
+                suggested_contracts=0,
+                max_risk_dollars=0,
+                flags=["below_min_size"],
+            )
         max_risk = contracts * trade.max_loss_dollars
 
         logger.info(

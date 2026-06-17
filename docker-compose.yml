@@ -15,9 +15,11 @@ services:
       VNC_SERVER_PASSWORD:  ${VNC_PASSWORD:-localdev}
       TWOFA_TIMEOUT_ACTION: restart
     ports:
-      - "4002:4002"   # paper gateway socket (ib_insync connects here)
-      - "4001:4001"   # live gateway socket
-      - "5900:5900"   # VNC — open with any VNC viewer to see IB Gateway GUI
+      # Bind to loopback only — never expose the IB Gateway control sockets or
+      # VNC on all interfaces (VNC is protected only by a weak default password).
+      - "127.0.0.1:4002:4002"   # paper gateway socket (ib_insync connects here)
+      - "127.0.0.1:4001:4001"   # live gateway socket
+      - "127.0.0.1:5900:5900"   # VNC — open with any VNC viewer to see IB Gateway GUI
     volumes:
       - ib_gateway_data:/home/ibgateway/Jts
     healthcheck:

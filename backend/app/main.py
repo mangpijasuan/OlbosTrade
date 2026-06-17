@@ -74,19 +74,15 @@ app = FastAPI(
     description="Blessed prosperity through disciplined, rules-based quantitative trading.",
 )
 
-_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-]
-
+# Allowed CORS origins come from settings (set CORS_ORIGINS to include the
+# production domain). Methods/headers are scoped rather than wildcarded since
+# credentials are allowed.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Api-Key", "Authorization"],
 )
 
 # ── Global singletons (populated at startup) ───────────────────────────────

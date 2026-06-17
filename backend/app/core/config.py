@@ -132,6 +132,14 @@ class Settings(BaseSettings):
 
     # ── Security ─────────────────────────────────────────────────────────
     secret_key: str = Field(default="", description="API secret key for admin endpoints")
+    # Comma-separated allowed CORS origins. Add your production domain here.
+    cors_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000,"
+                "http://localhost:3001,http://127.0.0.1:3001"
+    )
+
+    def get_cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     # ── Alerts ────────────────────────────────────────────────────────────
     sendgrid_api_key: str = Field(default="")

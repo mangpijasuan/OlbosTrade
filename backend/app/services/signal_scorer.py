@@ -423,9 +423,12 @@ class SignalScorer:
         model drift (e.g. retrained model on bad data) before it silently
         affects live decisions.
         """
+        # NB: vix_level is intentionally excluded — high VIX is not monotonically
+        # good for credit spreads (crisis → losses), so a negative SHAP on it is
+        # not an anomaly and shouldn't trigger false drift warnings.
         EXPECTED_POSITIVE: set[str] = {
             "iv_rank", "iv_minus_rv", "credit_to_width_ratio",
-            "earnings_days_away", "vix_level",
+            "earnings_days_away",
         }
         for impact in impacts:
             if impact.feature_name not in EXPECTED_POSITIVE:
