@@ -16,6 +16,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.trade import Trade
 from app.models.risk_state import PortfolioSnapshot
 from app.services.kill_switch import kill_switch_service
+from app.utils.errors import safe_detail
 
 
 def _require_api_key(x_api_key: str = Header(default="")) -> None:
@@ -47,7 +48,7 @@ async def get_portfolio_state():
         acct_value   = settings.starting_capital
         buying_power = settings.starting_capital
         cash         = settings.starting_capital
-        broker_error = str(exc)
+        broker_error = safe_detail(exc, "risk.portfolio_state broker")
     else:
         broker_error = None
 
@@ -117,7 +118,7 @@ async def get_portfolio_state():
             }
         }
     except Exception as exc:
-        return {"state": {"error": str(exc)}}
+        return {"state": {"error": safe_detail(exc, "risk.portfolio_state")}}
 
 
 @router.get("/daily-pnl")
@@ -139,7 +140,7 @@ async def get_daily_pnl():
             "date":          today.isoformat(),
         }
     except Exception as exc:
-        return {"daily_pnl": 0, "daily_pnl_pct": 0, "error": str(exc)}
+        return {"daily_pnl": 0, "daily_pnl_pct": 0, "error": safe_detail(exc, "risk.daily_pnl")}
 
 
 @router.get("/approval/{trade_id}")
@@ -158,7 +159,7 @@ async def get_trade_approval(trade_id: str):
             }
         return {"trade_id": trade_id, "approved": False, "reason": "not found"}
     except Exception as exc:
-        return {"trade_id": trade_id, "approved": False, "error": str(exc)}
+        return {"trade_id": trade_id, "approved": False, "error": safe_detail(exc, "risk.approval")}
 
 
 @router.get("/kill-switch/status")

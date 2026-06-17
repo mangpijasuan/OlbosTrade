@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.broker.broker_factory import get_broker
 from app.core.config import settings
+from app.utils.errors import safe_detail
 
 # yfinance is used for all price display (ticker strip, snapshots).
 # IBKR market data requires a paid subscription — we use IBKR only for
@@ -65,7 +66,7 @@ async def get_snapshot(symbol: str):
             return data
         return {"symbol": symbol, "error": "No data returned"}
     except Exception as exc:
-        return {"symbol": symbol, "error": str(exc)}
+        return {"symbol": symbol, "error": safe_detail(exc, "market.snapshot")}
 
 
 @router.get("/options-chain/{symbol}")
@@ -116,7 +117,7 @@ async def get_options_chain(symbol: str, expiry: str = ""):
             ],
         }
     except Exception as exc:
-        return {"symbol": symbol, "expiry": expiry, "error": str(exc)}
+        return {"symbol": symbol, "expiry": expiry, "error": safe_detail(exc, "market.options_chain")}
 
 
 @router.get("/iv-rank/{symbol}")
@@ -164,7 +165,7 @@ async def get_iv_rank(symbol: str):
             "method":       "atr_rv_proxy",
         }
     except Exception as exc:
-        return {"symbol": symbol, "iv_rank": None, "error": str(exc)}
+        return {"symbol": symbol, "iv_rank": None, "error": safe_detail(exc, "market.iv_rank")}
 
 
 @router.get("/regime")
@@ -231,5 +232,5 @@ async def get_broker_status():
         return {
             "broker": settings.broker,
             "status": "error",
-            "error":  str(exc),
+            "error":  safe_detail(exc, "market.endpoint"),
         }
