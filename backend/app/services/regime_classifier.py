@@ -124,6 +124,11 @@ class RegimeFeatures:
     spy_return_5d:      float           # 5-day SPY return
     spy_return_20d:     float           # 20-day SPY return
     vol_of_vol:         float           # Rolling std of daily IV changes
+    # ── Options-flow features (Options Intelligence module) ───────────────
+    # Default to neutral so regimes classify identically until flow data
+    # exists. Populated via compute_flow_features() when ingest is running.
+    flow_sentiment_score:        float = 0.5   # 30-min bullish_premium / total
+    flow_large_sweep_bullish_count: int = 0    # large bullish SPY sweeps, 2h
 
 
 @dataclass
@@ -202,6 +207,8 @@ class RegimeClassifier:
         rsi: float,
         adx: float,
         spy_returns: pd.Series,
+        flow_sentiment_score: float = 0.5,
+        flow_large_sweep_bullish_count: int = 0,
     ) -> RegimeState:
         """
         Classify the current market regime.
@@ -211,9 +218,18 @@ class RegimeClassifier:
             rsi:         14-day RSI
             adx:         14-day ADX
             spy_returns: Daily SPY returns (last 30 days minimum)
+            flow_sentiment_score: 30-min SPY bullish_premium / total_premium
+                         ratio from the options_flow table (0.5 = neutral).
+            flow_large_sweep_bullish_count: count of large bullish SPY sweeps
+                         in the last 2 hours.
 
         Returns:
             RegimeState with full downstream parameters
+
+        Note: these flow features are carried on ``features_used`` so the
+        signal scorer can consume them; they do not yet alter the rule-based
+        regime decision (kept stable until walk-forward retraining picks up
+        the new columns).
         """
         reasoning: list[str] = []
 
@@ -235,6 +251,8 @@ class RegimeClassifier:
             spy_return_5d=spy_return_5d,
             spy_return_20d=spy_return_20d,
             vol_of_vol=vol_of_vol,
+            flow_sentiment_score=flow_sentiment_score,
+            flow_large_sweep_bullish_count=flow_large_sweep_bullish_count,
         )
 
         # ── Step 1: Crisis check (hard override — beats everything else) ──────
@@ -446,3 +464,54 @@ def classify_equity_allowed(regime_state: RegimeState) -> bool:
 def classify_options_allowed(regime_state: RegimeState) -> bool:
     """Return True if options trading is permitted in this regime."""
     return regime_state.options_allowed
+
+
+# ── Options-flow feature extraction (Options Intelligence module) ────────────
+async def compute_flow_features(ticker: str = "SPY") -> dict:
+    """
+    Extract the two flow features used by the regime classifier / signal scorer
+    from the options_flow table:
+
+        flow_sentiment_score:
+            rolling 30-min  bullish_premium / total_premium  ratio (0.5 neutral)
+        flow_large_sweep_bullish_count:
+            count of large bullish sweeps in the last 2 hours
+
+    Returns neutral defaults (0.5 / 0) when no flow data exists yet, so callers
+    can pass the result straight into ``classify(...)`` unconditionally.
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import func, select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.options_flow import OptionsFlow
+
+    now = datetime.now(timezone.utc)
+    out = {"flow_sentiment_score": 0.5, "flow_large_sweep_bullish_count": 0}
+    try:
+        async with AsyncSessionLocal() as session:
+            since_30m = now - timedelta(minutes=30)
+            rows = (await session.execute(
+                select(OptionsFlow.sentiment, func.sum(OptionsFlow.premium))
+                .where(OptionsFlow.ticker == ticker, OptionsFlow.timestamp >= since_30m)
+                .group_by(OptionsFlow.sentiment)
+            )).all()
+            prem = {s: float(p or 0) for s, p in rows}
+            bull, bear = prem.get("bullish", 0.0), prem.get("bearish", 0.0)
+            total = bull + bear
+            if total > 0:
+                out["flow_sentiment_score"] = round(bull / total, 4)
+
+            since_2h = now - timedelta(hours=2)
+            cnt = (await session.execute(
+                select(func.count(OptionsFlow.id)).where(
+                    OptionsFlow.ticker == ticker,
+                    OptionsFlow.timestamp >= since_2h,
+                    OptionsFlow.large_sweep.is_(True),
+                    OptionsFlow.sentiment == "bullish",
+                )
+            )).scalar()
+            out["flow_large_sweep_bullish_count"] = int(cnt or 0)
+    except Exception as exc:
+        logger.debug("compute_flow_features failed (using neutral defaults): %s", exc)
+    return out

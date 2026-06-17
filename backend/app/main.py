@@ -63,6 +63,7 @@ from app.api.routes import (
 )
 from app.api.routes import equity
 from app.api.routes import trade_desk
+from app.api.routes import options_flow
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -104,6 +105,10 @@ app.include_router(analytics.router,   prefix="/api/analytics",    tags=["Analyt
 app.include_router(trading_mode.router,prefix="/api/mode",         tags=["Trading Mode"])
 app.include_router(equity.router,      prefix="/api/equity",       tags=["Equity"])
 app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade Desk"])
+app.include_router(options_flow.router,prefix="/api/options-flow",  tags=["Options Flow"])
+
+# Nightly archive scheduler (Options Flow data retention)
+_flow_scheduler: Optional[object] = None
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────
@@ -149,6 +154,50 @@ async def on_startup() -> None:
 
     # 4. Start background scheduler
     asyncio.create_task(_background_scheduler())
+
+    # 5. Start Options Flow ingest service (idle unless enabled / demo mode)
+    try:
+        from app.services.options_flow_ingest import options_flow_ingest
+        await options_flow_ingest.start()
+    except Exception as exc:
+        logger.warning("Options flow ingest failed to start (non-fatal): %s", exc)
+
+    # 6. Nightly options_flow archive job (data retention → JSONL)
+    global _flow_scheduler
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from app.services.options_flow_ingest import archive_old_flow
+
+        _flow_scheduler = AsyncIOScheduler(timezone="America/New_York")
+        _flow_scheduler.add_job(
+            archive_old_flow, "cron", hour=2, minute=0, id="options_flow_archive"
+        )
+        _flow_scheduler.start()
+        logger.info("Options flow archive job scheduled (nightly 02:00 ET)")
+    except Exception as exc:
+        logger.warning("Options flow archive scheduler failed: %s", exc)
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """Cleanly stop the ingest service, archive scheduler, and Redis client."""
+    try:
+        from app.services.options_flow_ingest import options_flow_ingest
+        await options_flow_ingest.stop()
+    except Exception as exc:
+        logger.debug("Options flow ingest stop error: %s", exc)
+    global _flow_scheduler
+    if _flow_scheduler is not None:
+        try:
+            _flow_scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        _flow_scheduler = None
+    try:
+        from app.core.redis import close_redis
+        await close_redis()
+    except Exception:
+        pass
 
 
 async def _background_scheduler() -> None:
@@ -321,9 +370,14 @@ async def _reclassify_regime() -> None:
             warnings=["VIX-proxy surface — no live options chain"],
         )
 
-        from app.services.regime_classifier import RegimeClassifier
+        from app.services.regime_classifier import RegimeClassifier, compute_flow_features
         classifier = RegimeClassifier()
-        _current_regime = classifier.classify(surface, rsi=rsi_val, adx=adx_val, spy_returns=returns)
+        flow_feats = await compute_flow_features("SPY")
+        _current_regime = classifier.classify(
+            surface, rsi=rsi_val, adx=adx_val, spy_returns=returns,
+            flow_sentiment_score=flow_feats["flow_sentiment_score"],
+            flow_large_sweep_bullish_count=flow_feats["flow_large_sweep_bullish_count"],
+        )
         logger.info(
             "Regime → %s (VIX=%.1f, IV_rank=%.0f, RSI=%.1f, ADX=%.1f, equity=%s)",
             _current_regime.regime.value, vix_now, iv_rank, rsi_val, adx_val,
