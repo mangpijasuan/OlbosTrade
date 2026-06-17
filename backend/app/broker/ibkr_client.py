@@ -272,15 +272,23 @@ class IBKRClient(BrokerInterface):
         _step    = _retry_step()
         _retries = _max_retries()
 
+        is_market = (spread.order_type == "MKT")
         for attempt in range(1, _retries + 2):  # +2: initial + retries
             # Use quantity from SpreadOrder (legs share the same contract count)
             spread_qty = max(1, max(leg.quantity for leg in spread.legs))
-            order = LimitOrder(
-                action="BUY",
-                totalQuantity=spread_qty,
-                lmtPrice=round(limit_price, 2),
-                tif="DAY",  # explicit DAY to match IB Gateway order preset (avoids Error 10349 cancel)
-            )
+            if is_market:
+                # Honor MKT (e.g. kill-switch / dispatcher flatten). Previously every
+                # order was a LimitOrder, so a "market" flatten became a $0 limit that
+                # never filled — leaving naked exposure while logging "flatten complete".
+                from ib_insync import MarketOrder
+                order = MarketOrder(action="BUY", totalQuantity=spread_qty, tif="DAY")
+            else:
+                order = LimitOrder(
+                    action="BUY",
+                    totalQuantity=spread_qty,
+                    lmtPrice=round(limit_price, 2),
+                    tif="DAY",  # explicit DAY to match IB Gateway order preset (avoids Error 10349 cancel)
+                )
             # Allow SpreadOrder to override TIF (e.g. GTC) but default to DAY
             if spread.time_in_force and spread.time_in_force != "DAY":
                 order.tif = spread.time_in_force
@@ -322,7 +330,10 @@ class IBKRClient(BrokerInterface):
             while asyncio.get_event_loop().time() < deadline:
                 await asyncio.sleep(1)
                 status = trade.orderStatus.status
-                if status in ("Filled", "Submitted") and trade.orderStatus.filled > 0:
+                # Only treat as done on a FULL fill — a partial (filled < total)
+                # must not be reported as complete, or the caller stops monitoring
+                # while contracts are still working.
+                if status == "Filled" and trade.orderStatus.filled >= trade.order.totalQuantity:
                     logger.info(
                         "Order %s filled: %s contracts @ avg $%.4f",
                         trade.order.orderId,
@@ -349,30 +360,42 @@ class IBKRClient(BrokerInterface):
                         message=status,
                     )
 
-            # ── Timeout: cancel and retry at a more aggressive price ───────────
-            if attempt <= _retries:
-                logger.warning(
-                    "Order %s timed out after %ds — cancelling and retrying at "
-                    "lower limit (%.2f → %.2f)",
+            # ── Timeout: cancel, CONFIRM the cancel, then decide ──────────────
+            # Confirming avoids a duplicate fill: if we cancel-then-resubmit while
+            # the original is mid-fill, both could fill.
+            self.ib.cancelOrder(trade.order)
+            cancel_outcome = await self._await_cancel(trade)
+            if cancel_outcome == "filled":
+                logger.info(
+                    "Order %s filled during cancel — returning fill (no retry)",
                     trade.order.orderId,
-                    _timeout,
-                    limit_price,
-                    limit_price - _step,
                 )
-                self.ib.cancelOrder(trade.order)
-                await asyncio.sleep(2)  # Let cancel propagate
+                return OrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="filled",
+                    fill_price=__import__("decimal").Decimal(
+                        str(round(trade.orderStatus.avgFillPrice, 4))
+                    ),
+                    filled_at=datetime.now(timezone.utc),
+                    message=f"Filled {trade.orderStatus.filled} contracts @ "
+                            f"${trade.orderStatus.avgFillPrice:.4f}",
+                )
+
+            # Market flatten orders have no price to improve — do not loop.
+            if is_market:
+                logger.error("Market order %s did not fill within timeout", trade.order.orderId)
+                break
+            if attempt <= _retries:
                 limit_price = round(limit_price - _step, 2)
+                logger.warning(
+                    "Order %s timed out — retrying at lower limit (→ %.2f)",
+                    trade.order.orderId, limit_price,
+                )
                 if limit_price <= 0:
                     logger.error("Limit price reached zero — aborting retries")
                     break
             else:
-                # Final attempt also timed out — cancel and return
-                logger.error(
-                    "Order %s timed out on final attempt — cancelling",
-                    trade.order.orderId,
-                )
-                self.ib.cancelOrder(trade.order)
-                await asyncio.sleep(2)
+                logger.error("Order %s timed out on final attempt", trade.order.orderId)
 
         # All attempts exhausted
         order_id = str(last_trade.order.orderId) if last_trade else "unknown"
@@ -381,6 +404,27 @@ class IBKRClient(BrokerInterface):
             status="cancelled",
             message=f"No fill after {_retries + 1} attempts",
         )
+
+    async def _await_cancel(self, trade, timeout: float = 5.0) -> str:
+        """
+        Wait for a cancel to be confirmed by IBKR.
+
+        Returns 'cancelled' once the order reaches a terminal cancelled state,
+        'filled' if it fully filled before the cancel landed (caller must NOT
+        retry in that case), or 'unknown' on timeout.
+        """
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(0.5)
+            st = trade.orderStatus.status
+            if st in ("Cancelled", "ApiCancelled", "Inactive"):
+                return "cancelled"
+            if st == "Filled" and trade.orderStatus.filled >= trade.order.totalQuantity:
+                return "filled"
+        logger.warning(
+            "Cancel of order %s not confirmed within %.0fs", trade.order.orderId, timeout
+        )
+        return "unknown"
 
     async def get_positions(self) -> list[Position]:
         """Return all open positions from IBKR account."""
@@ -450,25 +494,52 @@ class IBKRClient(BrokerInterface):
         stock = Stock(ticker, "SMART", "USD")
         await self.ib.qualifyContractsAsync(stock)
 
+        from ib_insync import MarketOrder, StopOrder
         ib_action = side
-        if order_type == "market":
-            from ib_insync import MarketOrder
-            order = MarketOrder(action=ib_action, totalQuantity=qty, tif="DAY")
-        else:
-            order = LimitOrder(action=ib_action, totalQuantity=qty,
-                               lmtPrice=limit_price or 0.0, tif="DAY")
+        exit_action = "SELL" if side == "BUY" else "BUY"
+
+        def _entry():
+            if order_type == "market":
+                return MarketOrder(action=ib_action, totalQuantity=qty, tif="DAY")
             # explicit DAY to match IB Gateway order preset — avoids Error 10349 cancel
+            return LimitOrder(action=ib_action, totalQuantity=qty,
+                              lmtPrice=limit_price or 0.0, tif="DAY")
 
-        if take_profit:
-            order.takeProfitPrice = take_profit
-        if stop:
-            order.stopLossPrice = stop
-            order.orderType = "LMT" if take_profit else order.orderType
+        if stop or take_profit:
+            # Build a REAL bracket: parent entry + attached protective children.
+            # The previous code set order.takeProfitPrice / order.stopLossPrice,
+            # which are not ib_insync Order fields — so trades the system believed
+            # were stop-protected actually had NO stop at the broker.
+            parent = _entry()
+            parent.orderId = self.ib.client.getReqId()
+            parent.transmit = False
+            children = []
+            if take_profit:
+                tp = LimitOrder(exit_action, qty, round(float(take_profit), 2), tif="GTC")
+                tp.parentId = parent.orderId
+                tp.transmit = False
+                children.append(tp)
+            if stop:
+                sl = StopOrder(exit_action, qty, round(float(stop), 2), tif="GTC")
+                sl.parentId = parent.orderId
+                sl.transmit = True   # last child transmits the whole bracket
+                children.append(sl)
+            else:
+                children[-1].transmit = True  # only a take-profit child → it transmits
 
-        logger.info("Submitting equity order: %s %s x%d @ %s",
-                    side, ticker, qty, f"${limit_price:.2f}" if limit_price else "MKT")
-
-        trade = self.ib.placeOrder(stock, order)
+            logger.info(
+                "Submitting equity BRACKET: %s %s x%d entry=%s stop=%s tp=%s",
+                side, ticker, qty,
+                f"${limit_price:.2f}" if limit_price else "MKT", stop, take_profit,
+            )
+            trade = self.ib.placeOrder(stock, parent)
+            for child in children:
+                self.ib.placeOrder(stock, child)
+        else:
+            order = _entry()
+            logger.info("Submitting equity order: %s %s x%d @ %s",
+                        side, ticker, qty, f"${limit_price:.2f}" if limit_price else "MKT")
+            trade = self.ib.placeOrder(stock, order)
 
         # ── Real-time status logging ───────────────────────────────────────────
         def _on_status(t=trade):
@@ -498,7 +569,7 @@ class IBKRClient(BrokerInterface):
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(1)
             status = trade.orderStatus.status
-            if status in ("Filled", "Submitted") and trade.orderStatus.filled > 0:
+            if status == "Filled" and trade.orderStatus.filled >= trade.order.totalQuantity:
                 return EquityOrderResult(
                     order_id=str(trade.order.orderId),
                     status="filled",
