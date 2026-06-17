@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import "./index.css";
 import TerminalLayout  from "./components/TerminalLayout";
+import ErrorBoundary   from "./components/ErrorBoundary";
 import Dashboard       from "./pages/Dashboard";
 import Backtest        from "./pages/Backtest";
 import TradeDesk       from "./pages/TradeDesk";
@@ -33,7 +34,9 @@ export default function App() {
 
   return (
     <TerminalLayout activePage={page} onNav={setPage}>
-      <Page />
+      <ErrorBoundary resetKey={page}>
+        <Page />
+      </ErrorBoundary>
     </TerminalLayout>
   );
 }

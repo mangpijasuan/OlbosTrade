@@ -13,7 +13,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
+  if (!res.ok) {
+    // Surface the server's JSON error detail when present, not just the status text.
+    let detail = res.statusText;
+    try {
+      const body = await res.clone().json();
+      detail = body?.detail || body?.error || body?.message || detail;
+    } catch {
+      /* non-JSON body — fall back to status text */
+    }
+    throw new Error(`API ${res.status}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
+  }
   return res.json();
 }
 
