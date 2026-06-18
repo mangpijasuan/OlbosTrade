@@ -287,3 +287,15 @@ class TestEquityBrackets:
         orders = gw.order_bodies[-1]["orders"]
         assert len(orders) == 1
         assert orders[0]["orderType"] == "MKT"
+
+    @pytest.mark.asyncio
+    async def test_equity_partial_fill_reported(self):
+        # Equity order partially fills — must return an EquityOrderResult with
+        # status="partial" (regression: EquityOrderResult must support it).
+        gw = FakeGateway(order_status="Submitted", filled=40, avg=180.0)
+        c = _make_client(gw)
+        c._fill_timeout = lambda: 0
+        result = await c.place_equity_order("AAPL", 100, "BUY", order_type="market")
+        assert result.status == "partial"
+        assert result.filled_quantity == 40
+        assert result.remaining_quantity == 60
