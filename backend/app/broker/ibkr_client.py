@@ -25,6 +25,7 @@ from app.broker.broker_interface import (
     OrderResult,
     Position,
     Quote,
+    SpreadLeg,
     SpreadOrder,
 )
 from typing import Literal
@@ -228,80 +229,161 @@ class IBKRClient(BrokerInterface):
             implied_vol=float(g.impliedVol or 0),
         )
 
+    @staticmethod
+    def _combo_sizing(legs: list[SpreadLeg]) -> tuple[int, list[int]]:
+        """
+        Convert absolute per-leg contract counts into IB combo terms: a single
+        ``totalQuantity`` (the number of spreads) plus an integer ratio per leg.
+
+        Example: legs of 5/5 → ``(5, [1, 1])``; legs of 5/10 → ``(5, [1, 2])``.
+
+        This prevents the classic combo sizing bug where ``totalQuantity`` is set
+        to the per-leg quantity AND each combo leg ratio is also set to the
+        per-leg quantity — which sends quantity² contracts per leg.
+        """
+        from functools import reduce
+        from math import gcd
+
+        quantities = [max(1, int(leg.quantity)) for leg in legs]
+        spread_qty = reduce(gcd, quantities)
+        if spread_qty <= 0:
+            spread_qty = 1
+        ratios = [q // spread_qty for q in quantities]
+        return spread_qty, ratios
+
+    async def _await_order(self, trade, total_qty: int, timeout: int) -> tuple[str, int, float]:
+        """
+        Poll an order until it fully fills, terminates, or the timeout expires.
+
+        Returns ``(outcome, filled_qty, avg_price)`` where ``outcome`` is one of:
+          - ``"filled"``    — full quantity filled
+          - ``"partial"``   — terminated (cancelled/rejected) with a partial fill
+          - ``"cancelled"`` / ``"rejected"`` — terminated with no fill
+          - ``"timeout"``   — still working when the timeout elapsed (``filled_qty``
+                              may be > 0, i.e. a partial that is still working)
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        cancel_states = {"Cancelled", "ApiCancelled", "Inactive"}
+        while loop.time() < deadline:
+            await asyncio.sleep(1)
+            st = trade.orderStatus
+            status = st.status
+            filled = int(st.filled or 0)
+            avg = float(st.avgFillPrice or 0.0)
+            if status == "Filled" or (total_qty and filled >= total_qty):
+                return "filled", filled, avg
+            if status == "Rejected":
+                return ("partial" if filled > 0 else "rejected"), filled, avg
+            if status in cancel_states:
+                return ("partial" if filled > 0 else "cancelled"), filled, avg
+        st = trade.orderStatus
+        return "timeout", int(st.filled or 0), float(st.avgFillPrice or 0.0)
+
     async def place_order(self, spread: SpreadOrder) -> OrderResult:
         """
-        Submit a combo/spread order to IBKR with:
-          - Real-time status event logging
-          - Fill timeout (FILL_TIMEOUT_SECONDS)
-          - Cancel + retry at a more aggressive price (up to MAX_ORDER_RETRIES times)
+        Submit an options order to IBKR as a SINGLE order (never legged out):
+          - 1 leg  → a plain Option order
+          - >1 leg → one BAG combo order containing every leg
 
-        Credit spreads are submitted as BUY combo orders (we pay a negative net
-        debit = collect a credit). limit_price > 0 means net credit received.
+        Honours ``spread.order_type``:
+          - ``"MKT"`` → MarketOrder (used by the kill switch to flatten at any
+            price). No price retries — a working market order is left live.
+          - ``"LMT"`` → LimitOrder with cancel-and-retry at a more aggressive
+            price (up to MAX_ORDER_RETRIES).
+
+        Combo limit-price sign convention: ``spread.limit_price`` is a net credit
+        when positive / net debit when negative. A combo is submitted as a BUY of
+        the BAG, so the IB limit price is the *net price paid* = ``-limit_price``
+        (a credit is a negative price to pay). Single-leg orders use the leg's own
+        action and price as-is.
+
+        Partial fills are reported explicitly via ``OrderResult.status == "partial"``
+        with ``filled_quantity`` / ``remaining_quantity`` — they are NEVER reported
+        as a clean fill.
         """
         self._require_connection()
 
-        from ib_insync import ComboLeg, Contract as IBContract
+        from ib_insync import ComboLeg, Contract as IBContract, MarketOrder
 
-        # ── Qualify all legs once (reused across retries) ──────────────────────
-        legs = []
+        is_market = spread.order_type == "MKT"
+
+        # ── Qualify every leg once (reused across retries) ─────────────────────
+        qualified: list[tuple[SpreadLeg, Contract]] = []
         for leg in spread.legs:
             expiry_ib = leg.expiration.strftime("%Y%m%d")
             opt = Option(leg.symbol, expiry_ib, float(leg.strike),
                          "C" if leg.option_type == "call" else "P", "SMART")
-            qualified = await self.ib.qualifyContractsAsync(opt)
-            if not qualified:
+            q = await self.ib.qualifyContractsAsync(opt)
+            if not q:
                 raise ValueError(f"Could not qualify leg: {leg}")
-            combo_leg = ComboLeg(
-                conId=qualified[0].conId,
-                ratio=leg.quantity,
-                action=leg.action,
-                exchange="SMART",
-            )
-            legs.append(combo_leg)
+            qualified.append((leg, q[0]))
 
-        bag = IBContract()
-        bag.symbol = spread.underlying
-        bag.secType = "BAG"
-        bag.currency = "USD"
-        bag.exchange = "SMART"
-        bag.comboLegs = legs
+        if not qualified:
+            raise ValueError("Cannot place an order with no legs")
+
+        spread_qty, ratios = self._combo_sizing(spread.legs)
+        single_leg = len(qualified) == 1
+
+        # ── Build the order contract ───────────────────────────────────────────
+        if single_leg:
+            leg, contract = qualified[0]
+            order_action = leg.action          # BUY or SELL the single option
+        else:
+            combo_legs = []
+            for (leg, qc), ratio in zip(qualified, ratios):
+                combo_legs.append(ComboLeg(
+                    conId=qc.conId,
+                    ratio=ratio,
+                    action=leg.action,
+                    exchange="SMART",
+                ))
+            contract = IBContract()
+            contract.symbol = spread.underlying
+            contract.secType = "BAG"
+            contract.currency = "USD"
+            contract.exchange = "SMART"
+            contract.comboLegs = combo_legs
+            order_action = "BUY"               # combo direction encoded in legs
+
+        total_qty = spread_qty
+        # explicit DAY default matches the IB Gateway preset (avoids Error 10349)
+        tif = spread.time_in_force or "DAY"
+
+        def _build_order(net_price: float):
+            if is_market:
+                o = MarketOrder(action=order_action, totalQuantity=total_qty)
+                o.tif = tif
+                return o
+            lmt = round(net_price if single_leg else -net_price, 2)
+            return LimitOrder(action=order_action, totalQuantity=total_qty,
+                              lmtPrice=lmt, tif=tif)
 
         limit_price = float(spread.limit_price)
         last_trade = None
         _timeout = _fill_timeout()
-        _step    = _retry_step()
-        _retries = _max_retries()
+        _step = _retry_step()
+        _retries = 0 if is_market else _max_retries()
 
-        for attempt in range(1, _retries + 2):  # +2: initial + retries
-            # Use quantity from SpreadOrder (legs share the same contract count)
-            spread_qty = max(1, max(leg.quantity for leg in spread.legs))
-            order = LimitOrder(
-                action="BUY",
-                totalQuantity=spread_qty,
-                lmtPrice=round(limit_price, 2),
-                tif="DAY",  # explicit DAY to match IB Gateway order preset (avoids Error 10349 cancel)
-            )
-            # Allow SpreadOrder to override TIF (e.g. GTC) but default to DAY
-            if spread.time_in_force and spread.time_in_force != "DAY":
-                order.tif = spread.time_in_force
-
+        for attempt in range(1, _retries + 2):  # +1: initial; +N retries (LMT only)
+            order = _build_order(limit_price)
             logger.info(
-                "Submitting spread order (attempt %d/%d): %s limit=%.2f",
-                attempt, _retries + 1,
-                spread.underlying, limit_price,
+                "Submitting %s %s order (attempt %d/%d): %s qty=%d%s",
+                "single-leg" if single_leg else "combo",
+                "MKT" if is_market else "LMT",
+                attempt, _retries + 1, spread.underlying, total_qty,
+                "" if is_market else f" net_limit={limit_price:.2f}",
             )
 
-            trade = self.ib.placeOrder(bag, order)
+            trade = self.ib.placeOrder(contract, order)
             last_trade = trade
 
-            # ── Subscribe to status events for real-time logging ───────────────
+            # ── Real-time status + fill event logging ──────────────────────────
             def _on_status(t=trade):
                 logger.info(
                     "Order %s — status: %-12s  filled: %s/%s  avg_price: %.4f",
-                    t.order.orderId,
-                    t.orderStatus.status,
-                    t.orderStatus.filled,
-                    t.order.totalQuantity,
+                    t.order.orderId, t.orderStatus.status,
+                    t.orderStatus.filled, t.order.totalQuantity,
                     t.orderStatus.avgFillPrice or 0.0,
                 )
             trade.statusEvent += _on_status
@@ -309,77 +391,121 @@ class IBKRClient(BrokerInterface):
             def _on_fill(trade_, fill_, holding_=None):
                 logger.info(
                     "FILL: order %s — %s x%s @ $%.4f  execution_id=%s",
-                    trade_.order.orderId,
-                    fill_.contract.localSymbol,
-                    fill_.execution.shares,
-                    fill_.execution.price,
+                    trade_.order.orderId, fill_.contract.localSymbol,
+                    fill_.execution.shares, fill_.execution.price,
                     fill_.execution.execId,
                 )
             trade.fillEvent += _on_fill
 
-            # ── Wait for fill or timeout ───────────────────────────────────────
-            deadline = asyncio.get_event_loop().time() + _timeout
-            while asyncio.get_event_loop().time() < deadline:
-                await asyncio.sleep(1)
-                status = trade.orderStatus.status
-                if status in ("Filled", "Submitted") and trade.orderStatus.filled > 0:
-                    logger.info(
-                        "Order %s filled: %s contracts @ avg $%.4f",
-                        trade.order.orderId,
-                        trade.orderStatus.filled,
-                        trade.orderStatus.avgFillPrice,
-                    )
-                    return OrderResult(
-                        order_id=str(trade.order.orderId),
-                        status="filled",
-                        fill_price=__import__("decimal").Decimal(
-                            str(round(trade.orderStatus.avgFillPrice, 4))
-                        ),
-                        filled_at=datetime.now(timezone.utc),
-                        message=f"Filled {trade.orderStatus.filled} contracts @ "
-                                f"${trade.orderStatus.avgFillPrice:.4f}",
-                    )
-                if status in ("Cancelled", "Rejected", "Inactive"):
-                    logger.warning(
-                        "Order %s %s — not retrying", trade.order.orderId, status
-                    )
-                    return OrderResult(
-                        order_id=str(trade.order.orderId),
-                        status="rejected" if status == "Rejected" else "cancelled",
-                        message=status,
-                    )
+            outcome, filled, avg = await self._await_order(trade, total_qty, _timeout)
 
-            # ── Timeout: cancel and retry at a more aggressive price ───────────
-            if attempt <= _retries:
+            # ── Fully filled ───────────────────────────────────────────────────
+            if outcome == "filled":
+                logger.info("Order %s fully filled: %d @ avg $%.4f",
+                            trade.order.orderId, filled, avg)
+                return OrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="filled",
+                    fill_price=Decimal(str(round(avg, 4))),
+                    filled_at=datetime.now(timezone.utc),
+                    filled_quantity=filled,
+                    remaining_quantity=0,
+                    message=f"Filled {filled} @ ${avg:.4f}",
+                )
+
+            # ── Partial fill — cancel the remainder and report it explicitly ───
+            if outcome == "partial":
                 logger.warning(
-                    "Order %s timed out after %ds — cancelling and retrying at "
-                    "lower limit (%.2f → %.2f)",
-                    trade.order.orderId,
-                    _timeout,
-                    limit_price,
-                    limit_price - _step,
+                    "Order %s PARTIAL fill: %d/%d filled — cancelling remainder, "
+                    "not retrying (would double the filled portion)",
+                    trade.order.orderId, filled, total_qty,
                 )
                 self.ib.cancelOrder(trade.order)
-                await asyncio.sleep(2)  # Let cancel propagate
-                limit_price = round(limit_price - _step, 2)
+                await asyncio.sleep(1)
+                return OrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="partial",
+                    fill_price=Decimal(str(round(avg, 4))) if filled else None,
+                    filled_at=datetime.now(timezone.utc) if filled else None,
+                    filled_quantity=filled,
+                    remaining_quantity=max(0, total_qty - filled),
+                    message=f"Partial fill {filled}/{total_qty} @ ${avg:.4f}",
+                )
+
+            # ── Terminated with no fill ────────────────────────────────────────
+            if outcome in ("cancelled", "rejected"):
+                logger.warning("Order %s %s — not retrying",
+                               trade.order.orderId, outcome)
+                return OrderResult(
+                    order_id=str(trade.order.orderId),
+                    status=outcome,
+                    filled_quantity=0,
+                    remaining_quantity=total_qty,
+                    message=outcome,
+                )
+
+            # ── Timeout (outcome == "timeout") ─────────────────────────────────
+            if filled > 0:
+                # Still working but partially filled — cancel remainder, report partial.
+                logger.warning(
+                    "Order %s timed out PARTIALLY filled: %d/%d — cancelling remainder",
+                    trade.order.orderId, filled, total_qty,
+                )
+                self.ib.cancelOrder(trade.order)
+                await asyncio.sleep(1)
+                return OrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="partial",
+                    fill_price=Decimal(str(round(avg, 4))),
+                    filled_at=datetime.now(timezone.utc),
+                    filled_quantity=filled,
+                    remaining_quantity=max(0, total_qty - filled),
+                    message=f"Partial fill {filled}/{total_qty} @ ${avg:.4f} (timeout)",
+                )
+
+            if is_market:
+                # A market order with no fill is still working (e.g. market closed).
+                # Leave it live — cancelling a flatten could strand naked risk.
+                logger.warning(
+                    "Market order %s still working after %ds — leaving it live",
+                    trade.order.orderId, _timeout,
+                )
+                return OrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="submitted",
+                    filled_quantity=0,
+                    remaining_quantity=total_qty,
+                    message=f"Market order working — no fill after {_timeout}s",
+                )
+
+            # LMT timeout with no fill → cancel and retry at a better net price
+            if attempt <= _retries:
+                new_price = round(limit_price - _step, 2)
+                logger.warning(
+                    "Order %s timed out after %ds — cancelling and retrying at "
+                    "lower net limit (%.2f → %.2f)",
+                    trade.order.orderId, _timeout, limit_price, new_price,
+                )
+                self.ib.cancelOrder(trade.order)
+                await asyncio.sleep(2)  # let cancel propagate
+                limit_price = new_price
                 if limit_price <= 0:
-                    logger.error("Limit price reached zero — aborting retries")
+                    logger.error("Net limit reached zero — aborting retries")
                     break
             else:
-                # Final attempt also timed out — cancel and return
-                logger.error(
-                    "Order %s timed out on final attempt — cancelling",
-                    trade.order.orderId,
-                )
+                logger.error("Order %s timed out on final attempt — cancelling",
+                             trade.order.orderId)
                 self.ib.cancelOrder(trade.order)
                 await asyncio.sleep(2)
 
-        # All attempts exhausted
+        # All attempts exhausted with no fill
         order_id = str(last_trade.order.orderId) if last_trade else "unknown"
         return OrderResult(
             order_id=order_id,
             status="cancelled",
-            message=f"No fill after {_retries + 1} attempts",
+            filled_quantity=0,
+            remaining_quantity=total_qty,
+            message=f"No fill after {_retries + 1} attempt(s)",
         )
 
     async def get_positions(self) -> list[Position]:
