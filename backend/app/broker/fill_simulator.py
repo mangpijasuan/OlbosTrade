@@ -88,6 +88,18 @@ class SpreadFillResult:
     legs_total: int
     partial_fill_reason: Optional[str] = None
 
+    def __len__(self) -> int:
+        """Backward-compatible length as the number of filled legs."""
+        return len(self.leg_fills)
+
+    def __iter__(self):
+        """Allow legacy callers/tests to iterate over leg fills directly."""
+        return iter(self.leg_fills)
+
+    def __getitem__(self, index: int) -> FillResult:
+        """Allow legacy list-style access to individual leg fills."""
+        return self.leg_fills[index]
+
 
 def realistic_fill_price(
     bid: float,

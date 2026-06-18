@@ -7,17 +7,20 @@ Set BROKER=tradier in .env to activate.
 from __future__ import annotations
 
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import httpx
 
 from app.broker.broker_interface import (
     AccountSummary,
+    Bar,
     BrokerInterface,
+    EquityOrderResult,
     Greeks,
     OptionContract,
     OptionsChain,
+    Quote,
     OrderResult,
     Position,
     SpreadOrder,
@@ -44,6 +47,14 @@ class TradierClient(BrokerInterface):
             },
             timeout=15.0,
         )
+
+    @property
+    def supports_options(self) -> bool:
+        return True
+
+    @property
+    def supports_equities(self) -> bool:
+        return True
 
     async def _get(self, path: str, params: dict | None = None) -> dict:
         """Shared GET helper with error handling."""
@@ -107,7 +118,7 @@ class TradierClient(BrokerInterface):
             underlying_price=underlying_price,
             calls=calls,
             puts=puts,
-            fetched_at=datetime.utcnow(),
+            fetched_at=datetime.now(timezone.utc),
         )
 
     async def get_greeks(
@@ -187,6 +198,78 @@ class TradierClient(BrokerInterface):
             cash_balance=Decimal(str(balances.get("total_cash", 0))),
             buying_power=Decimal(str(balances.get("option_buying_power", 0))),
             trading_mode="sandbox" if settings.tradier_sandbox else "live",
+        )
+
+    async def place_equity_order(
+        self,
+        ticker: str,
+        qty: int,
+        side: str,
+        order_type: str = "market",
+        limit_price: float | None = None,
+        stop: float | None = None,
+        take_profit: float | None = None,
+    ) -> EquityOrderResult:
+        """Submit an equity order to Tradier."""
+        payload: dict = {
+            "class": "equity",
+            "symbol": ticker.upper(),
+            "side": "buy" if side.upper() == "BUY" else "sell",
+            "quantity": str(qty),
+            "type": order_type,
+            "duration": "day",
+        }
+        if limit_price is not None:
+            payload["price"] = str(limit_price)
+        if stop is not None:
+            payload["stop"] = str(stop)
+
+        response = await self._client.post("/accounts/{account_id}/orders", data=payload)
+        response.raise_for_status()
+        data = response.json().get("order", {})
+        return EquityOrderResult(
+            order_id=str(data.get("id", "")),
+            status=data.get("status", "submitted"),
+            message=data.get("status"),
+        )
+
+    async def get_bars(
+        self, ticker: str, timeframe: str = "1Day", limit: int = 100
+    ) -> list[Bar]:
+        """Fetch historical daily bars from Tradier."""
+        interval = "daily" if timeframe.lower() in {"1day", "daily", "day"} else timeframe
+        data = await self._get(
+            "/markets/history",
+            params={"symbol": ticker.upper(), "interval": interval},
+        )
+        raw = data.get("history", {}).get("day", []) or []
+        if isinstance(raw, dict):
+            raw = [raw]
+        bars: list[Bar] = []
+        for row in raw[-limit:]:
+            bars.append(
+                Bar(
+                    timestamp=datetime.fromisoformat(str(row["date"])),
+                    open=Decimal(str(row.get("open") or 0)),
+                    high=Decimal(str(row.get("high") or 0)),
+                    low=Decimal(str(row.get("low") or 0)),
+                    close=Decimal(str(row.get("close") or 0)),
+                    volume=int(row.get("volume") or 0),
+                )
+            )
+        return bars
+
+    async def get_latest_quote(self, ticker: str) -> Quote:
+        """Fetch latest equity bid/ask quote from Tradier."""
+        data = await self._get("/markets/quotes", params={"symbols": ticker.upper()})
+        quote = data.get("quotes", {}).get("quote", {}) or {}
+        return Quote(
+            symbol=ticker.upper(),
+            bid_price=Decimal(str(quote.get("bid") or quote.get("last") or 0)),
+            ask_price=Decimal(str(quote.get("ask") or quote.get("last") or 0)),
+            bid_size=int(quote.get("bidsize") or 0),
+            ask_size=int(quote.get("asksize") or 0),
+            timestamp=datetime.now(timezone.utc),
         )
 
     async def close(self) -> None:

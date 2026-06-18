@@ -101,7 +101,9 @@ class TestFillSimulator:
             {"bid": 1.20, "ask": 1.30, "side": "SELL"},
             {"bid": 0.60, "ask": 0.70, "side": "BUY"},
         ]
-        results = simulator.simulate_spread_fill(legs, contracts=1)
+        results = simulator.simulate_spread_fill(
+            legs, contracts=1, simulate_partial_fills=False
+        )
         assert len(results) == 2
 
     def test_iron_condor_four_legs(self):
@@ -111,7 +113,9 @@ class TestFillSimulator:
             {"bid": 1.10, "ask": 1.20, "side": "SELL"},  # short call
             {"bid": 0.50, "ask": 0.60, "side": "BUY"},   # long call
         ]
-        results = simulator.simulate_spread_fill(legs, contracts=2)
+        results = simulator.simulate_spread_fill(
+            legs, contracts=2, simulate_partial_fills=False
+        )
         assert len(results) == 4
         total_commission = sum(r.commission for r in results)
         assert total_commission == pytest.approx(COMMISSION_PER_CONTRACT * 2 * 4)
