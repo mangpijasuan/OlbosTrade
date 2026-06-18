@@ -73,11 +73,22 @@ class SpreadOrder(BaseModel):
 
 
 class OrderResult(BaseModel):
-    """Result returned after submitting an order."""
+    """Result returned after submitting an order.
+
+    ``status`` semantics:
+      - ``filled``    — the full requested quantity was filled.
+      - ``partial``   — some, but not all, of the requested quantity filled.
+                        ``filled_quantity`` / ``remaining_quantity`` describe how
+                        much. Callers MUST handle the residual exposure.
+      - ``submitted`` — accepted by the broker and still working (no fill yet).
+      - ``cancelled`` / ``rejected`` — terminated with no fill.
+    """
     order_id: str
-    status: Literal["submitted", "filled", "cancelled", "rejected", "pending"]
+    status: Literal["submitted", "filled", "partial", "cancelled", "rejected", "pending"]
     fill_price: Decimal | None = None
     filled_at: datetime | None = None
+    filled_quantity: int | None = None
+    remaining_quantity: int | None = None
     message: str | None = None
 
 

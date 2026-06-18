@@ -143,13 +143,32 @@ class KillSwitch:
 
                 flatten_tasks = []
                 for pos in positions:
+                    # Skip already-flat positions (defensive — IBKR sometimes
+                    # returns zero-quantity rows).
+                    if pos.quantity == 0:
+                        continue
+
                     close_action = "SELL" if pos.quantity > 0 else "BUY"
+
+                    # Equity / ETF positions use the strike==0 sentinel from
+                    # get_positions(). They MUST be flattened with a plain equity
+                    # market order — sending them through an options combo would
+                    # fail to qualify and leave the position naked.
+                    if pos.strike == Decimal("0"):
+                        flatten_tasks.append(
+                            self._flatten_equity(pos, close_action, results)
+                        )
+                        continue
+
                     flatten_order = SpreadOrder(
                         strategy="kill_switch_flatten",
                         underlying=pos.underlying,
                         legs=[
                             SpreadLeg(
-                                symbol=pos.symbol,
+                                # Use the ROOT underlying symbol (e.g. "SPY"), not
+                                # the OCC localSymbol — Option contracts are
+                                # qualified from the root or qualification fails.
+                                symbol=pos.underlying,
                                 strike=pos.strike,
                                 expiration=pos.expiration,
                                 option_type=pos.option_type,
@@ -212,14 +231,42 @@ class KillSwitch:
     async def _flatten_position(
         self, order: SpreadOrder, symbol: str, results: dict
     ) -> None:
-        """Attempt to flatten a single position, logging success/failure."""
+        """Attempt to flatten a single options position, logging success/failure."""
         try:
-            await self._broker.place_order(order)
+            result = await self._broker.place_order(order)
+            status = getattr(result, "status", None)
+            if status == "rejected":
+                msg = getattr(result, "message", "") or ""
+                results["errors"].append(f"flatten_{symbol}: rejected {msg}".strip())
+                logger.error("Kill switch: flatten REJECTED for %s — %s", symbol, msg)
+                return
             results["positions_flattened"] += 1
-            logger.info("Kill switch: flattened %s", symbol)
+            logger.info("Kill switch: flattened %s (status=%s)", symbol, status)
         except Exception as exc:
             results["errors"].append(f"flatten_{symbol}: {exc}")
             logger.error("Kill switch: failed to flatten %s: %s", symbol, exc)
+
+    async def _flatten_equity(self, pos, close_action: str, results: dict) -> None:
+        """Flatten a single equity/ETF position via a plain market order."""
+        symbol = pos.symbol
+        try:
+            result = await self._broker.place_equity_order(
+                ticker=symbol,
+                qty=abs(pos.quantity),
+                side=close_action,
+                order_type="market",
+            )
+            status = getattr(result, "status", None)
+            if status == "rejected":
+                msg = getattr(result, "message", "") or ""
+                results["errors"].append(f"flatten_equity_{symbol}: rejected {msg}".strip())
+                logger.error("Kill switch: equity flatten REJECTED for %s — %s", symbol, msg)
+                return
+            results["positions_flattened"] += 1
+            logger.info("Kill switch: flattened equity %s (status=%s)", symbol, status)
+        except Exception as exc:
+            results["errors"].append(f"flatten_equity_{symbol}: {exc}")
+            logger.error("Kill switch: failed to flatten equity %s: %s", symbol, exc)
 
     async def reset(self, authorization_code: str = "") -> dict:
         """
