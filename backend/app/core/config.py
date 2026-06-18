@@ -29,10 +29,6 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = Field(default="")
     alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets")
 
-    # ── Legacy Tradier (kept for backward compat) ─────────────────────────
-    tradier_api_key: str = Field(default="")
-    tradier_sandbox: bool = Field(default=True)
-
     # ── Database ──────────────────────────────────────────────────────────
     database_url: str = Field(
         default="postgresql+asyncpg://options_user:options_pass@localhost:5432/options_db"

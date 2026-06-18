@@ -137,7 +137,6 @@ except ImportError:
 | Order construction (pool alloc) | 20-50 ns |
 | JSON formatting (snprintf) | 100-300 ns |
 | Total signal-to-wire | 500 ns - 2 μs |
-| Network to Tradier (NYC3 droplet) | 2-8 ms |
 | Network to IBKR TWS | 5-50 ms |
 
 **The engine contributes < 2μs. The broker network contributes 5-50ms.**

@@ -14,7 +14,7 @@ Relationship:
     strategy_engine.py generates a Signal
     → MultiLegStrategy.from_signal() constructs the order structure
     → RiskManager + ExecutionDispatcher (module 4) validate and submit
-    → broker_interface.SpreadOrder is the wire format sent to IBKR/Tradier
+    → broker_interface.SpreadOrder is the wire format sent to the active broker
 """
 
 from __future__ import annotations

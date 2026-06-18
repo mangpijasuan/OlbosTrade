@@ -19,7 +19,7 @@ Monthly optimization (1st trading day of month, 8am ET):
   9. Walk-forward parameter optimization per strategy
   10. Kelly criterion position sizing update
 
-FIX #2:  Live quote from Tradier with staleness guard
+FIX #2:  Live broker quote with staleness guard
 FIX #10: Position reconciliation before every cycle
 FIX #12: Guardrail state loaded from DB (not hardcoded zeros)
 NEW:     IV surface replaces VIX-proxy IV rank
@@ -35,7 +35,6 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import httpx
 import pandas as pd
 import yfinance as yf
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -106,65 +105,55 @@ class PaperTrader:
 
     async def _fetch_live_quote(self, symbol: str) -> tuple[float, float]:
         """
-        Fetch live quote from Tradier with staleness guard.
-        Returns (price, vix). Never uses yfinance in live path.
+        Fetch live quote from the active broker with staleness guard.
+        Returns (price, vix). VIX falls back to yfinance because most broker
+        quote APIs do not expose index quotes through the equity quote path.
         """
-        if settings.tradier_api_key:
-            try:
-                tradier_base = (
-                    "https://sandbox.tradier.com"
-                    if settings.tradier_sandbox
-                    else "https://api.tradier.com"
+        try:
+            quote = await self.broker.get_latest_quote(symbol)
+            quote_dt = quote.timestamp
+            if quote_dt.tzinfo is None:
+                quote_dt = quote_dt.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - quote_dt).total_seconds()
+            if age > MAX_QUOTE_AGE_SECONDS:
+                raise DataStalenessError(
+                    f"{symbol} quote is {age:.0f}s old "
+                    f"(max {MAX_QUOTE_AGE_SECONDS}s)"
                 )
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(
-                        f"{tradier_base}/v1/markets/quotes",
-                        params={"symbols": f"{symbol},VIX"},
-                        headers={
-                            "Authorization": f"Bearer {settings.tradier_api_key}",
-                            "Accept": "application/json",
-                        },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
 
-                quotes = data.get("quotes", {}).get("quote", [])
-                if isinstance(quotes, dict):
-                    quotes = [quotes]
+            bid = float(quote.bid_price or 0)
+            ask = float(quote.ask_price or 0)
+            if bid > 0 and ask > 0:
+                price = (bid + ask) / 2
+            else:
+                price = max(bid, ask)
+            if price <= 0:
+                raise DataStalenessError(f"{symbol} quote has no usable bid/ask")
 
-                price, vix = None, 20.0
-                for q in quotes:
-                    if q.get("symbol") == symbol:
-                        trade_date = q.get("trade_date", "")
-                        if trade_date:
-                            try:
-                                quote_dt = datetime.fromisoformat(
-                                    trade_date.replace("Z", "+00:00")
-                                )
-                                age = (datetime.now(timezone.utc) - quote_dt).total_seconds()
-                                if age > MAX_QUOTE_AGE_SECONDS:
-                                    raise DataStalenessError(
-                                        f"{symbol} quote is {age:.0f}s old "
-                                        f"(max {MAX_QUOTE_AGE_SECONDS}s)"
-                                    )
-                            except DataStalenessError:
-                                raise
-                            except Exception:
-                                pass
-                        price = float(q.get("last") or q.get("ask") or 0)
-                    elif q.get("symbol") == "VIX":
-                        vix = float(q.get("last") or 20.0)
+            vix = await self._fetch_vix_level()
+            return price, vix
+        except DataStalenessError:
+            raise
+        except Exception as exc:
+            raise DataStalenessError(
+                f"Could not obtain fresh {symbol} quote from active broker: {exc}"
+            ) from exc
 
-                if price and price > 0:
-                    return price, vix
-            except DataStalenessError:
-                raise
-            except Exception as exc:
-                logger.warning("Tradier quote failed: %s — trying IBKR", exc)
+    async def _fetch_vix_level(self) -> float:
+        """Fetch VIX from yfinance for regime context; default neutral on failure."""
+        loop = asyncio.get_running_loop()
 
-        raise DataStalenessError(
-            f"Could not obtain fresh {symbol} quote — aborting cycle"
-        )
+        def _fetch() -> float:
+            hist = yf.Ticker("^VIX").history(period="5d", auto_adjust=True)
+            if hist.empty:
+                return 20.0
+            return float(hist["Close"].dropna().iloc[-1])
+
+        try:
+            return await loop.run_in_executor(None, _fetch)
+        except Exception as exc:
+            logger.warning("VIX fetch failed; using neutral VIX=20: %s", exc)
+            return 20.0
 
     # ── Main signal cycle ──────────────────────────────────────────────────────
 
