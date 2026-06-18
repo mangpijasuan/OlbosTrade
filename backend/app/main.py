@@ -752,9 +752,23 @@ async def guardrail_status():
             for p in recent:
                 if (p or 0) < 0: consecutive_losses += 1
                 else: break
-    except Exception:
-        daily_pnl = weekly_pnl = monthly_pnl = 0.0
-        trades_today = consecutive_losses = 0
+    except Exception as exc:
+        logger.error("Guardrail state unavailable; failing closed: %s", exc)
+        return {
+            "trading_allowed":       False,
+            "trading_mode":          "suspended",
+            "reason":                "guardrail_state_unavailable",
+            "flags":                 ["risk_state_unavailable"],
+            "daily_pnl":             None,
+            "weekly_pnl":            None,
+            "monthly_pnl":           None,
+            "daily_loss_pct":        None,
+            "weekly_loss_pct":       None,
+            "monthly_loss_pct":      None,
+            "consecutive_losses":    None,
+            "trades_today":          None,
+            "capital_pct_remaining": None,
+        }
 
     # Get real broker account value
     try:

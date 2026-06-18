@@ -424,9 +424,14 @@ class PaperTrader:
                     signal, portfolio_risk, guardrail_status
                 )
                 # Apply regime size multiplier on top of guardrail multiplier
-                effective_contracts = max(
-                    int(size_result.contracts * regime.size_multiplier), 1
-                )
+                effective_contracts = int(size_result.contracts * regime.size_multiplier)
+                if effective_contracts <= 0:
+                    actions.append({
+                        "action": "skipped",
+                        "strategy": strategy_name,
+                        "reason": "zero_size",
+                    })
+                    continue
 
                 # NEW: Submit via ExecutionDispatcher (liquidity guard + atomic fill)
                 multi_leg = self._build_multi_leg(
