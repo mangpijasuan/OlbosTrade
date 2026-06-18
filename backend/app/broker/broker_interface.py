@@ -147,11 +147,17 @@ class Quote(BaseModel):
 
 
 class EquityOrderResult(BaseModel):
-    """Result of an equity order submission."""
+    """Result of an equity order submission.
+
+    ``partial`` carries ``filled_quantity`` / ``remaining_quantity`` — the order
+    filled some but not all shares. See OrderResult for full status semantics.
+    """
     order_id: str
-    status: Literal["submitted", "filled", "cancelled", "rejected", "pending"]
+    status: Literal["submitted", "filled", "partial", "cancelled", "rejected", "pending"]
     fill_price: Decimal | None = None
     filled_at: datetime | None = None
+    filled_quantity: int | None = None
+    remaining_quantity: int | None = None
     message: str | None = None
 
 

@@ -244,3 +244,64 @@ class TestPartialFills:
         assert result.status == "submitted"
         assert len(client.ib.cancelled) == 0
         assert len(client.ib.placed) == 1       # MKT does not retry
+
+
+# ── Equity bracket / protective stops (P0 #1) ────────────────────────────────────
+
+class TestEquityBracketOrders:
+    @pytest.mark.asyncio
+    async def test_plain_order_has_no_children_and_transmits(self):
+        client = _make_client([_OrderStatus("Filled", 100, 180.0)])
+        await client.place_equity_order("AAPL", 100, "BUY", order_type="limit",
+                                        limit_price=180.0)
+        assert len(client.ib.placed) == 1       # no protective children
+        _, parent = client.ib.placed[0]
+        assert parent.transmit is True
+
+    @pytest.mark.asyncio
+    async def test_stop_creates_transmitted_stop_child(self):
+        client = _make_client([_OrderStatus("Filled", 100, 180.0)])
+        await client.place_equity_order("AAPL", 100, "BUY", order_type="limit",
+                                        limit_price=180.0, stop=175.0)
+        assert len(client.ib.placed) == 2
+        (_, parent), (_, stop_child) = client.ib.placed
+        # Parent is held until the child is attached; child releases the bracket.
+        assert parent.transmit is False
+        assert stop_child.orderType == "STP"
+        assert stop_child.auxPrice == 175.0
+        assert stop_child.action == "SELL"          # reverse of BUY entry
+        assert stop_child.parentId == parent.orderId
+        assert stop_child.transmit is True
+
+    @pytest.mark.asyncio
+    async def test_stop_and_take_profit_oca_pair(self):
+        client = _make_client([_OrderStatus("Filled", 100, 180.0)])
+        await client.place_equity_order("AAPL", 100, "BUY", order_type="limit",
+                                        limit_price=180.0, stop=175.0, take_profit=190.0)
+        assert len(client.ib.placed) == 3
+        orders = [o for _, o in client.ib.placed]
+        parent, tp, sl = orders
+        assert parent.transmit is False
+        assert tp.orderType == "LMT" and tp.lmtPrice == 190.0
+        assert tp.transmit is False                 # not the last child
+        assert sl.orderType == "STP" and sl.auxPrice == 175.0
+        assert sl.transmit is True                  # final child releases bracket
+        assert tp.parentId == parent.orderId == sl.parentId
+
+    @pytest.mark.asyncio
+    async def test_sell_entry_reverses_protective_actions(self):
+        client = _make_client([_OrderStatus("Filled", 50, 180.0)])
+        await client.place_equity_order("AAPL", 50, "SELL", order_type="limit",
+                                        limit_price=180.0, stop=185.0)
+        _, stop_child = client.ib.placed[1]
+        assert stop_child.action == "BUY"           # reverse of SELL entry
+
+    @pytest.mark.asyncio
+    async def test_equity_partial_fill_reported(self):
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0):
+            client = _make_client([_OrderStatus("Submitted", 40, 180.0)])
+            result = await client.place_equity_order("AAPL", 100, "BUY",
+                                                     order_type="limit", limit_price=180.0)
+        assert result.status == "partial"
+        assert result.filled_quantity == 40
+        assert result.remaining_quantity == 60

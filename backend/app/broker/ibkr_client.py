@@ -12,7 +12,7 @@ import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from ib_insync import IB, Contract, Index, LimitOrder, Option, Stock
+from ib_insync import IB, Contract, Index, LimitOrder, MarketOrder, Option, Stock, StopOrder
 
 from app.broker.broker_interface import (
     AccountSummary,
@@ -571,39 +571,53 @@ class IBKRClient(BrokerInterface):
         stop: float | None = None,
         take_profit: float | None = None,
     ) -> EquityOrderResult:
-        """Submit an equity order via IBKR."""
+        """
+        Submit an equity order via IBKR.
+
+        When ``stop`` and/or ``take_profit`` are supplied, a real **bracket** is
+        transmitted: the entry is held (``transmit=False``) while child protective
+        orders are attached via ``parentId``; the last child carries
+        ``transmit=True`` so IBKR releases the whole group atomically. The children
+        form a one-cancels-all pair (filling the stop cancels the take-profit and
+        vice-versa).
+
+        Previously the stop/take-profit were written onto attributes
+        (``order.stopLossPrice`` / ``takeProfitPrice``) that ib_insync does NOT
+        transmit, so protective exits were silently dropped — the position was left
+        completely unprotected.
+        """
         self._require_connection()
         stock = Stock(ticker, "SMART", "USD")
         await self.ib.qualifyContractsAsync(stock)
 
-        ib_action = side
+        reverse = "SELL" if side == "BUY" else "BUY"
+        has_brackets = stop is not None or take_profit is not None
+
+        # ── Parent entry order ─────────────────────────────────────────────────
         if order_type == "market":
-            from ib_insync import MarketOrder
-            order = MarketOrder(action=ib_action, totalQuantity=qty, tif="DAY")
+            parent = MarketOrder(action=side, totalQuantity=qty)
         else:
-            order = LimitOrder(action=ib_action, totalQuantity=qty,
-                               lmtPrice=limit_price or 0.0, tif="DAY")
-            # explicit DAY to match IB Gateway order preset — avoids Error 10349 cancel
+            parent = LimitOrder(action=side, totalQuantity=qty,
+                                lmtPrice=float(limit_price or 0.0))
+        parent.tif = "DAY"   # explicit DAY matches the IB Gateway preset (avoids 10349)
+        # Hold the parent until its protective children are attached.
+        parent.transmit = not has_brackets
 
-        if take_profit:
-            order.takeProfitPrice = take_profit
-        if stop:
-            order.stopLossPrice = stop
-            order.orderType = "LMT" if take_profit else order.orderType
+        logger.info(
+            "Submitting equity %s order: %s %s x%d @ %s%s",
+            order_type, side, ticker, qty,
+            f"${limit_price:.2f}" if limit_price else "MKT",
+            f"  [bracket stop={stop} tp={take_profit}]" if has_brackets else "",
+        )
 
-        logger.info("Submitting equity order: %s %s x%d @ %s",
-                    side, ticker, qty, f"${limit_price:.2f}" if limit_price else "MKT")
+        trade = self.ib.placeOrder(stock, parent)
+        parent_id = trade.order.orderId
 
-        trade = self.ib.placeOrder(stock, order)
-
-        # ── Real-time status logging ───────────────────────────────────────────
         def _on_status(t=trade):
             logger.info(
                 "Equity order %s — status: %-12s  filled: %s/%s  avg: %.4f",
-                t.order.orderId,
-                t.orderStatus.status,
-                t.orderStatus.filled,
-                t.order.totalQuantity,
+                t.order.orderId, t.orderStatus.status,
+                t.orderStatus.filled, t.order.totalQuantity,
                 t.orderStatus.avgFillPrice or 0.0,
             )
         trade.statusEvent += _on_status
@@ -611,46 +625,77 @@ class IBKRClient(BrokerInterface):
         def _on_fill(trade_, fill_, holding_=None):
             logger.info(
                 "EQUITY FILL: order %s — %s x%s @ $%.4f",
-                trade_.order.orderId,
-                fill_.contract.symbol,
-                fill_.execution.shares,
-                fill_.execution.price,
+                trade_.order.orderId, fill_.contract.symbol,
+                fill_.execution.shares, fill_.execution.price,
             )
         trade.fillEvent += _on_fill
 
-        # ── Wait for fill (market orders fill fast; limit orders may take time) ─
-        _timeout = _fill_timeout()
-        deadline = asyncio.get_event_loop().time() + _timeout
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(1)
-            status = trade.orderStatus.status
-            if status in ("Filled", "Submitted") and trade.orderStatus.filled > 0:
-                return EquityOrderResult(
-                    order_id=str(trade.order.orderId),
-                    status="filled",
-                    fill_price=__import__("decimal").Decimal(
-                        str(round(trade.orderStatus.avgFillPrice, 4))
-                    ),
-                    filled_at=datetime.now(timezone.utc),
-                    message=f"Filled {trade.orderStatus.filled} shares @ "
-                            f"${trade.orderStatus.avgFillPrice:.4f}",
-                )
-            if status in ("Cancelled", "Rejected", "Inactive"):
-                return EquityOrderResult(
-                    order_id=str(trade.order.orderId),
-                    status="rejected" if status == "Rejected" else "cancelled",
-                    message=status,
-                )
+        # ── Attach protective children (OCA via parentId; last child transmits) ─
+        if has_brackets:
+            if take_profit is not None:
+                tp = LimitOrder(action=reverse, totalQuantity=qty,
+                                lmtPrice=float(take_profit))
+                tp.parentId = parent_id
+                tp.tif = "GTC"
+                tp.transmit = stop is None    # transmit here only if no stop follows
+                self.ib.placeOrder(stock, tp)
+            if stop is not None:
+                sl = StopOrder(action=reverse, totalQuantity=qty,
+                               stopPrice=float(stop))
+                sl.parentId = parent_id
+                sl.tif = "GTC"
+                sl.transmit = True            # final child releases the whole bracket
+                self.ib.placeOrder(stock, sl)
+            logger.info(
+                "Equity bracket attached for %s (parent=%s): stop=%s take_profit=%s",
+                ticker, parent_id, stop, take_profit,
+            )
 
-        # Timed out — return submitted status (order stays working at IBKR)
+        # ── Wait for the parent to fill / terminate ────────────────────────────
+        outcome, filled, avg = await self._await_order(trade, qty, _fill_timeout())
+
+        if outcome == "filled":
+            return EquityOrderResult(
+                order_id=str(trade.order.orderId),
+                status="filled",
+                fill_price=Decimal(str(round(avg, 4))),
+                filled_at=datetime.now(timezone.utc),
+                filled_quantity=filled,
+                remaining_quantity=0,
+                message=f"Filled {filled} shares @ ${avg:.4f}",
+            )
+        if outcome in ("cancelled", "rejected"):
+            return EquityOrderResult(
+                order_id=str(trade.order.orderId),
+                status=outcome,
+                filled_quantity=0,
+                remaining_quantity=qty,
+                message=outcome,
+            )
+        if outcome == "partial" or (outcome == "timeout" and filled > 0):
+            # Some shares filled; the bracket protects the filled portion. Leave
+            # the order working rather than cancelling into a naked exit.
+            return EquityOrderResult(
+                order_id=str(trade.order.orderId),
+                status="partial",
+                fill_price=Decimal(str(round(avg, 4))),
+                filled_at=datetime.now(timezone.utc),
+                filled_quantity=filled,
+                remaining_quantity=max(0, qty - filled),
+                message=f"Partial fill {filled}/{qty} shares @ ${avg:.4f}",
+            )
+
+        # Timed out with no fill — order stays working at IBKR.
         logger.warning(
-            "Equity order %s still pending after %ds — returning submitted status",
-            trade.order.orderId, _timeout,
+            "Equity order %s still working after %ds — returning submitted status",
+            trade.order.orderId, _fill_timeout(),
         )
         return EquityOrderResult(
             order_id=str(trade.order.orderId),
             status="submitted",
-            message=f"Order working — no fill after {_timeout}s",
+            filled_quantity=0,
+            remaining_quantity=qty,
+            message=f"Order working — no fill after {_fill_timeout()}s",
         )
 
     async def get_bars(

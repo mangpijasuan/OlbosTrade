@@ -288,8 +288,67 @@ class KillSwitch:
         if self._scheduler is not None:
             self._scheduler.resume()
 
+        # Persist a reset marker so restore() on the next startup knows trading was
+        # deliberately re-enabled (the most recent kill-switch event wins).
+        try:
+            async with AsyncSessionLocal() as session:
+                session.add(GuardrailEvent(
+                    event_type="kill_switch_reset",
+                    notes="manual reset — trading re-enabled",
+                ))
+                await session.commit()
+        except Exception as exc:
+            logger.error("Kill switch: failed to persist reset event: %s", exc)
+
         logger.warning("Kill switch RESET — trading re-enabled after manual review")
         return {"reset": True, "trading_enabled": True}
+
+    async def restore(self) -> bool:
+        """
+        Re-engage the kill switch on startup if it was engaged when the process
+        last stopped. The most recent of the ``kill_switch`` (engage) /
+        ``kill_switch_reset`` (reset) events wins.
+
+        This only restores the *blocking flag* and pauses the scheduler — it does
+        NOT re-run flatten (positions were already flattened on the original
+        engage). Returns True if the switch was restored to engaged.
+        """
+        from sqlalchemy import select, desc
+
+        try:
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(GuardrailEvent)
+                    .where(GuardrailEvent.event_type.in_(
+                        ("kill_switch", "kill_switch_reset")))
+                    .order_by(desc(GuardrailEvent.timestamp))
+                    .limit(1)
+                )).scalars().first()
+        except Exception as exc:
+            logger.warning("Kill switch: restore query failed (DB unavailable?): %s", exc)
+            return False
+
+        if row is None or row.event_type != "kill_switch":
+            logger.info("Kill switch: no engaged state to restore")
+            return False
+
+        async with self._lock:
+            self._engaged = True
+            self._engaged_at = row.timestamp
+            self._reason = (row.notes or "restored from previous session")
+
+        if self._scheduler is not None:
+            try:
+                self._scheduler.pause()
+            except Exception as exc:
+                logger.error("Kill switch: failed to pause scheduler on restore: %s", exc)
+
+        logger.critical(
+            "🛑 KILL SWITCH RESTORED as ENGAGED from previous session — "
+            "trading remains halted until manual reset. (engaged_at=%s)",
+            self._engaged_at,
+        )
+        return True
 
 
 # ── Singleton instance ────────────────────────────────────────────────────────

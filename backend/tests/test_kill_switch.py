@@ -197,6 +197,95 @@ async def test_kill_switch_flattens_equity_via_equity_order(ks, mock_scheduler):
     assert kwargs["order_type"] == "market"
 
 
+def _fake_db_session(execute_first=None):
+    """Build a fake AsyncSession whose execute(...).scalars().first() is configurable."""
+    session = MagicMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    scalars = MagicMock()
+    scalars.first = MagicMock(return_value=execute_first)
+    exec_res = MagicMock()
+    exec_res.scalars = MagicMock(return_value=scalars)
+    session.execute = AsyncMock(return_value=exec_res)
+    return session
+
+
+def _patch_session(session):
+    mock_db = patch("app.services.kill_switch.AsyncSessionLocal")
+    started = mock_db.start()
+    started.return_value.__aenter__ = AsyncMock(return_value=session)
+    started.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_db
+
+
+@pytest.mark.asyncio
+async def test_restore_reengages_when_last_event_is_engage(ks, mock_scheduler):
+    from datetime import datetime, timezone
+    event = MagicMock(event_type="kill_switch",
+                      timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                      notes="reason=daily loss")
+    session = _fake_db_session(execute_first=event)
+    mock_db = _patch_session(session)
+    try:
+        ks._scheduler = mock_scheduler
+        restored = await ks.restore()
+    finally:
+        mock_db.stop()
+
+    assert restored is True
+    assert ks.is_engaged is True
+    mock_scheduler.pause.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_restore_stays_disengaged_when_last_event_is_reset(ks, mock_scheduler):
+    from datetime import datetime, timezone
+    event = MagicMock(event_type="kill_switch_reset",
+                      timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc), notes="reset")
+    session = _fake_db_session(execute_first=event)
+    mock_db = _patch_session(session)
+    try:
+        ks._scheduler = mock_scheduler
+        restored = await ks.restore()
+    finally:
+        mock_db.stop()
+
+    assert restored is False
+    assert ks.is_engaged is False
+    mock_scheduler.pause.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restore_no_events_stays_disengaged(ks):
+    session = _fake_db_session(execute_first=None)
+    mock_db = _patch_session(session)
+    try:
+        restored = await ks.restore()
+    finally:
+        mock_db.stop()
+    assert restored is False
+    assert ks.is_engaged is False
+
+
+@pytest.mark.asyncio
+async def test_reset_persists_reset_event(ks, mock_scheduler):
+    from app.models.risk_state import GuardrailEvent
+    ks._engaged = True
+    ks._scheduler = mock_scheduler
+    session = _fake_db_session()
+    mock_db = _patch_session(session)
+    try:
+        result = await ks.reset("OLBOSQUANT_MANUAL_RESET")
+    finally:
+        mock_db.stop()
+
+    assert result["reset"] is True
+    session.add.assert_called_once()
+    persisted = session.add.call_args.args[0]
+    assert isinstance(persisted, GuardrailEvent)
+    assert persisted.event_type == "kill_switch_reset"
+
+
 @pytest.mark.asyncio
 async def test_kill_switch_reports_rejected_flatten_as_error(ks, mock_scheduler):
     """A broker-rejected flatten must NOT be counted as flattened — it is an error

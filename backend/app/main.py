@@ -134,10 +134,20 @@ async def on_startup() -> None:
                     "Broker connect() failed (will retry on first use): %s", conn_exc
                 )
 
-        # Wire kill switch — must happen after broker is available
+        # Wire kill switch — must happen after broker is available.
+        # Pass the scheduler control so engaging the switch actually pauses the
+        # background scan loop (not just blocks order submission on the hot path).
         from app.services.kill_switch import kill_switch_service
-        kill_switch_service.configure(broker)
-        logger.info("Kill switch wired to broker")
+        from app.services.scheduler_control import scheduler_control
+        kill_switch_service.configure(broker, scheduler=scheduler_control)
+        logger.info("Kill switch wired to broker + scheduler control")
+
+        # Restore a previously-engaged kill switch so a crash/restart never
+        # silently re-enables trading.
+        try:
+            await kill_switch_service.restore()
+        except Exception as restore_exc:
+            logger.warning("Kill switch restore failed (non-fatal): %s", restore_exc)
     except Exception as exc:
         logger.warning("Broker initialization failed (non-fatal): %s", exc)
 
@@ -225,9 +235,17 @@ async def _background_scheduler() -> None:
     reconnect_interval_s = 60   # Check broker connection every 60s
     last_reconnect = 0.0
 
+    from app.services.scheduler_control import scheduler_control
+
     while True:
         try:
             now = time.monotonic()
+
+            # Kill switch / manual pause: skip all scan + execute work while paused.
+            # Broker reconnect is also skipped — nothing should trade while halted.
+            if scheduler_control.is_paused:
+                await asyncio.sleep(1)
+                continue
 
             # Every 60s: ensure broker is still connected (auto-reconnect)
             if now - last_reconnect >= reconnect_interval_s:
