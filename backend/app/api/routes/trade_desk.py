@@ -158,35 +158,16 @@ async def manual_trade(req: ManualTradeRequest):
         "order_type": req.order_type,
     }
 
-    try:
-        from app.broker.broker_factory import get_broker
-        broker = get_broker()
-        result = await broker.place_equity_order(
-            ticker=req.ticker.upper(),
-            qty=req.shares,
-            side=req.action.upper(),
-            order_type=req.order_type,
-            limit_price=req.limit_price,
+    # Route through the SAME fail-closed gate as every other order — no manual
+    # bypass. The gate runs kill switch → unified risk → sizing → dispatch → record.
+    result = await _execute_signal(signal, approved_by="manual")
+    _execution_log.insert(0, {**result, "approved_by": "manual"})
+    del _execution_log[200:]
+    if result.get("result") in ("blocked", "rejected", "error"):
+        raise HTTPException(
+            403, result.get("reason") or result.get("error") or "rejected by risk gate"
         )
-        entry = {
-            "signal_id":    signal["id"],
-            "ticker":       req.ticker.upper(),
-            "asset_type":   "equity",
-            "action":       req.action.upper(),
-            "shares":       req.shares,
-            "order_type":   req.order_type,
-            "limit_price":  req.limit_price,
-            "order_id":     result.order_id,
-            "order_status": result.status,
-            "result":       "submitted",
-            "approved_by":  "manual",
-            "executed_at":  datetime.now(timezone.utc).isoformat(),
-        }
-        _execution_log.insert(0, entry)
-        del _execution_log[200:]
-        return entry
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+    return result
 
 
 # ── Execution log ──────────────────────────────────────────────────────────────
@@ -200,207 +181,12 @@ async def get_execution_log(limit: int = 50):
 
 async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     """
-    Execute a signal via IBKR broker.
-    Works for both equity and options signals.
-    Returns execution result dict.
+    Submit a signal through the SINGLE fail-closed order gate
+    (kill switch -> unified risk -> sizing -> dispatch -> fill recording).
+    This is the one choke point; manual / copilot / autopilot all funnel here.
     """
-    # Yield to the event loop — gives kill switch and guardrail checks a
-    # chance to fire if they were set on the same iteration.
-    await asyncio.sleep(0)
-
-    # Hard stop: kill switch takes absolute priority over everything.
-    if _is_kill_switch_active():
-        logger.warning(
-            "Order blocked for %s — kill switch is engaged",
-            signal.get("ticker", "?"),
-        )
-        return {
-            "signal_id":  signal.get("id"),
-            "ticker":     signal.get("ticker", ""),
-            "asset_type": signal.get("asset_type", "equity"),
-            "result":     "blocked",
-            "reason":     "kill_switch",
-            "executed_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-    asset_type = signal.get("asset_type", "equity")
-    ticker     = signal.get("ticker", "")
-    action     = signal.get("action", "")
-    executed_at = datetime.now(timezone.utc).isoformat()
-
-    # Block duplicate: skip if an open trade for this symbol already exists in DB
-    try:
-        from app.core.database import AsyncSessionLocal
-        from app.models.trade import Trade
-        from sqlalchemy import select
-        async with AsyncSessionLocal() as _db:
-            existing = (await _db.execute(
-                select(Trade.id).where(
-                    Trade.underlying == ticker,
-                    Trade.status == "open",
-                )
-            )).first()
-        if existing:
-            logger.info("Skipping %s — open trade already exists in DB", ticker)
-            return {
-                "signal_id":  signal.get("id"),
-                "ticker":     ticker,
-                "asset_type": asset_type,
-                "result":     "skipped",
-                "reason":     "already_open",
-                "executed_at": executed_at,
-            }
-    except Exception as _dup_exc:
-        logger.warning("Duplicate check failed for %s: %s", ticker, _dup_exc)
-
-    try:
-        from app.broker.broker_factory import get_broker
-        broker = get_broker()
-
-        if asset_type == "equity":
-            trade_plan = signal.get("trade_plan", {})
-            shares     = trade_plan.get("shares", 1)
-            side       = action  # "BUY" or "SELL"
-
-            result = await broker.place_equity_order(
-                ticker=ticker,
-                qty=shares,
-                side=side,
-                order_type="limit",
-                limit_price=trade_plan.get("entry_price"),
-                stop=trade_plan.get("stop_price"),
-            )
-
-            # Record to DB
-            try:
-                from app.services.trade_recorder import trade_recorder
-                from datetime import date
-                await trade_recorder.record_fill(
-                    strategy="equity",
-                    underlying=ticker,
-                    option_type="equity",
-                    short_strike=trade_plan.get("entry_price") or 0,
-                    long_strike=trade_plan.get("stop_price") or 0,
-                    expiration=date.today(),
-                    quantity=shares,
-                    entry_credit=trade_plan.get("entry_price") or 0,
-                    signal_score=signal.get("signal_score", 0),
-                    iv_rank=signal.get("iv_rank", 0),
-                    regime=signal.get("regime", "unknown"),
-                    trading_mode=approved_by,
-                    dispatch_id=result.order_id or signal.get("id", ""),
-                )
-            except Exception as _rec_exc:
-                logger.warning("Failed to record trade to DB: %s", _rec_exc)
-
-            return {
-                "signal_id":   signal.get("id"),
-                "ticker":      ticker,
-                "asset_type":  "equity",
-                "action":      action,
-                "shares":      shares,
-                "entry_price": trade_plan.get("entry_price"),
-                "stop_price":  trade_plan.get("stop_price"),
-                "target_price": trade_plan.get("target_price"),
-                "order_id":    result.order_id,
-                "order_status": result.status,
-                "result":      "submitted",
-                "approved_by": approved_by,
-                "executed_at": executed_at,
-            }
-
-        elif asset_type == "options":
-            from app.broker.broker_interface import SpreadOrder, SpreadLeg
-            from decimal import Decimal
-            from datetime import date
-
-            spread_data = signal.get("spread", {})
-            expiry_str  = spread_data.get("expiration", "")
-            short_str   = spread_data.get("short_strike", 0)
-            long_str    = spread_data.get("long_strike", 0)
-            opt_type    = spread_data.get("option_type", "put")
-            credit      = spread_data.get("net_credit", 0)
-            strategy    = signal.get("strategy", "bull_put_spread")
-
-            expiry_date = date.fromisoformat(expiry_str) if expiry_str else date.today()
-
-            # Short leg (sell) + Long leg (buy) for credit spread
-            short_action = "SELL"
-            long_action  = "BUY"
-            if "bear_call" in strategy:
-                opt_type = "call"
-
-            legs = [
-                SpreadLeg(symbol=ticker, expiration=expiry_date,
-                          strike=Decimal(str(short_str)), option_type=opt_type,
-                          action=short_action, quantity=1),
-                SpreadLeg(symbol=ticker, expiration=expiry_date,
-                          strike=Decimal(str(long_str)), option_type=opt_type,
-                          action=long_action, quantity=1),
-            ]
-            from app.core.config import settings as _cfg
-            # Limit price aggression: 1.0 = at mid (most fills), 0.90 = accept
-            # 10% less credit (very aggressive fill-seeking).
-            # LIMIT_PRICE_AGGRESSION in .env (default 1.0 = at mid).
-            aggression = getattr(_cfg, "limit_price_aggression", 1.0)
-            limit_px = Decimal(str(round(credit * aggression, 2)))
-            order = SpreadOrder(
-                strategy=strategy,
-                underlying=ticker,
-                legs=legs,
-                limit_price=limit_px,
-                time_in_force="DAY",
-            )
-            result = await broker.place_order(order)
-
-            # Record to DB
-            try:
-                from app.services.trade_recorder import trade_recorder
-                await trade_recorder.record_fill(
-                    strategy=strategy,
-                    underlying=ticker,
-                    option_type=opt_type,
-                    short_strike=float(short_str),
-                    long_strike=float(long_str),
-                    expiration=expiry_date,
-                    quantity=1,
-                    entry_credit=float(credit),
-                    spread_width=abs(float(short_str) - float(long_str)),
-                    signal_score=signal.get("signal_score", 0),
-                    iv_rank=signal.get("iv_rank", 0),
-                    regime=signal.get("regime", "unknown"),
-                    trading_mode=approved_by,
-                    dispatch_id=result.order_id or signal.get("id", ""),
-                )
-            except Exception as _rec_exc:
-                logger.warning("Failed to record options trade to DB: %s", _rec_exc)
-
-            return {
-                "signal_id":    signal.get("id"),
-                "ticker":       ticker,
-                "asset_type":   "options",
-                "strategy":     strategy,
-                "short_strike": short_str,
-                "long_strike":  long_str,
-                "option_type":  opt_type,
-                "expiration":   expiry_str,
-                "net_credit":   credit,
-                "order_id":     result.order_id,
-                "order_status": result.status,
-                "result":       "submitted",
-                "approved_by":  approved_by,
-                "executed_at":  executed_at,
-            }
-
-    except Exception as exc:
-        return {
-            "signal_id":  signal.get("id"),
-            "ticker":     ticker,
-            "asset_type": asset_type,
-            "result":     "error",
-            "error":      str(exc),
-            "executed_at": executed_at,
-        }
+    from app.services.order_gate import order_gate
+    return await order_gate.submit(signal, approved_by=approved_by)
 
 
 # ── Called by main.py background scanner ─────────────────────────────────────
@@ -422,82 +208,8 @@ async def handle_signal(signal: dict) -> None:
         _pending_approvals[signal_id] = signal
 
     elif mode == ExecutionMode.AUTOPILOT:
-        # Check guardrails before executing — use real portfolio value from broker
-        from app.services.guardrails import GuardrailEngine, PortfolioState
-        from app.core.config import settings
-
-        # Try to get live portfolio value; fall back to config
-        current_value = settings.starting_capital
-        try:
-            from app.broker.broker_factory import get_broker
-            _broker = get_broker()
-            _acct = await _broker.get_account_summary()
-            current_value = float(_acct.net_liquidation or settings.starting_capital)
-        except Exception:
-            pass
-
-        # Query real P&L windows from DB for accurate guardrail enforcement
-        daily_pnl = 0.0
-        weekly_pnl = 0.0
-        monthly_pnl = 0.0
-        consecutive_losses = 0
-        trades_today = 0
-        try:
-            from datetime import date, timedelta
-            from sqlalchemy import select, func
-            from app.core.database import AsyncSessionLocal
-            from app.models.trade import Trade
-            today = date.today()
-            week_start = today - timedelta(days=today.weekday())
-            month_start = today.replace(day=1)
-
-            async with AsyncSessionLocal() as _db:
-                async def _sum_pnl(from_date):
-                    result = await _db.execute(
-                        select(func.sum(Trade.realized_pnl)).where(
-                            Trade.closed_at >= from_date,
-                            Trade.realized_pnl.isnot(None),
-                        )
-                    )
-                    return float(result.scalar() or 0.0)
-
-                daily_pnl   = await _sum_pnl(today)
-                weekly_pnl  = await _sum_pnl(week_start)
-                monthly_pnl = await _sum_pnl(month_start)
-
-                count_today = await _db.execute(
-                    select(func.count()).where(Trade.opened_at >= today)
-                )
-                trades_today = int(count_today.scalar() or 0)
-        except Exception:
-            pass  # DB unavailable — fall back to zeros (conservative)
-
-        engine = GuardrailEngine()
-        portfolio = PortfolioState(
-            current_value=current_value,
-            starting_capital=settings.starting_capital,
-            daily_pnl=daily_pnl,
-            weekly_pnl=weekly_pnl,
-            monthly_pnl=monthly_pnl,
-            consecutive_losses=consecutive_losses,
-            trades_today=trades_today,
-        )
-        status = engine.check_all(portfolio)
-        if not status.trading_allowed:
-            signal["autopilot_blocked"] = status.reason
-            logger.warning(
-                "Autopilot blocked for %s: %s", signal.get("ticker"), status.reason
-            )
-            return
-
-        # Final kill switch check after guardrail evaluation
-        if _is_kill_switch_active():
-            logger.warning(
-                "Autopilot blocked for %s — kill switch engaged after guardrail check",
-                signal.get("ticker"),
-            )
-            return
-
+        # All risk gating now lives in the single order gate — no duplicate
+        # guardrail block here (kill switch + unified risk run inside the gate).
         result = await _execute_signal(signal, approved_by="autopilot")
         _execution_log.insert(0, result)
         del _execution_log[200:]

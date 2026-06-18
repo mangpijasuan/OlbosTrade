@@ -755,10 +755,18 @@ async def guardrail_status():
             realized_all_time = float((await session.execute(
                 select(func.coalesce(func.sum(Trade.pnl), 0)).where(Trade.status == "closed")
             )).scalar() or 0)
-    except Exception:
-        daily_pnl = weekly_pnl = monthly_pnl = 0.0
-        trades_today = consecutive_losses = 0
-        realized_all_time = 0.0
+    except Exception as exc:
+        # FAIL CLOSED: if we cannot read risk state, do NOT report a permissive
+        # (zero-loss) status — refuse trading and surface the condition.
+        logger.error("guardrail_status: risk state unavailable — failing closed: %s", exc)
+        from app.services.trading_mode import trading_mode_manager
+        return {
+            "trading_allowed": False,
+            "trading_mode": trading_mode_manager.current.active_mode.value,
+            "reason": "risk state unavailable — trading refused (fail closed)",
+            "flags": ["risk_state_unavailable"],
+            "daily_pnl": None, "weekly_pnl": None, "monthly_pnl": None,
+        }
 
     # Get real broker account value
     try:
