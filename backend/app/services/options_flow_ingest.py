@@ -18,6 +18,13 @@ errors. Set the flag (and have a live OPRA subscription) to stream for real.
 ``settings.options_flow_demo_mode`` emits synthetic ticks so the full pipeline
 (ingest → sweep → DB → WS → UI) can be exercised end-to-end without live data.
 
+Broker selection picks the live source automatically:
+  - BROKER=ibkr     → ib_insync reqTickByTickData('AllLast') (full per-print
+                      feed with exchange attribution → real sweep detection)
+  - BROKER=ibkr_cp  → Client Portal Web API market-data WebSocket
+                      (snapshot/field-update fidelity — see _run_live_cp caveats:
+                      no exchange attribution, sweep detection disabled)
+
 Reuse contract (per spec):
   - Reuses the existing broker's ``ib`` handle (no second IBKR connection).
   - Reuses Redis via app.core.redis (in-process fallback when unavailable).
@@ -157,6 +164,8 @@ class OptionsFlowIngestService:
         try:
             if settings.options_flow_demo_mode:
                 await self._run_demo()
+            elif settings.broker.lower().strip() == "ibkr_cp":
+                await self._run_live_cp()
             else:
                 await self._run_live()
         except asyncio.CancelledError:
@@ -298,6 +307,213 @@ class OptionsFlowIngestService:
             ))
         except Exception as exc:
             logger.debug("Options flow tick parse error: %s", exc)
+
+    # ── live Client Portal (CP Web API WebSocket) path ───────────────────────
+    # FIDELITY CAVEAT: the CP market-data WebSocket streams per-contract FIELD
+    # updates (last price / size / bid / ask / greeks), NOT a true per-print
+    # time-and-sales feed with exchange attribution. Consequently:
+    #   - exchange is unknown (tagged "CP")
+    #   - multi-venue SWEEP detection is effectively disabled (single venue →
+    #     distinct_exchanges is always 1, so sweeps never confirm — by design,
+    #     to avoid false positives). trade_type is size-based (block/single).
+    #   - size is approximate (last-size field may lag the last-price update).
+    # Still requires a LIVE OPRA subscription on the IBKR account.
+    def _cp_ws_url(self) -> str:
+        base = settings.cp_gateway_url.rstrip("/")
+        if base.startswith("https://"):
+            base = "wss://" + base[len("https://"):]
+        elif base.startswith("http://"):
+            base = "ws://" + base[len("http://"):]
+        return f"{base}/v1/api/ws"
+
+    @staticmethod
+    def _cp_num(v) -> Optional[float]:
+        """Parse a CP field value (may be '$5.20', '1,234', '12.3%', or number)."""
+        if v is None:
+            return None
+        try:
+            s = str(v).replace("$", "").replace(",", "").replace("%", "").strip()
+            return float(s) if s not in ("", "-") else None
+        except Exception:
+            return None
+
+    async def _run_live_cp(self) -> None:
+        from app.broker.broker_factory import get_broker
+
+        broker = get_broker()
+        if not hasattr(broker, "_get"):
+            logger.warning("Options flow (CP): active broker is not Client Portal — idle")
+            return
+        # Ensure the gateway session is authenticated (no second connection).
+        if hasattr(broker, "connect") and not broker.isConnected():
+            try:
+                await broker.connect()
+            except Exception as exc:
+                logger.warning("Options flow (CP): connect failed: %s", exc)
+        if not broker.isConnected():
+            logger.warning(
+                "Options flow (CP): gateway not authenticated — open %s in a "
+                "browser and log in. Staying idle.", settings.cp_gateway_url,
+            )
+            return
+
+        contracts = await self._select_cp_contracts(broker)
+        if not contracts:
+            logger.warning("Options flow (CP): no contracts resolved — idle")
+            return
+
+        try:
+            import json as _json
+            import ssl as _ssl
+            import websockets
+        except Exception as exc:
+            logger.warning("Options flow (CP): websockets unavailable (%s)", exc)
+            return
+
+        ssl_ctx = None
+        if self._cp_ws_url().startswith("wss://") and not settings.cp_gateway_verify_ssl:
+            ssl_ctx = _ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
+
+        meta = {c["conid"]: c for c in contracts[: settings.options_flow_max_contracts]}
+        quotes: dict[int, tuple[float, float]] = {}
+        last_size: dict[int, int] = {}
+
+        # Session id for the WS handshake (from the authenticated gateway).
+        try:
+            session_id = (await broker._get("/tickle")).get("session")
+        except Exception:
+            session_id = None
+
+        fields = ["31", "84", "86", "7059", "7283", "7308"]  # last,bid,ask,size,iv,delta
+        url = self._cp_ws_url()
+        logger.info(
+            "Options flow (CP): connecting WS %s for %d contracts "
+            "(snapshot-fidelity — sweep detection disabled)", url, len(meta),
+        )
+        async with websockets.connect(url, ssl=ssl_ctx, max_size=None) as ws:
+            if session_id:
+                await ws.send(_json.dumps({"session": session_id}))
+            for conid in meta:
+                await ws.send('smd+%d+{"fields":%s}' % (conid, _json.dumps(fields)))
+
+            async for raw in ws:
+                if not self._running:
+                    break
+                try:
+                    msg = _json.loads(raw)
+                except Exception:
+                    continue
+                topic = msg.get("topic", "")
+                if not topic.startswith("smd+"):
+                    continue  # heartbeats / system / auth-status messages
+                try:
+                    conid = int(msg.get("conid") or topic.split("+")[1])
+                except Exception:
+                    continue
+                m = meta.get(conid)
+                if m is None:
+                    continue
+
+                bid = self._cp_num(msg.get("84"))
+                ask = self._cp_num(msg.get("86"))
+                if bid is not None and ask is not None:
+                    quotes[conid] = (bid, ask)
+                else:
+                    bid, ask = quotes.get(conid, (None, None))
+
+                if "7059" in msg:
+                    sz = self._cp_num(msg.get("7059"))
+                    if sz:
+                        last_size[conid] = int(sz)
+
+                # Only emit on a last-price (trade) update.
+                if "31" not in msg:
+                    continue
+                price = self._cp_num(msg.get("31"))
+                size = last_size.get(conid, 0)
+                if not price or size <= 0:
+                    continue
+
+                iv = self._cp_num(msg.get("7283"))
+                if iv is not None and iv > 1.5:
+                    iv = iv / 100  # CP returns IV as a percentage
+                delta = self._cp_num(msg.get("7308"))
+
+                await self._handle_print(
+                    symbol=m["symbol"], strike=m["strike"], expiry=m["expiry"],
+                    right=m["right"], exchange="CP", price=price, size=size,
+                    bid=bid, ask=ask, iv=iv, delta=delta,
+                )
+
+    async def _select_cp_contracts(self, broker) -> list[dict]:
+        """Resolve near-ATM option conids within max DTE via the CP secdef API."""
+        contracts: list[dict] = []
+        today = date.today()
+        max_dte = settings.options_flow_max_dte
+        watchlist = settings.get_options_flow_watchlist()
+        per_ticker = max(1, settings.options_flow_max_contracts // max(len(watchlist), 1))
+
+        for symbol in watchlist:
+            try:
+                und = await broker._resolve_stock_conid(symbol)
+                if not und:
+                    continue
+                q = await broker.get_latest_quote(symbol)
+                spot = float((q.bid_price + q.ask_price) / 2) or 0.0
+                made = 0
+                for m_off in range(3):  # this month + next two
+                    yr, mo = today.year, today.month + m_off
+                    yr += (mo - 1) // 12
+                    mo = ((mo - 1) % 12) + 1
+                    month = date(yr, mo, 1).strftime("%b%y").upper()
+                    try:
+                        strikes_res = await broker._get(
+                            "/iserver/secdef/strikes",
+                            {"conid": und, "sectype": "OPT", "month": month},
+                        )
+                    except Exception:
+                        continue
+                    all_strikes = sorted(
+                        set(strikes_res.get("call", [])) | set(strikes_res.get("put", []))
+                    )
+                    if not all_strikes:
+                        continue
+                    near = (sorted(all_strikes, key=lambda s: abs(s - spot))[:3]
+                            if spot else all_strikes[:3])
+                    for strike in near:
+                        for right in ("C", "P"):
+                            if made >= per_ticker:
+                                break
+                            try:
+                                info = await broker._get(
+                                    "/iserver/secdef/info",
+                                    {"conid": und, "sectype": "OPT", "month": month,
+                                     "strike": strike, "right": right},
+                                )
+                            except Exception:
+                                continue
+                            rows = info if isinstance(info, list) else [info]
+                            for row in rows:
+                                mat, cid = row.get("maturityDate"), row.get("conid")
+                                if not (mat and cid):
+                                    continue
+                                try:
+                                    exp = datetime.strptime(str(mat), "%Y%m%d").date()
+                                except ValueError:
+                                    continue
+                                if not (0 <= (exp - today).days <= max_dte):
+                                    continue
+                                contracts.append({
+                                    "conid": int(cid), "symbol": symbol,
+                                    "strike": float(strike), "expiry": exp, "right": right,
+                                })
+                                made += 1
+                                break
+            except Exception as exc:
+                logger.warning("Options flow (CP): contract select failed for %s: %s", symbol, exc)
+        return contracts[: settings.options_flow_max_contracts]
 
     # ── demo path ─────────────────────────────────────────────────────────────
     async def _run_demo(self) -> None:
