@@ -111,6 +111,31 @@ async def get_current_signals():
     }
 
 
+@router.get("/options-recommendations")
+async def get_options_recommendations(
+    symbols: str = "",
+    limit: int = 5,
+):
+    """
+    Return ranked option buying setups with strikes, DTE, risk, and rationale.
+
+    Uses live IBKR option-chain mids when connected. If the chain is unavailable,
+    it still returns estimated setups from yfinance technicals so the UI always
+    shows the intended strikes/DTE and can be reviewed before execution.
+    """
+    from app.broker.broker_factory import get_broker
+    from app.services.options_recommender import OptionsSetupRecommender
+
+    parsed = [s.strip().upper() for s in symbols.split(",") if s.strip()] or None
+    safe_limit = max(1, min(limit, 10))
+    try:
+        broker = get_broker()
+    except Exception:
+        broker = None
+    recommender = OptionsSetupRecommender(broker=broker)
+    return await recommender.recommend(symbols=parsed, limit=safe_limit)
+
+
 @router.get("/signals/{signal_id}/explanation")
 async def get_signal_explanation(signal_id: str):
     """Explain the reasoning behind an equity signal."""

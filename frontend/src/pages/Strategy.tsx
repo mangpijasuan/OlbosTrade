@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import TradingModeSelector from "../components/TradingModeSelector";
+import { api } from "../api/client";
 
 const STRATEGIES = [
   { key: "bull_put_spread",       label: "Bull Put Spread",     type: "CREDIT", bias: "BULLISH", max_profit: "Net credit",   max_loss: "Width − credit",  legs: 2 },
@@ -10,7 +11,29 @@ const STRATEGIES = [
 
 export default function Strategy() {
   const [selected, setSelected] = useState("bull_put_spread");
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [recMeta, setRecMeta] = useState<any>(null);
+  const [recLoading, setRecLoading] = useState(false);
+  const [recError, setRecError] = useState<string | null>(null);
   const strat = STRATEGIES.find(s => s.key === selected)!;
+
+  const loadRecommendations = async () => {
+    setRecLoading(true);
+    setRecError(null);
+    try {
+      const data = await api.getOptionsRecommendations({ limit: 5 }) as any;
+      setRecommendations(data.recommendations || []);
+      setRecMeta(data);
+    } catch (e: any) {
+      setRecError(e.message || "Failed to load option recommendations.");
+    } finally {
+      setRecLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRecommendations();
+  }, []);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", height: "100%", overflow: "hidden" }}>
@@ -85,6 +108,88 @@ export default function Strategy() {
               <div className="data-val sm" style={{ color: m.color }}>{m.val}</div>
             </div>
           ))}
+        </div>
+
+        <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", marginBottom: 20 }}>
+          <div style={{
+            padding: "10px 14px", borderBottom: "1px solid var(--line-dim)",
+            display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <span className="panel-title">Top 5 Buying Setups</span>
+            {recMeta?.dte_window && (
+              <span className="kicker">
+                DTE {recMeta.dte_window.min}-{recMeta.dte_window.max} · TARGET {recMeta.dte_window.target}
+              </span>
+            )}
+            <div style={{ flex: 1 }} />
+            <button className="btn-t" onClick={loadRecommendations} disabled={recLoading} style={{ fontSize: 10 }}>
+              {recLoading ? "LOADING..." : "REFRESH"}
+            </button>
+          </div>
+          {recError ? (
+            <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+              {recError}
+            </div>
+          ) : recLoading && recommendations.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              BUILDING OPTION SETUPS...
+            </div>
+          ) : recommendations.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              NO BUYING SETUPS AVAILABLE — CHECK MARKET DATA / WATCHLIST
+            </div>
+          ) : (
+            <table className="t-table">
+              <thead>
+                <tr>
+                  {["Rank","Symbol","Setup","DTE / Exp","Strikes","Debit","Risk / Reward","Contracts","Why"].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {recommendations.map((r: any) => (
+                  <tr key={`${r.rank}-${r.symbol}-${r.strategy}`}>
+                    <td className="mono" style={{ color: "var(--cyan)" }}>#{r.rank}</td>
+                    <td className="mono" style={{ color: "var(--ink)", fontWeight: 600 }}>
+                      {r.symbol}
+                      <div style={{ color: "var(--ink-faint)", fontSize: 10 }}>${r.underlying_price?.toFixed?.(2) ?? r.underlying_price}</div>
+                    </td>
+                    <td className="mono" style={{ fontSize: 10 }}>
+                      <span style={{ color: r.direction === "bullish" ? "var(--green)" : "var(--red)" }}>
+                        {r.direction?.toUpperCase()}
+                      </span>
+                      <div style={{ color: "var(--ink-dim)" }}>{r.strategy?.replace(/_/g, " ").toUpperCase()}</div>
+                    </td>
+                    <td className="mono">
+                      {r.dte}d
+                      <div style={{ color: "var(--ink-faint)", fontSize: 10 }}>{r.expiration}</div>
+                    </td>
+                    <td className="mono">
+                      BUY {r.option_type?.toUpperCase()} {r.strikes?.buy}
+                      <div style={{ color: "var(--ink-dim)", fontSize: 10 }}>
+                        SELL {r.option_type?.toUpperCase()} {r.strikes?.sell} · W {r.strikes?.width}
+                      </div>
+                    </td>
+                    <td className="mono">
+                      ${r.estimated_debit?.toFixed?.(2) ?? r.estimated_debit}
+                      <div style={{ color: r.chain_source === "live_chain" ? "var(--green)" : "var(--amber)", fontSize: 10 }}>
+                        {r.chain_source === "live_chain" ? "LIVE MID" : "ESTIMATE"}
+                      </div>
+                    </td>
+                    <td className="mono">
+                      -${r.max_risk?.toFixed?.(0) ?? r.max_risk} / +${r.max_profit?.toFixed?.(0) ?? r.max_profit}
+                      <div style={{ color: "var(--ink-faint)", fontSize: 10 }}>R:R {r.risk_reward}</div>
+                    </td>
+                    <td className="mono">{r.suggested_contracts}</td>
+                    <td style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", lineHeight: 1.5 }}>
+                      {(r.rationale || []).slice(0, 2).join(" · ")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16 }}>

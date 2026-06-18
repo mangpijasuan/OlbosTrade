@@ -82,6 +82,14 @@ export const api = {
   getStrategyConfig: () => request("/api/strategy/config"),
   updateStrategyConfig: (body: object) => request("/api/strategy/config", { method: "PUT", body: JSON.stringify(body) }),
   getCurrentSignals: () => request("/api/strategy/signals/current"),
+  getOptionsRecommendations: (params?: { symbols?: string; limit?: number }) => {
+    const q = params ? "?" + new URLSearchParams(
+      Object.fromEntries(
+        Object.entries(params).filter(([, v]) => v !== undefined && v !== "")
+      ) as Record<string, string>
+    ).toString() : "";
+    return request(`/api/strategy/options-recommendations${q}`);
+  },
   getSignalExplanation: (id: string) => request(`/api/strategy/signals/${id}/explanation`),
 
   // ── Equity Signals ────────────────────────────────────────────────────────
