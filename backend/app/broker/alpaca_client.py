@@ -115,20 +115,31 @@ class AlpacaClient(BrokerInterface):
         """
         from datetime import date
         from decimal import Decimal
-        equity_positions = await self.get_equity_positions()
+
+        def _dec(v) -> Decimal:
+            try:
+                return Decimal(str(v))
+            except Exception:
+                return Decimal("0")
+
+        # get_equity_positions returns raw Alpaca position dicts — parse those here
+        # (previously this iterated them as if they were objects, which raised
+        # AttributeError and broke get_positions for the whole app).
+        raw_positions = await self.get_equity_positions()
         positions = []
-        for ep in equity_positions:
+        for p in raw_positions:
+            symbol = p.get("symbol", "")
             positions.append(
                 Position(
-                    symbol=ep.symbol,
-                    underlying=ep.symbol,
+                    symbol=symbol,
+                    underlying=symbol,
                     strike=Decimal("0"),
                     expiration=date.today(),
                     option_type="call",        # placeholder — equities have no option type
-                    quantity=ep.quantity,
-                    avg_cost=ep.avg_cost,
-                    current_price=ep.current_price,
-                    unrealized_pnl=ep.unrealized_pnl,
+                    quantity=int(float(p.get("qty", 0) or 0)),
+                    avg_cost=_dec(p.get("avg_entry_price", 0)),
+                    current_price=_dec(p.get("current_price")) if p.get("current_price") else None,
+                    unrealized_pnl=_dec(p.get("unrealized_pl")) if p.get("unrealized_pl") else None,
                 )
             )
         return positions
