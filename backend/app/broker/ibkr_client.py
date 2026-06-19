@@ -285,6 +285,7 @@ class IBKRClient(BrokerInterface):
         # sign is applied at the LimitOrder below (BAG combos are debit-positive
         # for a BUY, so we send -limit_price).
         limit_price = float(spread.limit_price)
+        is_credit = limit_price > 0   # credit can't be repriced past 0 into a debit
         last_trade = None
         _timeout = _fill_timeout()
         _step    = _retry_step()
@@ -406,13 +407,16 @@ class IBKRClient(BrokerInterface):
                 logger.error("Market order %s did not fill within timeout", trade.order.orderId)
                 break
             if attempt <= _retries:
+                # Decrement always = more marketable: a credit gives up edge
+                # toward 0; a debit (negative) pays more (more negative).
                 limit_price = round(limit_price - _step, 2)
                 logger.warning(
-                    "Order %s timed out — retrying at lower limit (→ %.2f)",
+                    "Order %s timed out — retrying at more aggressive limit (→ %.2f)",
                     trade.order.orderId, limit_price,
                 )
-                if limit_price <= 0:
-                    logger.error("Limit price reached zero — aborting retries")
+                # Only a credit has a hard floor: don't reprice it into a debit.
+                if is_credit and limit_price <= 0:
+                    logger.error("Credit reached zero — aborting retries")
                     break
             else:
                 logger.error("Order %s timed out on final attempt", trade.order.orderId)

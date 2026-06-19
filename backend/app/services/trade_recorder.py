@@ -77,10 +77,16 @@ class TradeRecorder:
             # duplicating the position).
             async with AsyncSessionLocal() as session:
                 async with session.begin():
+                    is_equity = (option_type or "").lower() == "equity"
                     trade = Trade(
                         id=trade_id,
                         strategy=strategy,
                         underlying=underlying,
+                        # instrument_type was never set on write, so every row
+                        # stayed the "option" server-default — which made
+                        # record_exit apply the ×100 options multiplier to equity
+                        # P&L. Set it explicitly from the leg type.
+                        instrument_type="equity" if is_equity else "option",
                         spread_type=option_type or "equity",
                         short_strike=Decimal(str(short_strike or 0)),
                         long_strike=Decimal(str(long_strike or 0)),
@@ -126,6 +132,29 @@ class TradeRecorder:
             )
             return None
 
+    @staticmethod
+    def _gross_pnl(
+        *, credit: float, cost_to_close: float, qty: int,
+        is_equity: bool, strategy: str,
+    ) -> float:
+        """
+        Gross P&L (before commission) for a closing trade.
+
+        - Equity: no ×100 contract multiplier. Entry price is stored in
+          credit_received, exit price in cost_to_close, so a LONG position's
+          P&L is (exit − entry) × shares = (cost_to_close − credit) × qty.
+          NOTE: assumes LONG — short-equity P&L is the inverse, which needs a
+          stored side (not yet modeled).
+        - Debit spread: pays a debit at entry, receives value at exit, so the
+          sign is the inverse of a credit spread.
+        - Credit spread (default): (credit − cost_to_close) × qty × 100.
+        """
+        if is_equity:
+            return (cost_to_close - credit) * qty
+        if "debit" in (strategy or "").lower():
+            return (cost_to_close - credit) * qty * 100
+        return (credit - cost_to_close) * qty * 100
+
     async def record_exit(
         self,
         *,
@@ -167,14 +196,14 @@ class TradeRecorder:
                     qty        = int(getattr(trade, "quantity", None) or 1)
                     commission = float(getattr(trade, "commission_paid", None) or 0)
 
-                    # Debit spreads pay a debit at entry and receive value at
-                    # exit, so their P&L sign is the inverse of a credit spread.
-                    # Treating everything as a credit spread inverted debit P&L.
-                    is_debit = "debit" in (trade.strategy or "").lower()
-                    if is_debit:
-                        gross = (cost_to_close - credit) * qty * 100
-                    else:
-                        gross = (credit - cost_to_close) * qty * 100
+                    is_equity = (
+                        (getattr(trade, "instrument_type", "") or "").lower() == "equity"
+                        or (trade.spread_type or "").lower() == "equity"
+                    )
+                    gross = self._gross_pnl(
+                        credit=credit, cost_to_close=cost_to_close, qty=qty,
+                        is_equity=is_equity, strategy=trade.strategy or "",
+                    )
                     pnl = gross - commission
                     pnl_pct = pnl / float(settings.starting_capital or 25000)
 
