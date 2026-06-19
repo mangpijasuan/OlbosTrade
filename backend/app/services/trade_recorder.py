@@ -255,6 +255,24 @@ class TradeRecorder:
                     trade.exit_date     = datetime.now(timezone.utc)
                     trade.exit_reason   = exit_reason
 
+            # 3-C: feed the close outcome to the shared EmotionGuard so tilt /
+            # consecutive-loss / revenge detection actually updates. This is the
+            # one place where win/loss is known. Best-effort: never fail a close
+            # because the emotion update raised.
+            try:
+                from app.services.unified_risk import emotion_guard
+                # Position size proxy (notional premium) — only feeds the
+                # informational size-drift; the pause trigger is loss/speed based.
+                mult = 1.0 if is_equity else 100.0
+                position_size = abs(credit) * qty * mult
+                emotion_guard.record_trade(
+                    was_loss=pnl < 0,
+                    position_size=position_size,
+                    baseline_size=float(settings.starting_capital or 25000) * 0.02,
+                )
+            except Exception as exc:
+                logger.warning("record_exit: EmotionGuard update skipped: %s", exc)
+
             logger.info(
                 "Trade exited: %s | P&L=$%.0f | reason=%s",
                 trade_id, pnl, exit_reason,

@@ -112,6 +112,13 @@ class EmotionGuard:
         return True, None
 
 
+# Process-global EmotionGuard singleton. Shared by every UnifiedRiskEngine and by
+# TradeRecorder.record_exit so tilt/consecutive-loss state is consistent across
+# the order chokepoint and the close path. (In-memory only — resets on restart;
+# the DB-backed consecutive-loss guardrail still enforces across restarts.)
+emotion_guard = EmotionGuard()
+
+
 class UnifiedRiskEngine:
     """
     Single check() method that ALL orders must pass before broker submission.
@@ -121,7 +128,10 @@ class UnifiedRiskEngine:
     def __init__(self) -> None:
         self._guardrail = GuardrailEngine()
         self._risk_mgr  = RiskManager()
-        self._emotion   = EmotionGuard()
+        # Shared process-global EmotionGuard: the order gate's check() and the
+        # trade-close path (TradeRecorder.record_exit → record_trade) must mutate
+        # the SAME tilt/consecutive-loss state, or the pause never fires.
+        self._emotion   = emotion_guard
 
     def check(
         self,

@@ -56,16 +56,16 @@ regressions introduced by the batch-1 gate.
 NOTE: C1 (combo sign) is logic-correct per IBKR's debit-positive BAG convention
 but is environment-sensitive — confirm fills on the paper account before live.
 
-## Batch 3 — Risk controls & data integrity — 🔶
+## Batch 3 — Risk controls & data integrity — ✅
 Several items were fixed in prior work (see git log). A re-audit surfaced the
-items below.
+items below; all are now resolved.
 
 | # | Issue | Status | Note | Test |
 |---|-------|--------|------|------|
 | 3-A | Equity P&L corrupted: `record_exit` always applied the ×100 options multiplier (and credit-spread sign) to equity trades — `instrument_type` was never set on write, so every row stayed the `"option"` default → equity P&L inflated ~100× and sign-inverted, poisoning the daily/weekly/monthly loss windows the gate reads | ✅ | `record_fill` now sets `instrument_type`; `record_exit` branches via testable `_gross_pnl` → equity uses `(exit−entry)×shares` (no ×100). LONG-only (short-equity sign needs a stored side — flagged) | `test_equity_long_profit_no_100x`, `test_equity_long_loss_sign`, `test_credit_spread_keeps_100x`, `test_debit_spread_sign_inverted` |
 | 3-B | Combo retry abort `limit_price <= 0` tripped immediately for debit spreads (negative limit) → debits never retried on timeout | ✅ | Abort is now credit-only (`is_credit and limit_price <= 0`); the decrement is more-marketable for both signs | covered by reasoning (ib_insync unavailable in CI) |
-| 3-C | EmotionGuard inert: `record_trade_result` is never called → tilt/revenge detection never updates (consecutive-loss is still enforced via the DB guardrail, so this is the tilt layer only) | ⬜ | Needs a wiring decision (where to call it on close) — flagged to user | — |
-| 3-D | Cooling-off never enforced on the gate: `_read_portfolio_state` never populates `cooling_off_until`, and nothing persists it → the cooling-off guardrail can't fire (daily-loss limit still blocks) | ⬜ | Needs a source-of-truth decision (suspension store) — flagged to user | — |
+| 3-C | EmotionGuard inert: `record_trade_result` was never called → tilt/revenge detection never updated (consecutive-loss still enforced via the DB guardrail, so this was the tilt layer only) | ✅ | `EmotionGuard` is now a process-global singleton shared by every `UnifiedRiskEngine` and by `TradeRecorder.record_exit`, which records win/loss + notional at the single close path. The gate's `check()` consults the same state. In-memory only (resets on restart; DB consecutive-loss guardrail still spans restarts) | `test_four_consecutive_losses_pauses_engine`, `test_emotion_guard_is_shared_singleton`, `test_a_win_resets_consecutive_losses` |
+| 3-D | Cooling-off not enforced at the gate: `_read_portfolio_state` never populated `cooling_off_until`, so the gate let trades through as soon as the *triggering* metric cleared (e.g. at the daily P&L reset), short-circuiting the suspension window | ✅ | The store already existed (`portfolio_snapshots.cooling_off_until`, written by the autopilot loop each cycle). The gate now reads the latest snapshot's `cooling_off_until` into `PortfolioState`, so `check_all` branch #1 enforces the full window | `test_future_cooling_off_blocks`, `test_expired_cooling_off_allows` |
 | 3-E | Concentration/Greeks never bound: the check ran BEFORE sizing and scored per-unit `max_loss_dollars` (per-share for equity, per-contract for options) against the whole portfolio | ✅ | Risk `check()` moved to after sizing (Stage 3.5); `approve_trade` takes `position_quantity` and scales single-underlying / sector / delta / vega by the sized count → scored against the TOTAL position | `test_quantity_scaled_exposure_breaches_concentration`, `test_single_unit_within_concentration`, `test_default_quantity_is_one` |
 ## Batch 4 — Fill-confirmed recording & ML integrity — 🔶
 Recording is correctly fill-gated (options record only on `DispatchStatus.FILLED`;

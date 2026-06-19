@@ -74,6 +74,7 @@ class OrderGate:
         from app.services.guardrails import PortfolioState
         from app.core.database import AsyncSessionLocal
         from app.models.trade import Trade
+        from app.models.risk_state import PortfolioSnapshot
         from sqlalchemy import select, func, and_
 
         # Broker account value — if we can't read capital, we can't assess risk.
@@ -104,6 +105,16 @@ class OrderGate:
             realized_all_time = float((await s.execute(
                 select(func.coalesce(func.sum(Trade.pnl), 0)).where(Trade.status == "closed")
             )).scalar() or 0)
+            # 3-D: honor a persisted cooling-off suspension. The autopilot loop
+            # writes cooling_off_until to the latest snapshot when a loss limit
+            # trips; without reading it back, the gate let trades through as soon
+            # as the *triggering* metric cleared (e.g. at the daily P&L reset),
+            # short-circuiting the suspension window. Branch #1 of check_all now
+            # enforces the full duration.
+            cooling_off_until = (await s.execute(
+                select(PortfolioSnapshot.cooling_off_until)
+                .order_by(PortfolioSnapshot.timestamp.desc()).limit(1)
+            )).scalar_one_or_none()
 
         consecutive = 0
         for p in recent:
@@ -123,6 +134,7 @@ class OrderGate:
             monthly_pnl=monthly + unrealized,
             consecutive_losses=consecutive,
             trades_today=trades_today,
+            cooling_off_until=cooling_off_until,
         )
 
     async def _read_portfolio_risk_state(self, portfolio_value: float):
