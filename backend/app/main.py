@@ -775,13 +775,9 @@ async def guardrail_status():
     )
     status = _guardrail_engine.check_all(portfolio)
 
-    # Override trading_mode with the real active mode from mode manager
-    from app.services.trading_mode import trading_mode_manager
-    trading_mode = trading_mode_manager.current.active_mode.value
-
     return {
         "trading_allowed":       status.trading_allowed,
-        "trading_mode":          trading_mode,
+        "trading_mode":          status.trading_mode,
         "reason":                status.reason,
         "flags":                 status.flags,
         "daily_pnl":             daily_pnl,

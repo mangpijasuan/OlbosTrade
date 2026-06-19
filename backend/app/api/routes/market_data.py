@@ -24,15 +24,28 @@ async def _yfinance_snapshot(symbol: str) -> dict:
     loop = asyncio.get_running_loop()
 
     def _fetch():
-        hist = yf.Ticker(symbol).history(period="5d", auto_adjust=True)
-        if hist.empty:
+        ticker = yf.Ticker(symbol)
+        # Intraday 1-min bars for current price during market hours
+        intra = ticker.history(period="1d", interval="1m", auto_adjust=True)
+        # Daily bars for prev_close reference
+        daily = ticker.history(period="5d", auto_adjust=True)
+        if daily.empty:
             return {}
-        closes = hist["Close"].dropna()
-        if len(closes) < 1:
+        daily_closes = daily["Close"].dropna()
+        if len(daily_closes) < 1:
             return {}
-        last       = float(closes.iloc[-1])
-        prev_close = float(closes.iloc[-2]) if len(closes) >= 2 else last
-        chg_pct    = round((last - prev_close) / prev_close * 100, 2)
+        # Current price: last intraday bar if available, else last daily close
+        if not intra.empty:
+            last = float(intra["Close"].dropna().iloc[-1])
+        else:
+            last = float(daily_closes.iloc[-1])
+        # prev_close: last completed daily bar (yesterday's close)
+        prev_close = float(daily_closes.iloc[-1]) if intra.empty else float(daily_closes.iloc[-1])
+        # When market is open, daily[-1] is yesterday — use it as reference
+        # When market is closed, intra is empty so last == daily[-1] and prev is daily[-2]
+        if intra.empty and len(daily_closes) >= 2:
+            prev_close = float(daily_closes.iloc[-2])
+        chg_pct    = round((last - prev_close) / prev_close * 100, 2) if prev_close else 0.0
         return {
             "symbol":     symbol,
             "bid":        None,
@@ -126,15 +139,21 @@ async def get_iv_rank(symbol: str):
     True IV rank requires options chain history; this is a fast approximation.
     """
     try:
-        broker  = get_broker()
-        bars    = await broker.get_bars(symbol, timeframe="1Day", limit=252)
-        if len(bars) < 30:
+        import yfinance as yf, asyncio
+        loop = asyncio.get_running_loop()
+
+        def _fetch():
+            hist = yf.Ticker(symbol).history(period="1y", auto_adjust=True)
+            return hist
+
+        hist = await loop.run_in_executor(None, _fetch)
+        if hist.empty or len(hist) < 30:
             return {"symbol": symbol, "iv_rank": None, "error": "insufficient data"}
 
         import pandas as pd, numpy as np
-        close = pd.Series([float(b.close) for b in bars])
-        high  = pd.Series([float(b.high)  for b in bars])
-        low   = pd.Series([float(b.low)   for b in bars])
+        close = hist["Close"].reset_index(drop=True)
+        high  = hist["High"].reset_index(drop=True)
+        low   = hist["Low"].reset_index(drop=True)
 
         # ATR-based realized vol as IV proxy
         tr   = pd.concat([high - low,

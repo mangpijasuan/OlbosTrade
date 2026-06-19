@@ -16,6 +16,7 @@ from app.broker.ibkr_client import IBKRClient
 def client():
     c = IBKRClient()
     c._connected = True
+    c.ib.isConnected = MagicMock(return_value=True)
     return c
 
 
@@ -23,7 +24,8 @@ def client():
 async def test_connect_succeeds_on_first_attempt():
     """connect() should succeed without retrying when TWS responds."""
     client = IBKRClient()
-    with patch.object(client.ib, "connectAsync", new_callable=AsyncMock) as mock_connect:
+    with patch.object(client.ib, "connectAsync", new_callable=AsyncMock) as mock_connect, \
+         patch.object(client.ib, "reqMarketDataType"):
         await client.connect()
     mock_connect.assert_called_once()
     assert client._connected is True
@@ -44,15 +46,15 @@ async def test_connect_retries_on_failure_then_raises():
 @pytest.mark.asyncio
 async def test_get_account_summary_maps_fields_correctly(client):
     """get_account_summary should map IBKR account tags to AccountSummary fields."""
-    mock_items = [
-        MagicMock(tag="AccountCode", value="DU123456"),
-        MagicMock(tag="NetLiquidation", value="25000.00"),
-        MagicMock(tag="TotalCashValue", value="20000.00"),
-        MagicMock(tag="OptionBuyingPower", value="15000.00"),
+    mock_values = [
+        MagicMock(tag="NetLiquidation", value="25000.00", currency="USD"),
+        MagicMock(tag="TotalCashValue", value="20000.00", currency="USD"),
+        MagicMock(tag="OptionBuyingPower", value="15000.00", currency="USD"),
     ]
-    with patch.object(client.ib, "reqAccountSummaryAsync",
-                      new_callable=AsyncMock, return_value=mock_items):
-        summary = await client.get_account_summary()
+    client.ib.accountValues = MagicMock(return_value=mock_values)
+    client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+
+    summary = await client.get_account_summary()
 
     assert summary.account_id == "DU123456"
     assert summary.net_liquidation == Decimal("25000.00")
@@ -85,7 +87,9 @@ async def test_get_positions_filters_options_only(client):
                       new_callable=AsyncMock, return_value=mock_positions):
         positions = await client.get_positions()
 
-    assert len(positions) == 1
-    assert positions[0].option_type == "put"
-    assert positions[0].strike == Decimal("450.0")
-    assert positions[0].quantity == -1
+    # get_positions returns all OPT + STK/ETF; filter to options only
+    options = [p for p in positions if p.strike > 0]
+    assert len(options) == 1
+    assert options[0].option_type == "put"
+    assert options[0].strike == Decimal("450.0")
+    assert options[0].quantity == -1

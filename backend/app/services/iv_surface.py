@@ -469,7 +469,7 @@ class IVSurfaceEngine:
         window = iv_series.iloc[-IV_HISTORY_LOOKBACK:]
         lo, hi = float(window.min()), float(window.max())
         if hi == lo:
-            return 50.0
+            return 0.0  # degenerate: no range — treat as lowest iv_rank (consistent with market_data.py returning None→0)
         return round(((current_iv - lo) / (hi - lo)) * 100, 2)
 
     @staticmethod

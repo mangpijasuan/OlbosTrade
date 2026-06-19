@@ -17,6 +17,15 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _active_risk_pct() -> float:
+    """Return risk_per_trade_pct from the currently active trading mode."""
+    try:
+        from app.services.trading_mode import trading_mode_manager
+        return trading_mode_manager.current.config.risk_per_trade_pct
+    except Exception:
+        return 0.02  # safe default if trading_mode not yet initialised
+
+
 # ── Pydantic-style dataclasses for strategy outputs ───────────────────────────
 
 @dataclass
@@ -148,10 +157,10 @@ class BullPutSpread(BaseStrategy):
             )
 
         # Entry conditions
-        if iv_rank < 30:
+        if iv_rank < 5:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bullish", entry_allowed=False,
-                         reason=f"IV rank too low: {iv_rank:.1f} (need >30)", iv_rank=iv_rank, rsi=rsi)
+                         reason=f"IV rank too low: {iv_rank:.1f} (need >5)", iv_rank=iv_rank, rsi=rsi)
         if not above_sma20:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bullish", entry_allowed=False,
@@ -181,7 +190,7 @@ class BullPutSpread(BaseStrategy):
         spread_width = 10.0
         max_loss = spread_width * 100  # per contract
         contracts = self.risk_manager.calculate_position_size(
-            portfolio.portfolio_value, max_loss, risk_pct=0.02, size_multiplier=multiplier
+            portfolio.portfolio_value, max_loss, risk_pct=_active_risk_pct(), size_multiplier=multiplier
         )
         return PositionSize(
             contracts=contracts,
@@ -222,7 +231,7 @@ class BearCallSpread(BaseStrategy):
                          direction="bearish", entry_allowed=False,
                          reason=guardrail_status.reason or "Not allowed", iv_rank=iv_rank, rsi=rsi)
 
-        if iv_rank < 30:
+        if iv_rank < 5:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bearish", entry_allowed=False,
                          reason=f"IV rank too low: {iv_rank:.1f}", iv_rank=iv_rank, rsi=rsi)
@@ -253,7 +262,7 @@ class BearCallSpread(BaseStrategy):
         multiplier = self.guardrails.get_position_size_multiplier(guardrail_status)
         max_loss = 10.0 * 100
         contracts = self.risk_manager.calculate_position_size(
-            portfolio.portfolio_value, max_loss, risk_pct=0.02, size_multiplier=multiplier
+            portfolio.portfolio_value, max_loss, risk_pct=_active_risk_pct(), size_multiplier=multiplier
         )
         return PositionSize(contracts=contracts, risk_per_contract=max_loss,
                            total_risk=contracts * max_loss, size_multiplier=multiplier)
@@ -292,10 +301,10 @@ class IronCondor(BaseStrategy):
                          reason="Iron Condor suspended in capital preservation mode",
                          iv_rank=iv_rank, rsi=rsi)
 
-        if iv_rank < 40:
+        if iv_rank < 5:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="neutral", entry_allowed=False,
-                         reason=f"IV rank too low: {iv_rank:.1f} (need >40)", iv_rank=iv_rank, rsi=rsi)
+                         reason=f"IV rank too low: {iv_rank:.1f} (need >5)", iv_rank=iv_rank, rsi=rsi)
         if adx >= 20:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="neutral", entry_allowed=False,
@@ -324,7 +333,7 @@ class IronCondor(BaseStrategy):
         multiplier = self.guardrails.get_position_size_multiplier(guardrail_status)
         max_loss = 10.0 * 100  # max loss on worst wing
         contracts = self.risk_manager.calculate_position_size(
-            portfolio.portfolio_value, max_loss, risk_pct=0.03, size_multiplier=multiplier
+            portfolio.portfolio_value, max_loss, risk_pct=_active_risk_pct(), size_multiplier=multiplier
         )
         return PositionSize(contracts=contracts, risk_per_contract=max_loss,
                            total_risk=contracts * max_loss, size_multiplier=multiplier)
@@ -369,10 +378,10 @@ class BullCallDebitSpread(BaseStrategy):
                          reason="Debit spread suspended in capital preservation mode",
                          iv_rank=iv_rank, rsi=rsi)
 
-        if iv_rank >= 30:
+        if iv_rank >= 100:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bullish", entry_allowed=False,
-                         reason=f"IV rank too high: {iv_rank:.1f} (need <30 for debit spread)",
+                         reason=f"IV rank too high: {iv_rank:.1f} (need <100 for debit spread)",
                          iv_rank=iv_rank, rsi=rsi)
         if not above_sma20:
             return Signal(strategy=self.name, underlying=chain.underlying,
@@ -404,7 +413,7 @@ class BullCallDebitSpread(BaseStrategy):
         max_loss = spread_width * 100
         contracts = self.risk_manager.calculate_position_size(
             portfolio.portfolio_value, max(max_loss, 100),
-            risk_pct=0.015, size_multiplier=multiplier
+            risk_pct=_active_risk_pct(), size_multiplier=multiplier
         )
         return PositionSize(contracts=contracts, risk_per_contract=max_loss,
                            total_risk=contracts * max_loss, size_multiplier=multiplier)

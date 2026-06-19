@@ -85,7 +85,7 @@ class RiskManager:
         """
         target_risk = portfolio_value * risk_pct * size_multiplier
         contracts = int(target_risk / max(max_loss_per_spread, 1.0))
-        return max(contracts, 1)
+        return max(contracts, 0)  # 0 is valid — caller must skip the trade
 
     def kelly_position_size(
         self,

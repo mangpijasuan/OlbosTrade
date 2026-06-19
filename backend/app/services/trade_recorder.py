@@ -60,13 +60,30 @@ class TradeRecorder:
         Write Trade + JournalEntry to DB in one transaction.
 
         Returns the trade_id string on success, None on failure.
-        Never raises — logs errors and returns None so the signal
-        cycle is never blocked by a DB write failure.
+
+        Idempotent: if dispatch_id already exists in the DB the existing
+        trade_id is returned without creating a duplicate row.
+
+        CRITICAL alert is emitted when a broker fill cannot be persisted —
+        the position exists at the broker but is untracked in the DB.
         """
         try:
+            from sqlalchemy import select
             from app.core.database import AsyncSessionLocal
             from app.models.trade import Trade
             from app.models.journal_entry import JournalEntry
+
+            # ── Idempotency check ───────────────────────────────────────────
+            async with AsyncSessionLocal() as session:
+                existing = (await session.execute(
+                    select(Trade).where(Trade.dispatch_id == dispatch_id)
+                )).scalar_one_or_none()
+            if existing is not None:
+                logger.info(
+                    "record_fill: dispatch_id %s already recorded as trade %s — skipping duplicate",
+                    dispatch_id, existing.id,
+                )
+                return str(existing.id)
 
             trade_id = uuid.uuid4()
 
@@ -93,6 +110,7 @@ class TradeRecorder:
                         signal_score=Decimal(str(round(signal_score, 4))),
                         quantity=int(quantity or 1),
                         trading_mode_at_entry=trading_mode or "balanced",
+                        dispatch_id=dispatch_id,
                     )
                     session.add(trade)
 
@@ -102,7 +120,7 @@ class TradeRecorder:
                     journal = JournalEntry(
                         trade_id=trade_id,
                         pre_trade_thesis="",
-                        confidence_level=3,
+                        confidence_level=None,   # NULL — trader fills in via Journal UI
                         market_context=regime or "",
                         tags=[],
                         mistake_tags=[],
@@ -111,17 +129,20 @@ class TradeRecorder:
 
             logger.info(
                 "Trade recorded: %s %s %s strike=%.0f/%.0f "
-                "credit=%.2f mode=%s score=%.3f trade_id=%s",
+                "credit=%.2f mode=%s score=%.3f dispatch_id=%s trade_id=%s",
                 strategy, underlying, option_type,
                 short_strike, long_strike,
-                entry_credit, trading_mode, signal_score, trade_id,
+                entry_credit, trading_mode, signal_score, dispatch_id, trade_id,
             )
             return str(trade_id)
 
         except Exception as exc:
-            logger.error(
-                "TradeRecorder.record_fill failed — "
-                "trade NOT persisted: %s", exc, exc_info=True,
+            logger.critical(
+                "CRITICAL: TradeRecorder.record_fill FAILED — "
+                "broker fill for dispatch_id=%s is UNTRACKED in DB. "
+                "Position exists at broker but not in OlbosQuant records. "
+                "Manual reconciliation required. Error: %s",
+                dispatch_id, exc, exc_info=True,
             )
             return None
 
@@ -139,9 +160,10 @@ class TradeRecorder:
         Returns True on success.
         """
         try:
+            from sqlalchemy import select
+            from app.core.config import settings
             from app.core.database import AsyncSessionLocal
             from app.models.trade import Trade
-            from sqlalchemy import select, update
 
             async with AsyncSessionLocal() as session:
                 async with session.begin():
@@ -156,7 +178,8 @@ class TradeRecorder:
                     credit = float(trade.credit_received or 0)
                     qty    = int(getattr(trade, "quantity", None) or 1)
                     pnl    = (credit - cost_to_close) * qty * 100
-                    pnl_pct = pnl / 25000.0  # vs starting capital
+                    starting_capital = float(settings.starting_capital)
+                    pnl_pct = pnl / starting_capital if starting_capital > 0 else 0.0
 
                     trade.cost_to_close = Decimal(str(round(cost_to_close, 4)))
                     trade.pnl           = Decimal(str(round(pnl, 2)))

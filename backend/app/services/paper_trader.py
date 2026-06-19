@@ -434,12 +434,20 @@ class PaperTrader:
                 size_result = strategy_obj.size_position(
                     signal, portfolio_risk, guardrail_status
                 )
-                # Apply regime size multiplier on top of guardrail multiplier
-                effective_contracts = max(
-                    int(size_result.contracts * regime.size_multiplier), 1
-                )
+                # Apply regime size multiplier — allow 0 so the system can skip
+                # trades when sizing math says the risk budget is exhausted.
+                effective_contracts = int(size_result.contracts * regime.size_multiplier)
 
-                # NEW: Submit via ExecutionDispatcher (liquidity guard + atomic fill)
+                # Skip trade when sizing returns zero (risk budget exhausted)
+                if effective_contracts <= 0:
+                    actions.append({
+                        "action":   "skipped_zero_size",
+                        "strategy": strategy_name,
+                        "reason":   "sizing returned 0 contracts",
+                    })
+                    continue
+
+                # Submit via ExecutionDispatcher (liquidity guard + atomic fill)
                 multi_leg = self._build_multi_leg(
                     signal, strategy_name, chain=chain, quantity=effective_contracts
                 )

@@ -6,6 +6,7 @@ No trade can execute if trading_allowed is False.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 
 from app.core.config import settings
@@ -33,12 +34,14 @@ class GuardrailStatus:
 
 @dataclass
 class PortfolioState:
-    """Snapshot of portfolio state passed into guardrail checks."""
+    """Snapshot of portfolio state passed into guardrail checks.
+    PnL fields are Decimal to preserve monetary precision through comparisons.
+    """
     current_value: float
     starting_capital: float
-    daily_pnl: float
-    weekly_pnl: float
-    monthly_pnl: float
+    daily_pnl: Decimal
+    weekly_pnl: Decimal
+    monthly_pnl: Decimal
     consecutive_losses: int
     trades_today: int
     cooling_off_until: Optional[datetime] = None
@@ -75,12 +78,13 @@ class GuardrailEngine:
         Returns GuardrailStatus — caller must check trading_allowed before placing any trade.
         """
         flags: list[str] = []
-        base = portfolio.starting_capital if portfolio.starting_capital > 0 else 1.0
-        capital_pct = portfolio.current_value / base
+        base = Decimal(str(portfolio.starting_capital)) if portfolio.starting_capital > 0 else Decimal("1")
+        capital_pct = float(portfolio.current_value) / float(base)
 
-        daily_loss_pct = portfolio.daily_pnl / base
-        weekly_loss_pct = portfolio.weekly_pnl / base
-        monthly_loss_pct = portfolio.monthly_pnl / base
+        # Use Decimal arithmetic for monetary comparisons — avoids float rounding errors
+        daily_loss_pct   = float(Decimal(str(portfolio.daily_pnl))   / base)
+        weekly_loss_pct  = float(Decimal(str(portfolio.weekly_pnl))  / base)
+        monthly_loss_pct = float(Decimal(str(portfolio.monthly_pnl)) / base)
 
         # ── 1. Cooling off period ──────────────────────────────────────────
         if portfolio.cooling_off_until:

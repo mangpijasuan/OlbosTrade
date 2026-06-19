@@ -65,8 +65,6 @@ class PositionReconciler:
                 f"Could not fetch broker positions for reconciliation: {exc}"
             ) from exc
 
-        broker_symbols = {p.symbol for p in broker_positions}
-
         # Fetch DB open trades
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -74,18 +72,38 @@ class PositionReconciler:
             )
             db_open_trades: list[Trade] = result.scalars().all()
 
-        # Build comparable symbol sets from DB
-        # Use underlying as a coarse match (symbol-level matching needs real contract symbols)
-        db_underlyings = {str(t.underlying) for t in db_open_trades}
-        broker_underlyings = {p.underlying for p in broker_positions}
+        # ── Quantity-aware matching ────────────────────────────────────────────
+        # Group broker positions by underlying; sum absolute quantities.
+        # A doubled position (qty=2 at broker, qty=1 in DB) is now detectable.
+        from collections import defaultdict
+        broker_qty: dict[str, int] = defaultdict(int)
+        for p in broker_positions:
+            broker_qty[p.underlying] += abs(p.quantity)
+
+        db_qty: dict[str, int] = defaultdict(int)
+        for t in db_open_trades:
+            db_qty[str(t.underlying)] += int(t.quantity or 1)
+
+        broker_underlyings = set(broker_qty.keys())
+        db_underlyings     = set(db_qty.keys())
 
         untracked = broker_underlyings - db_underlyings
         phantom   = db_underlyings - broker_underlyings
 
         warnings = []
 
-        # Allow phantom DB records if they were entered today (timing edge case on startup)
-        # Only raise on untracked broker positions — those are the dangerous ones
+        # Quantity mismatches on known underlyings (e.g. doubled position)
+        common = broker_underlyings & db_underlyings
+        for sym in common:
+            if broker_qty[sym] != db_qty[sym]:
+                warn = (
+                    f"QUANTITY MISMATCH for {sym}: broker={broker_qty[sym]} "
+                    f"contracts, DB={db_qty[sym]}. Possible double-fill or partial close."
+                )
+                logger.critical(warn)
+                warnings.append(warn)
+
+        # Untracked broker positions — halt trading
         if untracked:
             msg = (
                 f"RECONCILIATION FAILURE: {len(untracked)} positions at broker "
@@ -96,9 +114,14 @@ class PositionReconciler:
             logger.critical(msg)
             raise ReconciliationError(msg)
 
+        # Quantity mismatches are also a hard halt
+        qty_mismatches = [w for w in warnings if "QUANTITY MISMATCH" in w]
+        if qty_mismatches:
+            raise ReconciliationError(
+                f"Position quantity mismatch detected — trading halted: {qty_mismatches}"
+            )
+
         if phantom:
-            # Phantom DB records (DB says open, broker says no position)
-            # Could be timing issue or a missed close — warn but don't halt
             warning = (
                 f"WARNING: {len(phantom)} DB open trades have no matching broker position: "
                 f"{phantom}. These may be stale records. Review and close if needed."
@@ -107,7 +130,7 @@ class PositionReconciler:
             warnings.append(warning)
 
         result = ReconciliationResult(
-            clean=len(untracked) == 0,
+            clean=len(untracked) == 0 and not qty_mismatches,
             broker_position_count=len(broker_positions),
             db_open_trade_count=len(db_open_trades),
             untracked_at_broker=list(untracked),
@@ -145,14 +168,15 @@ class PositionReconciler:
             )
             snap = result.scalar_one_or_none()
 
+        from decimal import Decimal
         if snap is None:
             logger.info("No portfolio snapshot found — using default guardrail state")
             return {
                 "current_value": settings.starting_capital,
                 "starting_capital": settings.starting_capital,
-                "daily_pnl": 0.0,
-                "weekly_pnl": 0.0,
-                "monthly_pnl": 0.0,
+                "daily_pnl":   Decimal("0"),
+                "weekly_pnl":  Decimal("0"),
+                "monthly_pnl": Decimal("0"),
                 "consecutive_losses": 0,
                 "trades_today": 0,
                 "cooling_off_until": None,
@@ -165,15 +189,16 @@ class PositionReconciler:
             snap.trading_mode, snap.cooling_off_until,
         )
 
+        from decimal import Decimal
         return {
             "current_value": float(snap.total_value),
             "starting_capital": settings.starting_capital,
-            "daily_pnl": float(snap.daily_pnl or 0),
-            "weekly_pnl": float(snap.weekly_pnl or 0),
-            "monthly_pnl": float(snap.monthly_pnl or 0),
+            "daily_pnl":   Decimal(str(snap.daily_pnl   or 0)),
+            "weekly_pnl":  Decimal(str(snap.weekly_pnl  or 0)),
+            "monthly_pnl": Decimal(str(snap.monthly_pnl or 0)),
             "consecutive_losses": snap.consecutive_losses,
             "trades_today": snap.trades_today,
-            "cooling_off_until": snap.cooling_off_until,  # restored from DB
+            "cooling_off_until": snap.cooling_off_until,
         }
 
     async def save_portfolio_snapshot(

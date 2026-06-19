@@ -67,9 +67,18 @@ MOCK_ACCOUNT_RESPONSE = {
 }
 
 
+class _ConcreteTradierClient(TradierClient):
+    """Minimal concrete subclass that satisfies new abstract methods added to BrokerInterface."""
+    async def get_bars(self, *a, **kw): return []
+    async def get_latest_quote(self, *a, **kw): return None
+    async def place_equity_order(self, *a, **kw): return None
+    def supports_equities(self): return False
+    def supports_options(self): return True
+
+
 @pytest.fixture
 def client():
-    return TradierClient()
+    return _ConcreteTradierClient()
 
 
 @pytest.mark.asyncio

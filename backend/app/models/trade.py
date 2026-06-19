@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Enum, Integer, Numeric, String, func
+from sqlalchemy import Date, DateTime, Enum, Index, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,6 +65,12 @@ class Trade(Base):
     commission_paid: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     fill_price_short: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     fill_price_long: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+
+    # Idempotent fill recording — broker dispatch correlation
+    dispatch_id: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, unique=True, index=True,
+        comment="Broker dispatch correlation ID — UNIQUE ensures idempotent fill recording"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

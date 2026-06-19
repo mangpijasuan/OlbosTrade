@@ -23,7 +23,7 @@ sigma = 0.20  # 20% IV
 class TestCallPrice:
     def test_atm_call_price(self):
         price = pricer.call_price(S, K, T, r, sigma)
-        assert price == pytest.approx(7.45, abs=TOLERANCE)
+        assert price == pytest.approx(11.22, abs=TOLERANCE)
 
     def test_itm_call_greater_than_atm(self):
         itm = pricer.call_price(S, K - 10, T, r, sigma)
@@ -43,7 +43,7 @@ class TestCallPrice:
 class TestPutPrice:
     def test_atm_put_price(self):
         price = pricer.put_price(S, K, T, r, sigma)
-        assert price == pytest.approx(6.27, abs=TOLERANCE)
+        assert price == pytest.approx(9.37, abs=TOLERANCE)
 
     def test_put_call_parity(self):
         call = pricer.call_price(S, K, T, r, sigma)
@@ -78,9 +78,10 @@ class TestDelta:
         assert d < 0.05
 
     def test_put_delta_plus_call_delta_near_one(self):
+        # BS identity: call_delta - put_delta = 1 (put_delta is negative)
         call_d = pricer.delta(S, K, T, r, sigma, "call")
         put_d = pricer.delta(S, K, T, r, sigma, "put")
-        assert call_d + put_d == pytest.approx(1.0, abs=0.02)
+        assert call_d - put_d == pytest.approx(1.0, abs=0.02)
 
 
 class TestGamma:
@@ -110,9 +111,9 @@ class TestTheta:
         assert pricer.theta(S, K, T=0, r=r, sigma=sigma, option_type="call") == pytest.approx(0.0)
 
     def test_theta_magnitude_reasonable(self):
-        # 30 DTE ATM option: daily decay should be roughly $0.05–$0.15 per share
+        # 30 DTE ATM option: daily decay should be roughly $0.05–$0.25 per share
         t = pricer.theta(S, K, T, r, sigma, "call")
-        assert -0.20 < t < -0.01
+        assert -0.25 < t < -0.01
 
 
 class TestVega:

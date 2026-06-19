@@ -52,9 +52,47 @@ class EmotionGuard:
     def __init__(self) -> None:
         self.state = EmotionState()
 
+    async def rehydrate_from_db(self) -> None:
+        """Load consecutive_losses and paused_until from the latest PortfolioSnapshot."""
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.risk_state import PortfolioSnapshot
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(PortfolioSnapshot).order_by(PortfolioSnapshot.timestamp.desc()).limit(1)
+                )).scalar_one_or_none()
+            if row is not None:
+                self.state.consecutive_losses = row.consecutive_losses or 0
+                self.state.paused_until = row.cooling_off_until
+                logger.info(
+                    "EmotionGuard rehydrated: consecutive_losses=%d paused_until=%s",
+                    self.state.consecutive_losses, self.state.paused_until,
+                )
+        except Exception as exc:
+            logger.warning("EmotionGuard rehydrate failed (starting fresh): %s", exc)
+
+    async def _persist_to_db(self) -> None:
+        """Persist current consecutive_losses and paused_until after each trade."""
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.risk_state import PortfolioSnapshot
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(PortfolioSnapshot).order_by(PortfolioSnapshot.timestamp.desc()).limit(1)
+                )).scalar_one_or_none()
+                if row is not None:
+                    row.consecutive_losses = self.state.consecutive_losses
+                    row.cooling_off_until  = self.state.paused_until
+                    await session.commit()
+        except Exception as exc:
+            logger.warning("EmotionGuard persist failed: %s", exc)
+
     def record_trade(self, was_loss: bool, position_size: float, baseline_size: float) -> None:
         now = datetime.now(timezone.utc)
 
+        # Consistent loss definition: pnl < 0 (strictly negative); caller passes was_loss accordingly
         if was_loss:
             self.state.consecutive_losses += 1
         else:
@@ -179,14 +217,16 @@ class UnifiedRiskEngine:
 
         return RiskDecision(allowed=True, reason=None, flags=flags)
 
-    def record_trade_result(
+    async def record_trade_result(
         self,
         was_loss: bool,
         position_size: float,
         baseline_size: float = 500.0,
     ) -> None:
-        """Call after each trade closes to update emotion state."""
+        """Call after each trade closes to update and persist emotion state.
+        was_loss must be True iff pnl < 0 (strictly negative)."""
         self._emotion.record_trade(was_loss, position_size, baseline_size)
+        await self._emotion._persist_to_db()
 
     @property
     def emotion_state(self) -> EmotionState:
