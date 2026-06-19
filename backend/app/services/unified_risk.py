@@ -132,6 +132,7 @@ class UnifiedRiskEngine:
         proposed_trade: Optional[ProposedTrade] = None,
         size_multiplier: float = 1.0,
         check_earnings: bool = True,
+        position_quantity: int = 1,
     ) -> RiskDecision:
         """
         Run all risk checks. Returns RiskDecision(allowed, reason, flags).
@@ -167,7 +168,8 @@ class UnifiedRiskEngine:
         # 4. Portfolio-level risk (Greeks limits, concentration)
         if proposed_trade is not None:
             approval = self._risk_mgr.approve_trade(
-                proposed_trade, portfolio_risk_state, size_multiplier
+                proposed_trade, portfolio_risk_state, size_multiplier,
+                position_quantity=position_quantity,
             )
             if not approval.approved:
                 return RiskDecision(

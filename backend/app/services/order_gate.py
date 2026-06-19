@@ -276,16 +276,6 @@ class OrderGate:
             return _result(signal, "blocked", reason="risk_state_unavailable")
 
         instrument = "option" if asset_type == "options" else "equity"
-        decision = self._risk_engine.check(
-            instrument_type=instrument,
-            ticker=ticker,
-            portfolio_state=pstate,
-            portfolio_risk_state=prisk,
-            proposed_trade=self._build_proposed_trade(signal),
-        )
-        if not decision.allowed:
-            logger.warning("Order blocked for %s — risk: %s", ticker, decision.reason)
-            return _result(signal, "blocked", reason=decision.reason, flags=decision.flags)
 
         # STAGE 3 — sizing; ZERO => skip
         from app.services.risk_manager import RiskManager
@@ -308,6 +298,22 @@ class OrderGate:
         if contracts <= 0:
             logger.info("Order skipped for %s — risk budget sizes to 0", ticker)
             return _result(signal, "skipped", reason="zero_size")
+
+        # STAGE 3.5 — unified risk. Runs AFTER sizing so concentration / Greeks
+        # limits are scored against the TOTAL position (per-unit × contracts),
+        # not a single unit (which never bound). Guardrail/emotion/earnings
+        # checks are pure, so evaluating them here is equivalent.
+        decision = self._risk_engine.check(
+            instrument_type=instrument,
+            ticker=ticker,
+            portfolio_state=pstate,
+            portfolio_risk_state=prisk,
+            proposed_trade=self._build_proposed_trade(signal),
+            position_quantity=contracts,
+        )
+        if not decision.allowed:
+            logger.warning("Order blocked for %s — risk: %s", ticker, decision.reason)
+            return _result(signal, "blocked", reason=decision.reason, flags=decision.flags)
 
         # STAGE 4 — execution dispatch
         from app.broker.broker_factory import get_broker

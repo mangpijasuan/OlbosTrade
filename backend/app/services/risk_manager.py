@@ -118,12 +118,20 @@ class RiskManager:
         trade: ProposedTrade,
         portfolio: PortfolioRiskState,
         size_multiplier: float = 1.0,
+        position_quantity: int = 1,
     ) -> TradeApproval:
         """
         Evaluate a proposed trade against all portfolio risk limits.
         Returns TradeApproval — approved must be True to proceed.
+
+        `trade` carries PER-UNIT figures (per contract / per share); the caller
+        passes `position_quantity` (the sized contract/share count) so the
+        portfolio impact is scored against the TOTAL position, not one unit.
+        Previously the per-unit max_loss was compared to the whole portfolio, so
+        concentration/sector limits effectively never bound.
         """
         flags: list[str] = []
+        qty = max(int(position_quantity), 1)
 
         # ── Position count limit ───────────────────────────────────────────
         if portfolio.open_position_count >= self.max_concurrent:
@@ -136,7 +144,7 @@ class RiskManager:
             )
 
         # ── Portfolio delta limit ──────────────────────────────────────────
-        new_delta = abs(portfolio.net_delta + trade.delta)
+        new_delta = abs(portfolio.net_delta + trade.delta * qty)
         if new_delta > self.MAX_PORTFOLIO_DELTA:
             return TradeApproval(
                 approved=False,
@@ -147,7 +155,7 @@ class RiskManager:
             )
 
         # ── Portfolio vega limit ───────────────────────────────────────────
-        new_vega = abs(portfolio.net_vega + trade.vega)
+        new_vega = abs(portfolio.net_vega + trade.vega * qty)
         if new_vega > self.MAX_VEGA_EXPOSURE:
             return TradeApproval(
                 approved=False,
@@ -159,7 +167,7 @@ class RiskManager:
 
         # ── Single underlying concentration ───────────────────────────────
         current_exposure = portfolio.positions_by_underlying.get(trade.underlying, 0.0)
-        new_exposure = current_exposure + trade.max_loss_dollars
+        new_exposure = current_exposure + trade.max_loss_dollars * qty
         if portfolio.portfolio_value > 0:
             exposure_pct = new_exposure / portfolio.portfolio_value
             if exposure_pct > self.MAX_SINGLE_UNDERLYING:
@@ -176,7 +184,7 @@ class RiskManager:
 
         # ── Sector concentration ───────────────────────────────────────────
         sector_exposure = portfolio.positions_by_sector.get(trade.sector, 0.0)
-        new_sector_exposure = sector_exposure + trade.max_loss_dollars
+        new_sector_exposure = sector_exposure + trade.max_loss_dollars * qty
         if portfolio.portfolio_value > 0:
             sector_pct = new_sector_exposure / portfolio.portfolio_value
             if sector_pct > self.MAX_SECTOR_CONCENTRATION:
