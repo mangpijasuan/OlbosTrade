@@ -57,7 +57,7 @@ def _patch_common(monkeypatch, gate, *, allowed=True, size=1, open_trade=False):
 
 
 class _FakeDispatch:
-    def __init__(self, broker, **k): pass
+    def __init__(self, broker, **k): self.broker = broker
     async def validate_and_dispatch(self, strategy, dry_run=False):
         from app.services.execution_dispatcher import DispatchResult, DispatchStatus
         return DispatchResult(order_id="ord-1", status=DispatchStatus.FILLED,
@@ -156,6 +156,61 @@ async def test_clean_order_runs_five_stages_in_order(monkeypatch):
     # KS first, then UR → SZ → ED → REC
     assert order[0] == "KS"
     assert order.index("UR") < order.index("SZ") < order.index("ED-build") < order.index("REC")
+
+
+# ── Batch 2.5 hotfix regression tests ────────────────────────────────────────
+def test_options_max_loss_is_dollars_per_contract():
+    """net_credit is dollars/contract; max_loss = width*100 - credit (not ~$1)."""
+    sig = _options_signal()
+    sig["spread"]["net_credit"] = 100.0   # $100 credit on a $5-wide spread
+    ml = OrderGate._options_max_loss_per_contract(sig)
+    # 5 points * 100 - $100 = $400, NOT (5 - 100)*100 clamped to $1
+    assert ml == pytest.approx(400.0)
+
+
+@pytest.mark.asyncio
+async def test_manual_market_order_has_no_limit_price(monkeypatch):
+    """A manual market order must reach the broker as type=market, price=None."""
+    gate = OrderGate()
+    _patch_common(monkeypatch, gate, allowed=True, size=5)
+    captured = {}
+
+    class _Broker:
+        async def place_equity_order(self, **kw):
+            captured.update(kw)
+            return types.SimpleNamespace(order_id="eq-1", status="filled")
+
+    monkeypatch.setattr("app.broker.broker_factory.get_broker", lambda: _Broker())
+    async def _rec(*a, **k): pass
+    monkeypatch.setattr(gate, "_record_equity", _rec)
+
+    sig = {"id": "mk1", "ticker": "AAPL", "asset_type": "equity", "action": "BUY",
+           "order_type": "market",
+           "trade_plan": {"shares": 5, "entry_price": 200, "stop_price": 190}}
+    res = await gate.submit(sig, approved_by="manual")
+    assert res["result"] == "submitted"
+    assert captured["order_type"] == "market"
+    assert captured["limit_price"] is None
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_is_cached_across_submits(monkeypatch):
+    """The dispatcher (and its idempotency set) must persist across submits."""
+    gate = OrderGate()
+    _patch_common(monkeypatch, gate, allowed=True, size=1)
+    monkeypatch.setattr("app.services.execution_dispatcher.ExecutionDispatcher", _FakeDispatch)
+    broker = object()   # get_broker() is a singleton in production
+    monkeypatch.setattr("app.broker.broker_factory.get_broker", lambda: broker)
+    async def _build(signal, broker, qty):
+        return types.SimpleNamespace(strategy_name="bull_put_spread", underlying="SPY")
+    monkeypatch.setattr(gate, "_build_strategy", _build)
+    async def _rec(*a, **k): pass
+    monkeypatch.setattr(gate, "_record_options", _rec)
+
+    await gate.submit(_options_signal())
+    first = gate._dispatcher
+    await gate.submit(_options_signal())
+    assert gate._dispatcher is first   # same instance reused
 
 
 def test_no_second_guardrail_path_in_handle_signal():

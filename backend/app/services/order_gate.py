@@ -19,6 +19,7 @@ gate is tracked in AUDIT.md as a follow-up (out of scope for batch 1).
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -49,6 +50,7 @@ class OrderGate:
     def __init__(self) -> None:
         from app.services.unified_risk import UnifiedRiskEngine
         self._risk_engine = UnifiedRiskEngine()
+        self._dispatcher = None   # cached ExecutionDispatcher (stable _inflight set)
 
     # ── Stage 1 ───────────────────────────────────────────────────────────────
     def _kill_switch_active(self) -> bool:
@@ -153,10 +155,17 @@ class OrderGate:
 
     @staticmethod
     def _options_max_loss_per_contract(signal: dict) -> float:
+        """
+        Max loss per contract in DOLLARS. signal net_credit is dollars/contract
+        (computed as (short_px - long_px) * 100 upstream), so:
+            max_loss = width_points * 100 - net_credit_dollars
+        (Previously this treated net_credit as per-share points, collapsing
+        max_loss to ~$1 and massively over-sizing every options order.)
+        """
         sd = signal.get("spread", {})
         width = abs(float(sd.get("short_strike", 0)) - float(sd.get("long_strike", 0)))
-        credit = float(sd.get("net_credit", 0))
-        return max((width - credit) * 100.0, 1.0)
+        credit_dollars = float(sd.get("net_credit", 0))
+        return max(width * 100.0 - credit_dollars, 1.0)
 
     def _build_proposed_trade(self, signal: dict):
         from app.services.risk_manager import ProposedTrade
@@ -229,8 +238,11 @@ class OrderGate:
                 theta=float(g.theta) if g else None,
             )
 
+        # Stable order_id derived from the signal so the dispatcher's _inflight
+        # idempotency key is consistent across retries (was a fresh random id).
         return MultiLegStrategy(
             strategy_name=strategy, underlying=signal["ticker"],
+            order_id=str(signal.get("id") or uuid.uuid4()),
             legs=[
                 StrategyLeg(contract=_enrich(cs), action=LegAction.SELL, quantity=quantity),
                 StrategyLeg(contract=_enrich(cl), action=LegAction.BUY, quantity=quantity),
@@ -310,8 +322,11 @@ class OrderGate:
             strategy = await self._build_strategy(signal, broker, contracts)
             if strategy is None:
                 return _result(signal, "blocked", reason="no_market_data")
-            dispatcher = ExecutionDispatcher(broker, max_spread_pct=15.0)
-            dispatch = await dispatcher.validate_and_dispatch(strategy)
+            # Cache one dispatcher so its in-process _inflight idempotency set
+            # actually persists across submits (was a fresh instance each call).
+            if self._dispatcher is None or self._dispatcher.broker is not broker:
+                self._dispatcher = ExecutionDispatcher(broker, max_spread_pct=15.0)
+            dispatch = await self._dispatcher.validate_and_dispatch(strategy)
             if dispatch.status != DispatchStatus.FILLED:
                 return _result(signal, "rejected", reason=str(dispatch.status.value),
                                error=dispatch.error, order_id=dispatch.order_id)
@@ -323,9 +338,13 @@ class OrderGate:
                            approved_by=approved_by)
         else:
             plan = signal.get("trade_plan", {})
+            # Honor the requested order type (manual market orders were silently
+            # turned into $0 limit orders). Only pass a limit price for limits.
+            otype = signal.get("order_type", "limit")
             order = await broker.place_equity_order(
                 ticker=ticker, qty=contracts, side=signal.get("action", "BUY"),
-                order_type="limit", limit_price=plan.get("entry_price"),
+                order_type=otype,
+                limit_price=(plan.get("entry_price") if otype != "market" else None),
                 stop=plan.get("stop_price"), take_profit=plan.get("target_price"),
             )
             await self._record_equity(signal, order, contracts, approved_by)
@@ -347,7 +366,9 @@ class OrderGate:
                 option_type=("call" if "call" in signal.get("strategy", "") else sd.get("option_type", "put")),
                 short_strike=short_k, long_strike=long_k,
                 expiration=date.fromisoformat(expiry_str) if expiry_str else date.today(),
-                quantity=contracts, entry_credit=float(sd.get("net_credit", 0)),
+                # record_exit computes pnl = (credit - cost)*qty*100, so credit
+                # must be PER SHARE. signal net_credit is dollars/contract → /100.
+                quantity=contracts, entry_credit=float(sd.get("net_credit", 0)) / 100.0,
                 spread_width=abs(short_k - long_k),
                 signal_score=signal.get("signal_score", 0), iv_rank=signal.get("iv_rank", 0),
                 regime=signal.get("regime", "unknown"), trading_mode=approved_by,

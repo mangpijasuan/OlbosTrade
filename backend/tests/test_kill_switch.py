@@ -121,3 +121,40 @@ async def test_kill_switch_flattens_open_positions(ks, mock_scheduler):
 
     assert result["positions_flattened"] == 1
     broker.place_order.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_flattens_equity_via_equity_order(ks, mock_scheduler):
+    """Equity positions (strike==0 sentinel) flatten via place_equity_order, not a combo."""
+    from app.broker.broker_interface import Position
+    from datetime import date
+    from decimal import Decimal
+
+    equity_pos = Position(
+        symbol="AAPL", underlying="AAPL",
+        strike=Decimal("0"), expiration=date.today(),
+        option_type="call", quantity=100, avg_cost=Decimal("190"),
+    )
+    broker = MagicMock()
+    broker.get_positions = AsyncMock(return_value=[equity_pos])
+    broker.place_order = AsyncMock(return_value=MagicMock(status="submitted"))
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(status="filled"))
+    broker.ib = MagicMock()
+    broker.ib.openOrders = MagicMock(return_value=[])
+
+    ks.configure(broker, mock_scheduler)
+    with patch("app.services.kill_switch.AsyncSessionLocal") as mock_db:
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
+            add=MagicMock(), commit=AsyncMock()
+        ))
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
+        result = await ks.engage("test_equity_flatten")
+
+    assert result["positions_flattened"] == 1
+    broker.place_order.assert_not_called()          # no option combo for equities
+    broker.place_equity_order.assert_called_once()
+    _, kw = broker.place_equity_order.call_args
+    assert kw["ticker"] == "AAPL"
+    assert kw["side"] == "SELL"                      # long 100 → sell to flatten
+    assert kw["qty"] == 100
+    assert kw["order_type"] == "market"

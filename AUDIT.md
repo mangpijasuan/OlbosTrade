@@ -30,7 +30,7 @@ simulation-only. Already-fixed broker items confirmed and locked with tests.
 | # | Issue | Status | Note | Test |
 |---|-------|--------|------|------|
 | 2-A | `ExecutionDispatcher.submit_atomic` legged orders separately → naked-exposure window | ✅ | `dry_run=False` routes through new `_submit_combo` → `broker.place_order` (all-or-none BAG); per-leg loop kept only for `dry_run=True` simulation | `test_real_order_uses_single_combo`, `test_combo_not_filled_no_flatten` |
-| 2-B | `to_spread_order` limit price `net_premium/100` over-scaled for qty>1; sign unverified | ✅ (magnitude) / 🔶 (sign) | Now `net_premium/(100*qty)` = per-spread-per-share; sign left as-is (internally consistent w/ ibkr_client) pending live verification | `test_limit_price_per_spread_for_qty_gt_1` |
+| 2-B | `to_spread_order` limit price `net_premium/100` over-scaled for qty>1; sign unverified | ✅ (magnitude) / 🔶 (sign) | Now `net_premium/(100*qty)` = per-spread-per-share; wire sign now applied at the IBKR order (see Batch 2.5 C1) — verify on paper | `test_limit_price_per_spread_for_qty_gt_1` |
 | 2-C | No order idempotency (duplicate submit) | 🔶 | In-process `_inflight` guard on `client_order_id` refuses concurrent duplicates; cross-restart `dispatch_id` UNIQUE deferred to batch 4 | `test_duplicate_inflight_refused` |
 | 2-D | Combo `MKT` not honored (flatten became $0 limit); partial-as-complete; cancel-not-confirmed | ✅ | Fixed in earlier execution-safety work; `MKT` passthrough locked | `test_order_type_passthrough` |
 | 2-E | No reconnect on dropped ib_insync socket | 🔶 | `disconnectedEvent` handler flips `_connected` so the 60s background loop reconnects; full mid-call reconnect not added | — |
@@ -38,5 +38,23 @@ simulation-only. Already-fixed broker items confirmed and locked with tests.
 
 NOTE: combo execution paths are logic-reviewed + unit-tested but NOT verified
 against a live/paper IBKR session — confirm on paper before live.
+
+## Batch 2.5 — Execution hotfixes (criticals found in re-audit) — ✅
+Fixes for execution-path defects found after batches 1–2, including two
+regressions introduced by the batch-1 gate.
+
+| # | Issue | Status | Note | Test |
+|---|-------|--------|------|------|
+| C2 | Options over-sizing: gate's `_options_max_loss_per_contract` treated `net_credit` (dollars/contract) as per-share points → `(width − credit)*100` collapsed max-loss to the $1 floor → every options order massively over-sized (regression, batch-1 gate) | ✅ | Now `width*100 − net_credit_dollars`; same helper feeds sizing and the proposed-trade record | `test_options_max_loss_is_dollars_per_contract` |
+| H1 | Gate idempotency inert: a fresh `ExecutionDispatcher` per `submit()` meant the in-process `_inflight` set never persisted, and `MultiLegStrategy.order_id` was random → duplicate guard never fired (regression) | ✅ | Dispatcher cached on the gate (rebuilt only if broker identity changes); `order_id` derived from the stable signal id | `test_dispatcher_is_cached_across_submits` |
+| H2 | Manual market orders became $0 limit orders: gate hard-coded `order_type="limit"` and passed `entry_price` regardless → market intent never filled (regression) | ✅ | Gate threads `signal["order_type"]`; limit price only sent for limit orders | `test_manual_market_order_has_no_limit_price` |
+| C1 | IBKR combo limit sign: `lmtPrice` sent as the positive credit; BAG combos are debit-positive for a BUY, so credit spreads quoted "willing to pay a debit" | ✅ (logic) | Wire `lmtPrice = -net` at order construction; internal `limit_price` stays signed so the retry-aggression decrement is still correct for credits and debits. **VERIFY ON PAPER** | covered by reasoning; no live test (ib_insync unavailable in CI) |
+| H3 | Kill switch could not flatten equities: it built an Option BAG combo for every position, but equities use the `strike==0` sentinel → combo fails/never fills → naked exposure after engage | ✅ | Equity positions flatten via `place_equity_order(... market)`; option positions keep the combo path | `test_kill_switch_flattens_equity_via_equity_order` |
+| M3 | Recording unit mismatch: gate passed `entry_credit` in dollars, but `record_exit` computes pnl `(credit − cost)*qty*100` (per-share) → P&L inflated 100× | ✅ | Gate passes `net_credit/100` (per share) at record time | covered by gate change (recording internals untouched) |
+| W1 | `--workers 2` in the Dockerfile ran a duplicate APScheduler, kill-switch state and dispatcher idempotency set per process → duplicate orders | ✅ | Production now `--workers 1` until that state is externalised | — |
+
+NOTE: C1 (combo sign) is logic-correct per IBKR's debit-positive BAG convention
+but is environment-sensitive — confirm fills on the paper account before live.
+
 ## Batch 3 — Risk controls & data integrity — 🔶 (several items already fixed; see git log)
 ## Batch 4 — Fill-confirmed recording & ML integrity — 🔶 (record_fill atomicity, feature skew, look-ahead already fixed)

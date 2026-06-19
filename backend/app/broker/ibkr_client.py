@@ -280,6 +280,10 @@ class IBKRClient(BrokerInterface):
         bag.exchange = "SMART"
         bag.comboLegs = legs
 
+        # Keep limit_price as the SIGNED net (credit positive / debit negative);
+        # the retry loop decrements it to become more marketable. The IBKR wire
+        # sign is applied at the LimitOrder below (BAG combos are debit-positive
+        # for a BUY, so we send -limit_price).
         limit_price = float(spread.limit_price)
         last_trade = None
         _timeout = _fill_timeout()
@@ -300,7 +304,9 @@ class IBKRClient(BrokerInterface):
                 order = LimitOrder(
                     action="BUY",
                     totalQuantity=spread_qty,
-                    lmtPrice=round(limit_price, 2),
+                    # IBKR BAG combo is debit-positive for a BUY: send -net so a
+                    # credit (positive net) becomes a negative limit. VERIFY ON PAPER.
+                    lmtPrice=round(-limit_price, 2),
                     tif="DAY",  # explicit DAY to match IB Gateway order preset (avoids Error 10349 cancel)
                 )
             # Allow SpreadOrder to override TIF (e.g. GTC) but default to DAY

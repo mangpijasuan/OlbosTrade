@@ -44,10 +44,13 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Production: no --reload, 2 workers
+# Production: no --reload. Single worker: the scheduler, kill-switch state and
+# the ExecutionDispatcher idempotency set live in-process, so a second worker
+# would run a duplicate scheduler and duplicate orders. Scale horizontally only
+# once that state is externalised (e.g. Redis).
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
-     "--workers", "2", \
+     "--workers", "1", \
      "--loop", "uvloop", \
      "--access-log"]

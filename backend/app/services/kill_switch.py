@@ -174,6 +174,17 @@ class KillSwitch:
                 flatten_tasks = []
                 for pos in positions:
                     close_action = "SELL" if pos.quantity > 0 else "BUY"
+                    # Equity/ETF positions are stored with the strike==0 sentinel
+                    # (see ibkr_client.get_positions). Flatten them as a plain
+                    # equity market order — building an Option combo for them would
+                    # fail/never fill, leaving naked exposure after the kill switch.
+                    if pos.strike == 0:
+                        flatten_tasks.append(
+                            self._flatten_equity(
+                                pos.symbol, close_action, abs(pos.quantity), results
+                            )
+                        )
+                        continue
                     flatten_order = SpreadOrder(
                         strategy="kill_switch_flatten",
                         underlying=pos.underlying,
@@ -250,6 +261,20 @@ class KillSwitch:
         except Exception as exc:
             results["errors"].append(f"flatten_{symbol}: {exc}")
             logger.error("Kill switch: failed to flatten %s: %s", symbol, exc)
+
+    async def _flatten_equity(
+        self, symbol: str, side: str, qty: int, results: dict
+    ) -> None:
+        """Flatten an equity/ETF position with a market order."""
+        try:
+            await self._broker.place_equity_order(
+                ticker=symbol, qty=qty, side=side, order_type="market",
+            )
+            results["positions_flattened"] += 1
+            logger.info("Kill switch: flattened equity %s", symbol)
+        except Exception as exc:
+            results["errors"].append(f"flatten_{symbol}: {exc}")
+            logger.error("Kill switch: failed to flatten equity %s: %s", symbol, exc)
 
     async def reset(self, authorization_code: str = "") -> dict:
         """
