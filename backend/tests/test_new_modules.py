@@ -108,14 +108,14 @@ class TestIVSurfaceEngine:
         pct = IVSurfaceEngine._compute_iv_percentile(ivs, 0.20)
         assert pct == pytest.approx(80.0, abs=1.0)
 
-    def test_fallback_surface_always_valid(self):
+    @pytest.mark.asyncio
+    async def test_fallback_surface_always_valid(self):
         broker = MagicMock()
         broker.get_options_chain = AsyncMock(side_effect=Exception("no chain"))
         engine = IVSurfaceEngine(broker)
-        loop = asyncio.get_event_loop()
-        surface = loop.run_until_complete(
-            engine.build_surface("SPY", 455.0, 0.14)
-        )
+        # Was loop.run_until_complete(...) — that grabbed a (possibly closed)
+        # shared loop and flaked under the async test suite. Use a real async test.
+        surface = await engine.build_surface("SPY", 455.0, 0.14)
         assert surface.data_quality == "fallback"
         assert surface.iv_rank >= 0
         assert surface.iv_rank <= 100
@@ -236,14 +236,25 @@ class TestStrategyOptimizer:
         size = opt.kelly_position_size("bull_put_spread", trades, 25000.0)
         assert size <= 0.03  # Hard cap
 
-    def test_kelly_floors_above_zero(self):
+    def test_kelly_negative_edge_sizes_to_zero(self):
         opt = StrategyOptimizer()
-        # Losing strategy
+        # Losing strategy (negative expectancy) — must size to 0, NOT a floor.
+        # Flooring a negative-edge strategy keeps allocating capital to a loser.
         trades = make_trade_records(
             "bull_put_spread", n=40, win_rate=0.30, avg_win=50.0, avg_loss=-300.0
         )
         size = opt.kelly_position_size("bull_put_spread", trades, 25000.0)
-        assert size >= 0.005  # Floor
+        assert size == 0.0
+
+    def test_kelly_positive_edge_within_floor_and_cap(self):
+        opt = StrategyOptimizer()
+        # Winning strategy with positive edge — Kelly returns a non-zero size
+        # bounded by the 0.5% floor and the 3% hard cap.
+        trades = make_trade_records(
+            "bull_put_spread", n=40, win_rate=0.60, avg_win=120.0, avg_loss=-100.0
+        )
+        size = opt.kelly_position_size("bull_put_spread", trades, 25000.0)
+        assert 0.005 <= size <= 0.03
 
     def test_params_update_after_accepted_optimization(self):
         opt = StrategyOptimizer()

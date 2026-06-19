@@ -92,3 +92,15 @@ found the items below.
 NOTE: 4-A's migration and unique-constraint behaviour are logic-correct but
 unverified against Postgres (CI has no DB; ORM uses PG-specific `UUID`). Confirm
 the migration applies and the dedup fires on the paper database before live.
+
+## Test-suite hygiene & misc findings
+Found while getting the suite reproducibly green (177 pass, 3× consecutive).
+
+| # | Issue | Status | Note |
+|---|-------|--------|------|
+| T-1 | 4 `test_options_pricer` cases asserted wrong reference values (call 7.45, put 6.27, `call_d + put_d ≈ 1`, theta bound `-0.20`) | ✅ | The pricer is **mathematically correct** — verified to 4dp against an independent Black-Scholes computation (call 11.22, put 9.37, `call_d − put_d = 1`, theta ≈ -0.2024/day). Corrected the test expectations, not the code |
+| T-2 | `test_kelly_floors_above_zero` asserted a *losing* strategy still gets a ≥0.5% floor — contradicted the deliberate safety fix (negative edge → size 0) | ✅ | Split into `test_kelly_negative_edge_sizes_to_zero` (==0) and `test_kelly_positive_edge_within_floor_and_cap` ([0.5%, 3%]) |
+| T-3 | `test_fallback_surface_always_valid` flaked (`RuntimeError` from `asyncio.get_event_loop().run_until_complete()` on a closed loop after other async tests) | ✅ | Converted to `@pytest.mark.asyncio async def … await` |
+| T-4 | Combo submit could hang forever (`_submit_combo` awaited `place_order` with no timeout) | ✅ | Bounded by `leg_timeout`; timeout → `TIMEOUT_FLATTENED` + CRITICAL log (see Batch 2 follow-up) |
+| T-5 | `scipy` was the only floating numerical pin (`>=1.13.0`) | ✅ | Pinned `scipy==1.13.1` to match the numpy 1.26 / pandas 2.2.2 line |
+| T-6 | `TradierClient` can't be instantiated — it's abstract (missing `supports_options/supports_equities/place_equity_order/get_bars/get_latest_quote` from `BrokerInterface`) | ⬜ | Low severity: **not wired into `broker_factory`** (unused/incomplete). Either complete the broker against the Tradier API or remove it; `test_tradier_client` errors until then |

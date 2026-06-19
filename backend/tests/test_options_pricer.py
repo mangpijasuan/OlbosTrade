@@ -23,7 +23,8 @@ sigma = 0.20  # 20% IV
 class TestCallPrice:
     def test_atm_call_price(self):
         price = pricer.call_price(S, K, T, r, sigma)
-        assert price == pytest.approx(7.45, abs=TOLERANCE)
+        # BS ATM call for S=K=450, T=30/365, r=5%, σ=20% (verified independently).
+        assert price == pytest.approx(11.22, abs=TOLERANCE)
 
     def test_itm_call_greater_than_atm(self):
         itm = pricer.call_price(S, K - 10, T, r, sigma)
@@ -43,7 +44,8 @@ class TestCallPrice:
 class TestPutPrice:
     def test_atm_put_price(self):
         price = pricer.put_price(S, K, T, r, sigma)
-        assert price == pytest.approx(6.27, abs=TOLERANCE)
+        # BS ATM put = call - (S - K·e^(-rT)) = 11.22 - 1.845 ≈ 9.37 (parity).
+        assert price == pytest.approx(9.37, abs=TOLERANCE)
 
     def test_put_call_parity(self):
         call = pricer.call_price(S, K, T, r, sigma)
@@ -77,10 +79,12 @@ class TestDelta:
         d = pricer.delta(S, K=600, T=T, r=r, sigma=sigma, option_type="call")
         assert d < 0.05
 
-    def test_put_delta_plus_call_delta_near_one(self):
+    def test_call_delta_minus_put_delta_is_one(self):
+        # Delta parity (no dividends): N(d1) - (N(d1) - 1) = 1.
+        # (call_d + put_d is ~0.08 at ATM, NOT 1 — the old assertion was wrong.)
         call_d = pricer.delta(S, K, T, r, sigma, "call")
         put_d = pricer.delta(S, K, T, r, sigma, "put")
-        assert call_d + put_d == pytest.approx(1.0, abs=0.02)
+        assert call_d - put_d == pytest.approx(1.0, abs=0.02)
 
 
 class TestGamma:
@@ -110,9 +114,10 @@ class TestTheta:
         assert pricer.theta(S, K, T=0, r=r, sigma=sigma, option_type="call") == pytest.approx(0.0)
 
     def test_theta_magnitude_reasonable(self):
-        # 30 DTE ATM option: daily decay should be roughly $0.05–$0.15 per share
+        # 30 DTE ATM 450-strike call: BS daily theta ≈ -0.20/share (verified
+        # independently). The old upper bound of -0.20 was a hair too tight.
         t = pricer.theta(S, K, T, r, sigma, "call")
-        assert -0.20 < t < -0.01
+        assert -0.30 < t < -0.01
 
 
 class TestVega:
