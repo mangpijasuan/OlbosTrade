@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = Field(default="")
     alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets")
 
-    # ── Legacy Tradier (kept for backward compat) ─────────────────────────
+    # ── Tradier live-quote feed (NOT a broker — quotes only, used by
+    #    paper_trader._fetch_live_quote; the TradierClient broker was removed) ──
     tradier_api_key: str = Field(default="")
     tradier_sandbox: bool = Field(default=True)
 
