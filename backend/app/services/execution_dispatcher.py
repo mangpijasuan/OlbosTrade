@@ -445,7 +445,27 @@ class ExecutionDispatcher:
         """
         order = strategy.to_spread_order()
         try:
-            result = await self.broker.place_order(order)
+            # Bound the broker call: place_order blocks until the combo fills or
+            # is done, so an unresponsive broker must not hang the dispatcher
+            # forever (it previously had no timeout).
+            result = await asyncio.wait_for(
+                self.broker.place_order(order), timeout=self.leg_timeout,
+            )
+        except asyncio.TimeoutError:
+            # All-or-none: no partial legs exist to flatten, but the order may
+            # still be working at the broker — escalate for reconciliation.
+            logger.critical(
+                "Combo TIMEOUT after %.3fs for %s %s — order may still be working; "
+                "reconcile broker state.",
+                self.leg_timeout, strategy.strategy_name, strategy.underlying,
+            )
+            return DispatchResult(
+                order_id=dispatch_id, status=DispatchStatus.TIMEOUT_FLATTENED,
+                strategy=strategy.strategy_name, underlying=strategy.underlying,
+                fills=[],
+                error=f"combo submission timed out after {self.leg_timeout}s — reconcile required",
+                elapsed_ms=(time.monotonic() - start_time) * 1000,
+            )
         except Exception as exc:
             logger.error("Combo submission error for %r: %s", strategy, exc)
             return DispatchResult(

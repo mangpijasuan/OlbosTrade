@@ -39,6 +39,13 @@ simulation-only. Already-fixed broker items confirmed and locked with tests.
 NOTE: combo execution paths are logic-reviewed + unit-tested but NOT verified
 against a live/paper IBKR session — confirm on paper before live.
 
+Follow-up (combo timeout): `_submit_combo` awaited `broker.place_order` with no
+timeout — an unresponsive broker hung the dispatcher indefinitely. It's now
+bounded by `leg_timeout`; on timeout it returns `TIMEOUT_FLATTENED` and logs
+CRITICAL (all-or-none → no legs to flatten, but the order may still be working,
+so reconcile). Test: `test_timeout_triggers_flatten`. Also fixed a stale
+`simulate_spread_fill` test asserting the pre-FIX#7 list return.
+
 ## Batch 2.5 — Execution hotfixes (criticals found in re-audit) — ✅
 Fixes for execution-path defects found after batches 1–2, including two
 regressions introduced by the batch-1 gate.

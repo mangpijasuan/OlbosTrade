@@ -97,12 +97,18 @@ class TestFillSimulator:
         assert tight.gross_fill_price < wide.gross_fill_price
 
     def test_spread_fill_returns_one_result_per_leg(self):
+        # FIX #7: simulate_spread_fill returns a SpreadFillResult; per-leg fills
+        # live on .leg_fills. Disable the stochastic partial-fill so the count
+        # is deterministic (the partial-fill path is covered separately).
         legs = [
             {"bid": 1.20, "ask": 1.30, "side": "SELL"},
             {"bid": 0.60, "ask": 0.70, "side": "BUY"},
         ]
-        results = simulator.simulate_spread_fill(legs, contracts=1)
-        assert len(results) == 2
+        result = simulator.simulate_spread_fill(
+            legs, contracts=1, simulate_partial_fills=False,
+        )
+        assert result.combo_complete is True
+        assert len(result.leg_fills) == 2
 
     def test_iron_condor_four_legs(self):
         legs = [
@@ -111,9 +117,12 @@ class TestFillSimulator:
             {"bid": 1.10, "ask": 1.20, "side": "SELL"},  # short call
             {"bid": 0.50, "ask": 0.60, "side": "BUY"},   # long call
         ]
-        results = simulator.simulate_spread_fill(legs, contracts=2)
-        assert len(results) == 4
-        total_commission = sum(r.commission for r in results)
+        result = simulator.simulate_spread_fill(
+            legs, contracts=2, simulate_partial_fills=False,
+        )
+        assert result.combo_complete is True
+        assert len(result.leg_fills) == 4
+        total_commission = sum(r.commission for r in result.leg_fills)
         assert total_commission == pytest.approx(COMMISSION_PER_CONTRACT * 2 * 4)
 
 
