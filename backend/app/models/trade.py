@@ -74,6 +74,13 @@ class Trade(Base):
         comment="equity | option"
     )
     broker_used: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Broker/dispatch order id of the confirmed fill. UNIQUE so the same fill can
+    # never be recorded twice (the in-process _inflight guard does not survive a
+    # restart). NULL is allowed many times — equity fallbacks with no order id
+    # store NULL, not "", so they don't collide.
+    dispatch_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, unique=True, index=True,
+    )
     signal_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     orderflow_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     iv_overlay_boost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

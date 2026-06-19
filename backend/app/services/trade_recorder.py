@@ -67,6 +67,13 @@ class TradeRecorder:
             from app.core.database import AsyncSessionLocal
             from app.models.trade import Trade
             from app.models.journal_entry import JournalEntry
+            from sqlalchemy import select
+            from sqlalchemy.exc import IntegrityError
+
+            # Normalise the dispatch id: empty/whitespace → None so multiple
+            # rows without a real broker order id don't collide on the UNIQUE
+            # index (NULLs are distinct).
+            dispatch_key = (dispatch_id or "").strip() or None
 
             trade_id = uuid.uuid4()
 
@@ -76,45 +83,79 @@ class TradeRecorder:
             # with no journal (which previously made callers see None and retry,
             # duplicating the position).
             async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    is_equity = (option_type or "").lower() == "equity"
-                    trade = Trade(
-                        id=trade_id,
-                        strategy=strategy,
-                        underlying=underlying,
-                        # instrument_type was never set on write, so every row
-                        # stayed the "option" server-default — which made
-                        # record_exit apply the ×100 options multiplier to equity
-                        # P&L. Set it explicitly from the leg type.
-                        instrument_type="equity" if is_equity else "option",
-                        spread_type=option_type or "equity",
-                        short_strike=Decimal(str(short_strike or 0)),
-                        long_strike=Decimal(str(long_strike or 0)),
-                        expiration=expiration,
-                        credit_received=Decimal(str(round(entry_credit, 4))),
-                        cost_to_close=None,
-                        pnl=None,
-                        pnl_pct=None,
-                        status="open",
-                        entry_date=datetime.now(timezone.utc),
-                        exit_date=None,
-                        exit_reason=None,
-                        signal_score=Decimal(str(round(signal_score, 4))),
-                        quantity=int(quantity or 1),
-                        trading_mode_at_entry=trading_mode or "balanced",
+                # Idempotency: if this fill was already recorded (e.g. a retry
+                # or a second close path after a restart, where the in-process
+                # guard is gone), return the existing trade_id instead of
+                # inserting a duplicate position.
+                if dispatch_key is not None:
+                    existing = await session.execute(
+                        select(Trade.id).where(Trade.dispatch_id == dispatch_key)
                     )
-                    session.add(trade)
-                    await session.flush()  # insert Trade so the FK below resolves
+                    prior = existing.scalar_one_or_none()
+                    if prior is not None:
+                        logger.warning(
+                            "record_fill: dispatch_id %s already recorded as trade %s "
+                            "— skipping duplicate", dispatch_key, prior,
+                        )
+                        return str(prior)
 
-                    journal = JournalEntry(
-                        trade_id=trade_id,
-                        pre_trade_thesis="",
-                        confidence_level=3,
-                        market_context=regime or "",
-                        tags=[],
-                        mistake_tags=[],
-                    )
-                    session.add(journal)
+                try:
+                    async with session.begin():
+                        is_equity = (option_type or "").lower() == "equity"
+                        trade = Trade(
+                            id=trade_id,
+                            strategy=strategy,
+                            underlying=underlying,
+                            dispatch_id=dispatch_key,
+                            # instrument_type was never set on write, so every row
+                            # stayed the "option" server-default — which made
+                            # record_exit apply the ×100 options multiplier to equity
+                            # P&L. Set it explicitly from the leg type.
+                            instrument_type="equity" if is_equity else "option",
+                            spread_type=option_type or "equity",
+                            short_strike=Decimal(str(short_strike or 0)),
+                            long_strike=Decimal(str(long_strike or 0)),
+                            expiration=expiration,
+                            credit_received=Decimal(str(round(entry_credit, 4))),
+                            cost_to_close=None,
+                            pnl=None,
+                            pnl_pct=None,
+                            status="open",
+                            entry_date=datetime.now(timezone.utc),
+                            exit_date=None,
+                            exit_reason=None,
+                            signal_score=Decimal(str(round(signal_score, 4))),
+                            quantity=int(quantity or 1),
+                            trading_mode_at_entry=trading_mode or "balanced",
+                        )
+                        session.add(trade)
+                        await session.flush()  # insert Trade so the FK below resolves
+
+                        journal = JournalEntry(
+                            trade_id=trade_id,
+                            pre_trade_thesis="",
+                            confidence_level=3,
+                            market_context=regime or "",
+                            tags=[],
+                            mistake_tags=[],
+                        )
+                        session.add(journal)
+                except IntegrityError:
+                    # Lost a race on the UNIQUE dispatch_id — another path
+                    # recorded the same fill first. Return that row, not a dup.
+                    await session.rollback()
+                    if dispatch_key is not None:
+                        again = await session.execute(
+                            select(Trade.id).where(Trade.dispatch_id == dispatch_key)
+                        )
+                        prior = again.scalar_one_or_none()
+                        if prior is not None:
+                            logger.warning(
+                                "record_fill: dispatch_id %s recorded concurrently as "
+                                "trade %s — skipping duplicate", dispatch_key, prior,
+                            )
+                            return str(prior)
+                    raise
 
             logger.info(
                 "Trade recorded: %s %s %s strike=%.0f/%.0f "

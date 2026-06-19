@@ -85,6 +85,12 @@ class SignalFeatures:
     flow_large_sweep_bullish_count: float = 0.0
 
     def __post_init__(self) -> None:
+        # C2: cap earnings_days_away at 60 to MATCH training (ml/features.py caps
+        # at 60). Serving previously passed raw values (e.g. 999 for ETFs) while
+        # the model was trained on min(x, 60) — a train/serve skew on a feature
+        # the model actively uses (it's in EXPECTED_POSITIVE_SHAP).
+        if self.earnings_days_away > 60.0:
+            self.earnings_days_away = 60.0
         # S1: Auto-compute credit_theta_rate from existing fields if not set
         if self.credit_theta_rate == 0.0 and self.days_to_expiry > 0:
             self.credit_theta_rate = self.credit_to_width_ratio / max(self.days_to_expiry, 1.0)

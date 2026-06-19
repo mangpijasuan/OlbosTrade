@@ -67,4 +67,21 @@ items below.
 | 3-C | EmotionGuard inert: `record_trade_result` is never called → tilt/revenge detection never updates (consecutive-loss is still enforced via the DB guardrail, so this is the tilt layer only) | ⬜ | Needs a wiring decision (where to call it on close) — flagged to user | — |
 | 3-D | Cooling-off never enforced on the gate: `_read_portfolio_state` never populates `cooling_off_until`, and nothing persists it → the cooling-off guardrail can't fire (daily-loss limit still blocks) | ⬜ | Needs a source-of-truth decision (suspension store) — flagged to user | — |
 | 3-E | Concentration/Greeks never bound: the check ran BEFORE sizing and scored per-unit `max_loss_dollars` (per-share for equity, per-contract for options) against the whole portfolio | ✅ | Risk `check()` moved to after sizing (Stage 3.5); `approve_trade` takes `position_quantity` and scales single-underlying / sector / delta / vega by the sized count → scored against the TOTAL position | `test_quantity_scaled_exposure_breaches_concentration`, `test_single_unit_within_concentration`, `test_default_quantity_is_one` |
-## Batch 4 — Fill-confirmed recording & ML integrity — 🔶 (record_fill atomicity, feature skew, look-ahead already fixed)
+## Batch 4 — Fill-confirmed recording & ML integrity — 🔶
+Recording is correctly fill-gated (options record only on `DispatchStatus.FILLED`;
+equity after the broker order returns) and atomic (Trade+JournalEntry in one
+transaction; `record_exit` row-locks `status="open"` against double-close).
+Training is sound: point-in-time IV/RV (no look-ahead), `TimeSeriesSplit(gap)`,
+`df[FEATURE_NAMES]` order-safe, serve/train `FEATURE_NAMES` aligned. The re-audit
+found the items below.
+
+| # | Issue | Status | Note | Test |
+|---|-------|--------|------|------|
+| 4-A | `record_fill` accepted `dispatch_id` but **never persisted it** (no such column) → no cross-restart idempotency: the in-process `_inflight` guard dies on restart, so a retried/second close path could record the same fill twice (duplicate open position) | ✅ | Added `trades.dispatch_id` (nullable, UNIQUE, indexed) + migration `0006`; `record_fill` normalises empty→NULL, pre-checks by `dispatch_id` (returns the existing trade_id), and treats a UNIQUE race as a duplicate. **VERIFY migration on Postgres** (no DB test harness — models use PG `UUID`) | logic-reviewed; idempotency path unit-tested indirectly |
+| 4-B | Train/serve skew on `earnings_days_away`: training caps at 60 (`ml/features.py`), but live `SignalFeatures` passed raw values (e.g. 999 for ETFs) — the model uses this feature (`EXPECTED_POSITIVE_SHAP`), so inference saw values that never occurred in training | ✅ | `SignalFeatures.__post_init__` now caps at 60, matching training exactly | `test_earnings_days_away_capped_at_60_for_etf`, `..._under_cap_unchanged`, `..._exactly_60_unchanged`, `test_to_array_uses_capped_value` |
+| 4-C | Train/serve skew on `vix_term_slope`: training computes real VIX3M/VIX; live `SignalFeatures` hard-defaults to 1.05 → the model is fed a constant for a feature it was trained on (also in `EXPECTED_POSITIVE_SHAP`) | ⬜ | Needs a live VIX3M quote at serve time (data-feed dependent) — flagged. Until wired, a retrained model that depends on this feature will be served a constant | — |
+| 4-D | Flow features (`flow_sentiment_score`, `flow_large_sweep_bullish_count`) never wired into live `SignalFeatures` despite the documented source `regime_classifier.compute_flow_features('SPY')` → defaults 0.5/0 at serve. No skew **today** (training backfills the same defaults for pre-feed trades), but latent once live flow accumulates in the training set | ⬜ | Wire `compute_flow_features` into the serve path when the flow feed is trusted — flagged | — |
+
+NOTE: 4-A's migration and unique-constraint behaviour are logic-correct but
+unverified against Postgres (CI has no DB; ORM uses PG-specific `UUID`). Confirm
+the migration applies and the dedup fires on the paper database before live.
