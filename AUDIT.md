@@ -23,6 +23,20 @@ fill-confirmed recording**. Fail-closed: unreadable risk state refuses the trade
 - ⬜ Broker-level idempotency (`dispatch_id` UNIQUE) to fully close the TOCTOU window — batch 2/4.
 - ⬜ Regime size-multiplier not yet threaded into the gate's sizing (uses 1.0) — batch 3.
 
-## Batch 2 — Broker/combo/MKT execution correctness — ⬜ pending
+## Batch 2 — Broker/combo/MKT execution correctness — ✅
+Real (non-simulated) orders now submit as ONE native combo; the per-leg path is
+simulation-only. Already-fixed broker items confirmed and locked with tests.
+
+| # | Issue | Status | Note | Test |
+|---|-------|--------|------|------|
+| 2-A | `ExecutionDispatcher.submit_atomic` legged orders separately → naked-exposure window | ✅ | `dry_run=False` routes through new `_submit_combo` → `broker.place_order` (all-or-none BAG); per-leg loop kept only for `dry_run=True` simulation | `test_real_order_uses_single_combo`, `test_combo_not_filled_no_flatten` |
+| 2-B | `to_spread_order` limit price `net_premium/100` over-scaled for qty>1; sign unverified | ✅ (magnitude) / 🔶 (sign) | Now `net_premium/(100*qty)` = per-spread-per-share; sign left as-is (internally consistent w/ ibkr_client) pending live verification | `test_limit_price_per_spread_for_qty_gt_1` |
+| 2-C | No order idempotency (duplicate submit) | 🔶 | In-process `_inflight` guard on `client_order_id` refuses concurrent duplicates; cross-restart `dispatch_id` UNIQUE deferred to batch 4 | `test_duplicate_inflight_refused` |
+| 2-D | Combo `MKT` not honored (flatten became $0 limit); partial-as-complete; cancel-not-confirmed | ✅ | Fixed in earlier execution-safety work; `MKT` passthrough locked | `test_order_type_passthrough` |
+| 2-E | No reconnect on dropped ib_insync socket | 🔶 | `disconnectedEvent` handler flips `_connected` so the 60s background loop reconnects; full mid-call reconnect not added | — |
+| 2-F | Debit-spread limit aggression direction | ✅ (moot) | Gate prices options at mid via `to_spread_order`; the old `credit*aggression` path is gone | — |
+
+NOTE: combo execution paths are logic-reviewed + unit-tested but NOT verified
+against a live/paper IBKR session — confirm on paper before live.
 ## Batch 3 — Risk controls & data integrity — 🔶 (several items already fixed; see git log)
 ## Batch 4 — Fill-confirmed recording & ML integrity — 🔶 (record_fill atomicity, feature skew, look-ahead already fixed)

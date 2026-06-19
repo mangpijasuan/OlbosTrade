@@ -167,6 +167,7 @@ class ExecutionDispatcher:
         self.leg_timeout       = leg_timeout_seconds
         self.warn_spread_pct   = warn_spread_pct
         self._lock = asyncio.Lock()
+        self._inflight: set[str] = set()   # client_order_ids currently dispatching
 
         logger.info(
             "ExecutionDispatcher initialized — "
@@ -326,7 +327,15 @@ class ExecutionDispatcher:
                 elapsed_ms=(time.monotonic() - start_time) * 1000,
             )
 
-        # ── Step 2: Submit legs and await fills ───────────────────────────────
+        # ── Real orders: submit ONE native combo (atomic, no legging risk) ────
+        # Per-leg submission can leave a filled short leg with an unfilled long
+        # (naked exposure). For live/paper-broker orders we send a single combo
+        # via broker.place_order, which fills all-or-none. The per-leg path below
+        # is kept ONLY for dry_run simulation (no real orders placed there).
+        if not dry_run:
+            return await self._submit_combo(strategy, dispatch_id, start_time)
+
+        # ── Step 2: Submit legs and await fills (dry_run simulation only) ─────
         fills: list[LegFillEvent] = []
         timed_out_legs: list[StrategyLeg] = []
 
@@ -422,6 +431,60 @@ class ExecutionDispatcher:
                 f"Flatten completed with errors: {flatten_result.legs_failed}"
                 if flatten_result.legs_failed else None
             ),
+        )
+
+    async def _submit_combo(
+        self,
+        strategy: MultiLegStrategy,
+        dispatch_id: str,
+        start_time: float,
+    ) -> DispatchResult:
+        """
+        Submit the strategy as a SINGLE native combo order (all-or-none).
+        Eliminates the partial-fill / naked-exposure window of per-leg submission.
+        """
+        order = strategy.to_spread_order()
+        try:
+            result = await self.broker.place_order(order)
+        except Exception as exc:
+            logger.error("Combo submission error for %r: %s", strategy, exc)
+            return DispatchResult(
+                order_id=dispatch_id, status=DispatchStatus.REJECTED,
+                strategy=strategy.strategy_name, underlying=strategy.underlying,
+                fills=[], error=str(exc),
+                elapsed_ms=(time.monotonic() - start_time) * 1000,
+            )
+
+        elapsed = (time.monotonic() - start_time) * 1000
+        if str(getattr(result, "status", "")) == "filled":
+            net = float(result.fill_price) if result.fill_price is not None else None
+            fills = [LegFillEvent(
+                leg_index=i, symbol=leg.contract.underlying_ticker,
+                fill_price=net if net is not None else leg.contract.mid_price,
+                filled_at=datetime.now(timezone.utc),
+                order_id=str(result.order_id),
+            ) for i, leg in enumerate(strategy.legs)]
+            logger.info(
+                "Combo FILLED: %s %s net=%s order_id=%s %.1fms",
+                strategy.strategy_name, strategy.underlying, net, result.order_id, elapsed,
+            )
+            return DispatchResult(
+                order_id=str(result.order_id), status=DispatchStatus.FILLED,
+                strategy=strategy.strategy_name, underlying=strategy.underlying,
+                fills=fills, net_fill_price=net, elapsed_ms=elapsed,
+            )
+
+        # Not filled — combo is all-or-none, so nothing is open; no flatten needed.
+        logger.warning(
+            "Combo NOT filled (%s) for %s %s — no naked exposure (all-or-none)",
+            getattr(result, "status", "?"), strategy.strategy_name, strategy.underlying,
+        )
+        return DispatchResult(
+            order_id=str(getattr(result, "order_id", dispatch_id)),
+            status=DispatchStatus.REJECTED,
+            strategy=strategy.strategy_name, underlying=strategy.underlying,
+            fills=[], error=getattr(result, "message", None) or str(getattr(result, "status", "not_filled")),
+            elapsed_ms=elapsed,
         )
 
     async def _submit_leg_with_timeout(
@@ -692,4 +755,21 @@ class ExecutionDispatcher:
                 error=validation.reason,
             )
 
-        return await self.submit_atomic(strategy, dry_run=dry_run)
+        # Idempotency guard: refuse a duplicate dispatch of the same order while
+        # one is already in flight (prevents double submission from concurrent
+        # callers). Full cross-restart dedupe (dispatch_id UNIQUE) is batch 4.
+        key = strategy.order_id
+        async with self._lock:
+            if key in self._inflight:
+                logger.warning("Duplicate dispatch ignored — %s already in flight", key)
+                return DispatchResult(
+                    order_id=key, status=DispatchStatus.REJECTED,
+                    strategy=strategy.strategy_name, underlying=strategy.underlying,
+                    fills=[], error="duplicate_inflight",
+                )
+            self._inflight.add(key)
+        try:
+            return await self.submit_atomic(strategy, dry_run=dry_run)
+        finally:
+            async with self._lock:
+                self._inflight.discard(key)

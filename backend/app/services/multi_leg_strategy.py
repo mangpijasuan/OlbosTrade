@@ -299,11 +299,17 @@ class MultiLegStrategy:
             for leg in self.legs
         ]
 
+        # Net limit price is PER SPREAD PER SHARE (IBKR multiplies by 100 and by
+        # the combo quantity). net_premium already includes ×100×quantity, so
+        # divide both out — dividing only by 100 over-scaled the limit for qty>1.
+        qty = max((leg.quantity for leg in self.legs), default=1)
+        per_spread_limit = self.net_premium / (100 * max(qty, 1))
+
         return SpreadOrder(
             strategy=self.strategy_name,
             underlying=self.underlying,
             legs=wire_legs,
-            limit_price=Decimal(str(round(self.net_premium / 100, 4))),
+            limit_price=Decimal(str(round(per_spread_limit, 4))),
             order_type=order_type,
             time_in_force=time_in_force,
             client_order_id=self.order_id,

@@ -76,6 +76,12 @@ class IBKRClient(BrokerInterface):
     def __init__(self) -> None:
         self.ib = IB()
         self._connected = False
+        self._disconnect_hooked = False
+
+    def _on_disconnected(self) -> None:
+        """Flip state on a dropped socket so the reconnect loop re-establishes it."""
+        self._connected = False
+        logger.warning("IBKR socket disconnected — marked for reconnect")
 
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
@@ -87,6 +93,14 @@ class IBKRClient(BrokerInterface):
                     clientId=settings.ibkr_client_id,
                 )
                 self._connected = True
+                # Register the disconnect handler once so a mid-session socket
+                # drop flips _connected and the background loop reconnects.
+                if not self._disconnect_hooked:
+                    try:
+                        self.ib.disconnectedEvent += self._on_disconnected
+                        self._disconnect_hooked = True
+                    except Exception:
+                        pass
                 logger.info(
                     "IBKR connected — host=%s port=%s clientId=%s",
                     settings.ibkr_host,
