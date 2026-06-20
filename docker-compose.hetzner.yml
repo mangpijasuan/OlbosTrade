@@ -1,0 +1,129 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# OlbosQuant — Hetzner production stack
+#
+# Runs ALONGSIDE the existing olbos app on the same server.
+# Caddy (already running in olbos) handles HTTPS for both apps.
+# OlbosQuant joins the olbos Docker network so Caddy can reach it.
+#
+# Usage — on the server inside /opt/olbosquant:
+#   bash deploy/hetzner/up.sh
+# ═══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: olbosquant-backend
+    restart: unless-stopped
+    env_file:
+      - backend/.env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbosquant-db:5432/olbosquantdb
+      REDIS_URL: redis://olbosquant-redis:6379
+    depends_on:
+      olbosquant-db:
+        condition: service_healthy
+      olbosquant-redis:
+        condition: service_started
+    networks:
+      - olbosquant_internal
+      - olbos_default        # joins existing Caddy network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/guardrails/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1500M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+        VITE_WS_URL: ""
+    container_name: olbosquant-frontend
+    restart: unless-stopped
+    environment:
+      - BACKEND_URL=http://olbosquant-backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - olbosquant_internal
+      - olbos_default        # joins existing Caddy network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  olbosquant-db:
+    image: postgres:16-alpine
+    container_name: olbosquant-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     olbosquant
+      POSTGRES_PASSWORD: ${OLBOSQUANT_DB_PASSWORD:?set OLBOSQUANT_DB_PASSWORD in backend/.env.prod}
+      POSTGRES_DB:       olbosquantdb
+    volumes:
+      - olbosquant_pgdata:/var/lib/postgresql/data
+    networks:
+      - olbosquant_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U olbosquant -d olbosquantdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  olbosquant-redis:
+    image: redis:7-alpine
+    container_name: olbosquant-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - olbosquant_internal
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  olbosquant_pgdata:
+
+networks:
+  olbosquant_internal:
+    driver: bridge
+  olbos_default:
+    external: true    # the network Caddy is already on (created by the olbos app)

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# OlbosQuant — First-time start on Hetzner
+#
+# Run this ONCE after cloning the repo and filling in backend/.env.prod
+# From /opt/olbosquant on the server:
+#   bash deploy/hetzner/up.sh
+# ═══════════════════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$ROOT"
+
+# ── Checks ────────────────────────────────────────────────────────────────────
+if [[ ! -f backend/.env.prod ]]; then
+  echo "❌  Missing backend/.env.prod"
+  echo "    Copy and fill in the template first:"
+  echo "    cp deploy/hetzner/.env.example backend/.env.prod && nano backend/.env.prod"
+  exit 1
+fi
+
+# Load env so docker compose can substitute variables
+set -a
+source backend/.env.prod
+set +a
+
+# Confirm the olbos_default network exists (from the other app)
+if ! docker network ls --format '{{.Name}}' | grep -q '^olbos_default$'; then
+  echo "❌  Docker network 'olbos_default' not found."
+  echo "    Make sure the olbos app is running first:"
+  echo "    cd /opt/olbos && bash deploy/hetzner/up.sh"
+  exit 1
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  OlbosQuant — Starting on Hetzner"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ── 1. Build and start containers ─────────────────────────────────────────────
+echo "[1/4] Building and starting containers..."
+docker compose -f docker-compose.hetzner.yml up -d --build
+echo "      ✅ Containers started"
+
+# ── 2. Wait for backend to be healthy ─────────────────────────────────────────
+echo "[2/4] Waiting for backend to be ready (up to 90s)..."
+for i in $(seq 1 30); do
+  if docker exec olbosquant-backend curl -fsS http://127.0.0.1:8000/api/guardrails/status > /dev/null 2>&1; then
+    echo "      ✅ Backend healthy"
+    break
+  fi
+  if [[ $i -eq 30 ]]; then
+    echo "      ❌ Backend did not start in time"
+    echo "         Check logs: docker logs olbosquant-backend"
+    exit 1
+  fi
+  sleep 3
+done
+
+# ── 3. Run database migrations ────────────────────────────────────────────────
+echo "[3/4] Running database migrations..."
+docker exec olbosquant-backend python3 -m alembic upgrade head
+echo "      ✅ Migrations applied"
+
+# ── 4. Add OlbosQuant to Caddy ────────────────────────────────────────────────
+echo "[4/4] Caddy configuration..."
+CADDYFILE=/opt/olbos/docker/Caddyfile
+
+if grep -q "olbosquant-backend" "$CADDYFILE" 2>/dev/null; then
+  echo "      ✅ Caddy already configured for OlbosQuant"
+else
+  echo ""
+  echo "  ⚠️  ACTION REQUIRED — add OlbosQuant to Caddy:"
+  echo ""
+  echo "  Edit: $CADDYFILE"
+  echo "  Add this block (replace trading.yourdomain.com with your subdomain):"
+  echo ""
+  cat deploy/hetzner/Caddyfile.snippet
+  echo ""
+  echo "  Then reload Caddy:"
+  echo "    cd /opt/olbos && docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile"
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ OlbosQuant is running"
+echo ""
+echo "  Next: add the Caddyfile block above,"
+echo "  point trading.yourdomain.com → this server's IP,"
+echo "  then open https://trading.yourdomain.com"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
