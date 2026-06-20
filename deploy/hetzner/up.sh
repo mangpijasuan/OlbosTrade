@@ -25,12 +25,14 @@ source backend/.env.prod
 set +a
 
 # Confirm the olbos_default network exists (from the other app)
-if ! docker network ls --format '{{.Name}}' | grep -q '^olbos_default$'; then
-  echo "❌  Docker network 'olbos_default' not found."
+CADDY_NETWORK=$(docker network ls --format '{{.Name}}' | grep -E '^(olbos_default|docker_default)$' | head -1)
+if [[ -z "$CADDY_NETWORK" ]]; then
+  echo "❌  Docker network not found."
   echo "    Make sure the olbos app is running first:"
   echo "    cd /opt/olbos && bash deploy/hetzner/up.sh"
   exit 1
 fi
+echo "      Using network: $CADDY_NETWORK"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  OlbosQuant — Starting on Hetzner"

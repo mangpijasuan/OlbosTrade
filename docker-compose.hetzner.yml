@@ -126,4 +126,5 @@ networks:
   olbosquant_internal:
     driver: bridge
   olbos_default:
-    external: true    # the network Caddy is already on (created by the olbos app)
+    external: true
+    name: docker_default    # the network Caddy is already on (created by the olbos app)
