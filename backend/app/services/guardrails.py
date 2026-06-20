@@ -278,9 +278,8 @@ class GuardrailEngine:
 
     def get_signal_threshold(self, status: GuardrailStatus) -> float:
         """Return the minimum AI signal score required to trade."""
-        if status.trading_mode == "capital_preservation":
-            return settings.signal_score_preservation_mode
-        return settings.signal_score_threshold
+        from app.services.trading_mode import get_effective_signal_threshold
+        return get_effective_signal_threshold(status.trading_mode)
 
     def get_position_size_multiplier(self, status: GuardrailStatus) -> float:
         """In capital preservation mode, cut position size by 50%."""

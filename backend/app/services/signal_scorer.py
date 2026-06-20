@@ -335,6 +335,26 @@ class SignalScorer:
             logger.error("Model scoring failed, falling back to heuristic: %s", exc)
             return self._heuristic_score(features)
 
+    def _mode_relative_dte_score(self, dte: float) -> float:
+        """
+        Score DTE relative to the active trading mode's target and bounds.
+        Peak score at dte_target; decays toward dte_min/dte_max edges.
+        """
+        try:
+            from app.services.trading_mode import trading_mode_manager
+            cfg = trading_mode_manager.config
+            target = float(cfg.dte_target)
+            dte_min = float(cfg.dte_min)
+            dte_max = float(cfg.dte_max)
+        except Exception:
+            target, dte_min, dte_max = 30.0, 15.0, 45.0
+
+        if dte < dte_min or dte > dte_max:
+            return 0.2
+        half_range = max((dte_max - dte_min) / 2.0, 1.0)
+        distance = abs(dte - target)
+        return float(max(1.0 - (distance / half_range) * 0.6, 0.4))
+
     def _heuristic_score(self, features: SignalFeatures) -> tuple[float, list[FeatureImpact]]:
         """
         Rule-based heuristic score when model is not trained yet.
@@ -347,7 +367,7 @@ class SignalScorer:
         iv_rv_score = min(max(features.iv_minus_rv / 0.10, 0), 1.0)
         trend_score = 1.0 if features.spy_trend_direction > 0 else 0.3
         rsi_score   = max(1.0 - abs(features.spy_rsi_14 - 50) / 50, 0)
-        dte_score   = 1.0 if 30 <= features.days_to_expiry <= 45 else 0.5
+        dte_score   = self._mode_relative_dte_score(features.days_to_expiry)
         cw_score    = min(features.credit_to_width_ratio / 0.33, 1.0)
         earn_score  = min(features.earnings_days_away / 30, 1.0)
         vix_score   = 1.0 if 15 <= features.vix_level <= 25 else 0.5

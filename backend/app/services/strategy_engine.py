@@ -26,6 +26,16 @@ def _active_risk_pct() -> float:
         return 0.02  # safe default if trading_mode not yet initialised
 
 
+def _mode_exit_params() -> tuple[float, int, float]:
+    """Return (profit_target_pct, dte_exit, stop_loss_multiplier) from active mode."""
+    try:
+        from app.services.trading_mode import trading_mode_manager
+        c = trading_mode_manager.config
+        return c.profit_target_pct, c.dte_exit, c.stop_loss_multiplier
+    except Exception:
+        return 0.50, 21, 2.0
+
+
 # ── Pydantic-style dataclasses for strategy outputs ───────────────────────────
 
 @dataclass
@@ -59,6 +69,42 @@ class ExitDecision:
     should_exit: bool
     reason: Optional[str]
     urgency: str = "normal"   # "normal" | "immediate"
+
+
+def _credit_spread_exit(
+    entry_credit: float,
+    current_value: float,
+    dte_remaining: int,
+    short_strike_breached: bool,
+) -> ExitDecision:
+    """Mode-aware exit rules for credit spreads."""
+    profit_target, dte_exit, stop_mult = _mode_exit_params()
+    if entry_credit:
+        profit_pct = (entry_credit - current_value) / entry_credit
+        if profit_pct >= profit_target:
+            pct_label = f"{profit_target:.0%}"
+            return ExitDecision(
+                should_exit=True,
+                reason=f"{pct_label} profit target reached",
+            )
+    if dte_remaining <= dte_exit:
+        return ExitDecision(
+            should_exit=True,
+            reason=f"{dte_exit} DTE time stop",
+        )
+    if entry_credit and current_value >= entry_credit * stop_mult:
+        return ExitDecision(
+            should_exit=True,
+            reason=f"{stop_mult}x credit stop loss hit",
+            urgency="immediate",
+        )
+    if short_strike_breached:
+        return ExitDecision(
+            should_exit=True,
+            reason="Short strike breached",
+            urgency="immediate",
+        )
+    return ExitDecision(should_exit=False, reason=None)
 
 
 # ── Base Strategy ──────────────────────────────────────────────────────────────
@@ -200,14 +246,9 @@ class BullPutSpread(BaseStrategy):
         )
 
     def check_exit(self, entry_credit, current_value, dte_remaining, short_strike_breached) -> ExitDecision:
-        profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
-        if profit_pct >= 0.50:
-            return ExitDecision(should_exit=True, reason="50% profit target reached")
-        if dte_remaining <= 21:
-            return ExitDecision(should_exit=True, reason="21 DTE time stop")
-        if current_value >= entry_credit * 2:
-            return ExitDecision(should_exit=True, reason="2x credit stop loss hit", urgency="immediate")
-        return ExitDecision(should_exit=False, reason=None)
+        return _credit_spread_exit(
+            entry_credit, current_value, dte_remaining, short_strike_breached
+        )
 
 
 # ── Strategy 2: Bear Call Spread ───────────────────────────────────────────────
@@ -268,14 +309,9 @@ class BearCallSpread(BaseStrategy):
                            total_risk=contracts * max_loss, size_multiplier=multiplier)
 
     def check_exit(self, entry_credit, current_value, dte_remaining, short_strike_breached) -> ExitDecision:
-        profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
-        if profit_pct >= 0.50:
-            return ExitDecision(should_exit=True, reason="50% profit target reached")
-        if dte_remaining <= 21:
-            return ExitDecision(should_exit=True, reason="21 DTE time stop")
-        if current_value >= entry_credit * 2:
-            return ExitDecision(should_exit=True, reason="2x credit stop loss", urgency="immediate")
-        return ExitDecision(should_exit=False, reason=None)
+        return _credit_spread_exit(
+            entry_credit, current_value, dte_remaining, short_strike_breached
+        )
 
 
 # ── Strategy 3: Iron Condor ────────────────────────────────────────────────────
@@ -343,11 +379,23 @@ class IronCondor(BaseStrategy):
         short_strike_breached,           # put side breach (price below short put)
         short_call_strike_breached=False,  # call side breach (price above short call)
     ) -> ExitDecision:
-        profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
-        if profit_pct >= 0.25:
-            return ExitDecision(should_exit=True, reason="25% profit target reached")
-        if dte_remaining <= 21:
-            return ExitDecision(should_exit=True, reason="21 DTE time stop")
+        profit_target, dte_exit, stop_mult = _mode_exit_params()
+        ic_profit_target = min(profit_target, 0.25)
+        if entry_credit:
+            profit_pct = (entry_credit - current_value) / entry_credit
+            if profit_pct >= ic_profit_target:
+                return ExitDecision(
+                    should_exit=True,
+                    reason=f"{ic_profit_target:.0%} profit target reached",
+                )
+        if dte_remaining <= dte_exit:
+            return ExitDecision(should_exit=True, reason=f"{dte_exit} DTE time stop")
+        if entry_credit and current_value >= entry_credit * stop_mult:
+            return ExitDecision(
+                should_exit=True,
+                reason=f"{stop_mult}x credit stop loss",
+                urgency="immediate",
+            )
         if short_strike_breached:
             return ExitDecision(should_exit=True, reason="Short put strike breached", urgency="immediate")
         if short_call_strike_breached:
@@ -419,13 +467,13 @@ class BullCallDebitSpread(BaseStrategy):
                            total_risk=contracts * max_loss, size_multiplier=multiplier)
 
     def check_exit(self, entry_credit, current_value, dte_remaining, short_strike_breached) -> ExitDecision:
-        # For debit spreads, entry_credit is actually net_debit paid
+        _, dte_exit, _ = _mode_exit_params()
         net_debit = abs(entry_credit)
         current_profit_pct = (current_value - net_debit) / net_debit if net_debit else 0
         if current_profit_pct >= 0.75:
             return ExitDecision(should_exit=True, reason="75% max profit target reached")
-        if dte_remaining <= 10:
-            return ExitDecision(should_exit=True, reason="10 DTE time stop")
+        if dte_remaining <= dte_exit:
+            return ExitDecision(should_exit=True, reason=f"{dte_exit} DTE time stop")
         if current_value <= net_debit * 0.50:
             return ExitDecision(should_exit=True, reason="50% loss stop hit", urgency="immediate")
         return ExitDecision(should_exit=False, reason=None)
@@ -454,17 +502,21 @@ def approve_trade(
     if not guardrail_engine.is_strategy_allowed(signal.strategy, guardrail_status):
         return False, f"Strategy {signal.strategy} not allowed in {guardrail_status.trading_mode} mode"
 
-    # 3. Signal score threshold
+    # 3. Signal score threshold (trading mode + capital preservation)
     threshold = guardrail_engine.get_signal_threshold(guardrail_status)
     if signal_score < threshold:
         return False, f"Signal score {signal_score:.3f} below threshold {threshold:.3f}"
 
-    # 4. Trade cap
-    if portfolio_state.trades_today >= settings.max_trades_per_day:
-        return False, f"Daily trade cap reached: {portfolio_state.trades_today}/{settings.max_trades_per_day}"
+    # 4. Trade cap (trading mode max trades per day)
+    from app.services.trading_mode import get_mode_trade_limits
+    max_trades, max_concurrent = get_mode_trade_limits()
+    if portfolio_state.trades_today >= max_trades:
+        return False, f"Daily trade cap reached: {portfolio_state.trades_today}/{max_trades}"
 
-    # 5. Position count
-    if portfolio_risk.open_position_count >= settings.max_concurrent_positions:
-        return False, f"Max positions: {portfolio_risk.open_position_count}/{settings.max_concurrent_positions}"
+    # 5. Position count (trading mode max concurrent)
+    if portfolio_risk.open_position_count >= max_concurrent:
+        return False, (
+            f"Max positions: {portfolio_risk.open_position_count}/{max_concurrent}"
+        )
 
     return True, "All pre-trade checks passed"

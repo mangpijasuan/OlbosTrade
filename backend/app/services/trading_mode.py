@@ -406,5 +406,88 @@ class TradingModeManager:
         }
 
 
+# ── Runtime helpers (used by options engine + trade desk) ─────────────────────
+
+_STRATEGY_PERMISSION_KEYS: dict[str, str] = {
+    "bull_put_spread":        "bull_put_allowed",
+    "bear_call_spread":       "bear_call_allowed",
+    "iron_condor":            "iron_condor_allowed",
+    "bull_call_debit_spread": "debit_spread_allowed",
+}
+
+
+def is_strategy_allowed_by_mode(strategy_name: str) -> bool:
+    """Return True if the active trading mode permits this strategy."""
+    key = _STRATEGY_PERMISSION_KEYS.get(strategy_name)
+    if key is None:
+        return True
+    return bool(getattr(trading_mode_manager.config, key, True))
+
+
+def select_expiry_within_bounds(
+    dte_target: int,
+    dte_min: int,
+    dte_max: int,
+    *,
+    prefer_friday: bool = True,
+) -> tuple[Optional["date"], Optional[int]]:
+    """
+    Pick an expiration date whose DTE falls within [dte_min, dte_max],
+    closest to dte_target.
+
+    For short-DTE modes (dte_max <= 7) any weekday is allowed (including 0DTE).
+    For longer holds, Fridays are preferred when available.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    best_date: Optional[date] = None
+    best_diff = float("inf")
+
+    def _consider(candidate: date) -> None:
+        nonlocal best_date, best_diff
+        offset = (candidate - today).days
+        if offset < dte_min or offset > dte_max:
+            return
+        diff = abs(offset - dte_target)
+        if diff < best_diff:
+            best_diff = diff
+            best_date = candidate
+
+    use_fridays_only = prefer_friday and dte_max > 7
+    for offset in range(dte_min, dte_max + 1):
+        candidate = today + timedelta(days=offset)
+        if use_fridays_only and candidate.weekday() != 4:
+            continue
+        _consider(candidate)
+
+    if best_date is None:
+        for offset in range(dte_min, dte_max + 1):
+            _consider(today + timedelta(days=offset))
+
+    if best_date is None:
+        return None, None
+    return best_date, (best_date - today).days
+
+
+def get_effective_signal_threshold(guardrail_risk_state: str) -> float:
+    """
+    Minimum AI score for the active trading mode.
+    Capital preservation raises the floor.
+    """
+    from app.core.config import settings
+
+    base = trading_mode_manager.config.signal_threshold
+    if guardrail_risk_state == "capital_preservation":
+        return max(base, settings.signal_score_preservation_mode)
+    return base
+
+
+def get_mode_trade_limits() -> tuple[int, int]:
+    """Return (max_trades_per_day, max_concurrent) from active trading mode."""
+    c = trading_mode_manager.config
+    return c.max_trades_per_day, c.max_concurrent
+
+
 # ── Singleton ──────────────────────────────────────────────────────────────────
 trading_mode_manager = TradingModeManager()

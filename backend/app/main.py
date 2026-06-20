@@ -146,10 +146,11 @@ async def on_startup() -> None:
     _greeks_tracker = PortfolioGreeksTracker()
     logger.info("PortfolioGreeksTracker initialized")
 
-    # 3. Classify regime immediately, then run equity scan
+    # 3. Classify regime immediately; optional equity scan
     async def _startup_market_init():
         await _reclassify_regime()
-        await _run_equity_scan()
+        if settings.equity_scan_enabled:
+            await _run_equity_scan()
     asyncio.create_task(_startup_market_init())
 
     # 4. Start background scheduler
@@ -209,6 +210,7 @@ async def _background_scheduler() -> None:
     regime_interval_s  = 30 * 60   # 30 minutes
     greeks_interval_s  = 60        # 1 minute
     fills_interval_s   = 30        # 30 seconds
+    exit_interval_s    = settings.options_exit_monitor_interval_seconds
 
     import time as _time
     _now = _time.monotonic()
@@ -219,6 +221,7 @@ async def _background_scheduler() -> None:
     last_regime  = _now
     last_greeks  = 0.0   # Greeks update on first tick is fine (lightweight)
     last_fills   = 0.0
+    last_exit    = 0.0
 
     import time
 
@@ -250,11 +253,8 @@ async def _background_scheduler() -> None:
                 await _reclassify_regime()
                 last_regime = now
 
-            # Every 15 min: equity signal scan.
-            # Run when regime allows equities, OR when regime is not yet classified
-            # (treated as UNKNOWN — reduced size, but signals are still generated).
-            # Only skip when regime is explicitly CRISIS.
-            if now - last_equity >= equity_interval_s:
+            # Equity scan — disabled by default for Alpha Options focus
+            if settings.equity_scan_enabled and now - last_equity >= equity_interval_s:
                 regime_blocks_equity = (
                     _current_regime is not None
                     and not getattr(_current_regime, "equity_allowed", True)
@@ -268,10 +268,15 @@ async def _background_scheduler() -> None:
                     )
                 last_equity = now
 
-            # Every 1 hour: options spread signal scan (if regime allows)
+            # Every 30 min: unified options intelligence scan
             if now - last_options >= options_interval_s:
                 await _run_options_scan()
                 last_options = now
+
+            # Exit monitor: enforce mode profit/DTE/stop rules on open positions
+            if now - last_exit >= exit_interval_s:
+                await _run_exit_monitor()
+                last_exit = now
 
             # Every 30 sec: poll fills from active broker
             if now - last_fills >= fills_interval_s:
@@ -472,108 +477,27 @@ async def _run_equity_scan() -> None:
 
 async def _run_options_scan() -> None:
     """
-    Generate options spread signals based on current regime and SPY bars.
-    Uses Black-Scholes to select ~0.30 delta short strike, 5pt wide spread.
-    Routes through execution handler (manual/copilot/autopilot).
+    Alpha Options unified scan — regime → strategy → AI → mode → execution.
+    Delegates to options_engine (replaces legacy simplified Black-Scholes path).
     """
-    if _current_regime is None or not getattr(_current_regime, "options_allowed", False):
-        return
     try:
-        import uuid, calendar as _cal
-        import numpy as np
-        from datetime import datetime, timezone, timedelta, date
-        from decimal import Decimal
-        from app.broker.broker_factory import get_broker
-        from app.services.options_pricer import BlackScholesPricer
-        from app.services.trading_mode import trading_mode_manager
-
-        pricer   = BlackScholesPricer()
-        strategy = (_current_regime.strategies_allowed or ["bull_put_spread"])[0]
-        dte_target = trading_mode_manager.config.dte_target or 30
-        RISK_FREE  = 0.05
-
-        # Get SPY bars via yfinance — no broker subscription needed
-        spy_bars = await _yf_bars("SPY", limit=30)
-        if len(spy_bars) < 20:
-            return
-
-        closes  = [float(b.close) for b in spy_bars]
-        spot    = closes[-1]
-        log_rets = np.diff(np.log(closes))
-        sigma   = float(np.std(log_rets) * np.sqrt(252))
-        vix_est = _current_regime.features_used.vix / 100.0 if _current_regime.features_used else sigma
-
-        # Target expiry ~dte_target days out, on a Friday
-        today       = date.today()
-        target_exp  = today + timedelta(days=dte_target)
-        while target_exp.weekday() != 4:   # roll to Friday
-            target_exp += timedelta(days=1)
-        T = max((target_exp - today).days / 365, 0.01)
-
-        # Select short strike nearest 0.30 delta, long strike 5 pts away
-        opt_type   = "put"  if "put" in strategy  else "call"
-        is_call    = opt_type == "call"
-        target_delta = 0.30
-
-        best_short, best_delta_diff = spot, 1.0
-        for offset in range(-60, 61, 5):
-            s = round(spot + offset)
-            try:
-                d = pricer.delta(spot, s, T, RISK_FREE, vix_est, opt_type)
-                d_abs = abs(d)
-                if abs(d_abs - target_delta) < best_delta_diff:
-                    best_delta_diff = abs(d_abs - target_delta)
-                    best_short = s
-            except Exception:
-                continue
-
-        short_strike = float(best_short)
-        long_strike  = short_strike - 5.0 if not is_call else short_strike + 5.0
-
-        # Estimate net credit (short premium - long premium)
-        try:
-            short_px = pricer.put_price(spot, short_strike, T, RISK_FREE, vix_est) if not is_call \
-                       else pricer.call_price(spot, short_strike, T, RISK_FREE, vix_est)
-            long_px  = pricer.put_price(spot, long_strike,  T, RISK_FREE, vix_est) if not is_call \
-                       else pricer.call_price(spot, long_strike,  T, RISK_FREE, vix_est)
-            net_credit = round((short_px - long_px) * 100, 2)  # per contract $
-        except Exception:
-            net_credit = 0.0
-
-        signal = {
-            "id":           str(uuid.uuid4()),
-            "ticker":       "SPY",
-            "asset_type":   "options",
-            "strategy":     strategy,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "action":       "SELL_SPREAD",
-            "confidence":   round(getattr(_current_regime, "confidence", 0.5), 4),
-            "regime":       _current_regime.regime.value,
-            "spread": {
-                "option_type":   opt_type,
-                "short_strike":  short_strike,
-                "long_strike":   long_strike,
-                "expiration":    target_exp.isoformat(),
-                "dte":           dte_target,
-                "net_credit":    net_credit,
-                "max_loss":      round((5.0 - net_credit / 100) * 100, 2),
-                "breakeven":     round(short_strike - net_credit / 100, 2) if not is_call
-                                 else round(short_strike + net_credit / 100, 2),
-            },
-            "sigma":    round(sigma, 4),
-            "vix_used": round(vix_est * 100, 1),
-        }
-
-        logger.info(
-            "Options signal: %s SPY %s %s/%s exp %s credit $%.2f",
-            strategy, opt_type, short_strike, long_strike, target_exp, net_credit,
-        )
-
-        from app.api.routes.trade_desk import handle_signal
-        await handle_signal(signal)
-
+        from app.services.options_engine import options_engine
+        actions = await options_engine.scan(_current_regime)
+        if actions:
+            logger.info("Options engine: %d action(s)", len(actions))
     except Exception as exc:
         logger.warning("Options scan failed: %s", exc)
+
+
+async def _run_exit_monitor() -> None:
+    """Evaluate open positions against trading-mode exit rules."""
+    try:
+        from app.services.position_exit_monitor import position_exit_monitor
+        results = await position_exit_monitor.run()
+        if results:
+            logger.info("Exit monitor closed %d position(s)", len(results))
+    except Exception as exc:
+        logger.debug("Exit monitor: %s", exc)
 
 
 async def _poll_fills() -> None:

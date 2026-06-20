@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
 
+    equity_scan_enabled: bool = Field(
+        default=False,
+        description="Enable background equity momentum scans (off for Alpha Options focus)",
+    )
+    options_exit_monitor_interval_seconds: int = Field(default=60)
     # ── Equity signal settings ────────────────────────────────────────────
     equity_watchlist: str = Field(
         default="AAPL,NVDA,MSFT,META,AMZN,GOOGL,AMD,TSLA,SPY,QQQ,JPM,V,MA"

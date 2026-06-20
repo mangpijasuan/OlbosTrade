@@ -19,12 +19,12 @@ async def get_strategy_config():
     """Return enabled strategies from current trading mode."""
     try:
         from app.services.trading_mode import trading_mode_manager
-        state = trading_mode_manager.current          # TradingModeState
-        mode_name = state.active_mode.value if hasattr(state, "active_mode") else "balanced"
-        allowed = getattr(state, "strategies_allowed", {}) or {}
+        state = trading_mode_manager.current
+        mode_name = state.active_mode.value
+        allowed = trading_mode_manager.config.summary()["strategies_allowed"]
         return {
             "strategies": [
-                {"name": s, "enabled": allowed.get(s, True) if isinstance(allowed, dict) else True}
+                {"name": s, "enabled": allowed.get(s, False)}
                 for s in ["bull_put_spread", "bear_call_spread", "iron_condor", "bull_call_debit_spread"]
             ],
             "mode": mode_name,

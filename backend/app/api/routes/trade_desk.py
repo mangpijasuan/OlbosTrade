@@ -322,6 +322,68 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         )
         return _blocked(f"capital_preservation: strategy {strategy!r} not allowed in {guardrail_status.trading_mode} mode")
 
+    # ── Options-specific trading mode gates ──────────────────────────────────
+    if asset_type == "options":
+        from app.services.trading_mode import (
+            is_strategy_allowed_by_mode,
+            trading_mode_manager,
+        )
+
+        mode_cfg = trading_mode_manager.config
+        if strategy and not is_strategy_allowed_by_mode(strategy):
+            return _blocked(
+                f"trading_mode: {strategy!r} not allowed in {mode_cfg.mode.value} mode"
+            )
+
+        quantity = int(signal.get("quantity", 1))
+        if quantity <= 0:
+            return _skipped("zero_size")
+
+        spread_data = signal.get("spread", {})
+        signal_dte = spread_data.get("dte")
+        if signal_dte is not None:
+            dte_val = int(signal_dte)
+            if dte_val < mode_cfg.dte_min or dte_val > mode_cfg.dte_max:
+                return _blocked(
+                    f"dte_out_of_bounds: {dte_val} not in "
+                    f"{mode_cfg.dte_min}–{mode_cfg.dte_max}"
+                )
+
+        # Intelligence gates apply only to scored signals from the options engine
+        if signal.get("signal_score") is not None:
+            iv_rank = signal.get("iv_rank")
+            if iv_rank is not None and float(iv_rank) < mode_cfg.min_iv_rank:
+                return _blocked(
+                    f"iv_rank_too_low: {float(iv_rank):.1f} < {mode_cfg.min_iv_rank}"
+                )
+
+            net_credit = spread_data.get("net_credit", 0)
+            short_strike = spread_data.get("short_strike", 0)
+            long_strike = spread_data.get("long_strike", 0)
+            width = abs(float(short_strike) - float(long_strike)) or 10.0
+            if net_credit and width:
+                credit_per_share = float(net_credit) / 100.0
+                ctw = credit_per_share / width
+                if ctw < mode_cfg.min_credit_to_width:
+                    return _blocked(
+                        f"credit_to_width_too_low: {ctw:.3f} < {mode_cfg.min_credit_to_width}"
+                    )
+
+            threshold = _guardrail.get_signal_threshold(guardrail_status)
+            if float(signal["signal_score"]) < threshold:
+                return _blocked(
+                    f"signal_score: {float(signal['signal_score']):.3f} < {threshold:.3f}"
+                )
+
+        max_trades, max_concurrent = (
+            mode_cfg.max_trades_per_day,
+            mode_cfg.max_concurrent,
+        )
+        if portfolio_state.trades_today >= max_trades:
+            return _blocked(
+                f"daily_trade_cap: {portfolio_state.trades_today}/{max_trades}"
+            )
+
     # ── Stage 3: Duplicate guard ───────────────────────────────────────────────
     try:
         from app.core.database import AsyncSessionLocal
@@ -447,6 +509,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
 
             # Stage 5: fill recording — CRITICAL on failure
             from app.services.trade_recorder import trade_recorder
+            from app.services.trading_mode import trading_mode_manager
             recorded = await trade_recorder.record_fill(
                 strategy=strategy,
                 underlying=ticker,
@@ -460,7 +523,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),
                 regime=signal.get("regime", "unknown"),
-                trading_mode=approved_by,
+                trading_mode=trading_mode_manager.current.active_mode.value,
                 dispatch_id=result.order_id or signal.get("id", ""),
             )
             if recorded is None:
@@ -520,6 +583,20 @@ async def handle_signal(signal: dict) -> None:
         _pending_approvals[signal_id] = signal
 
     elif mode == ExecutionMode.AUTOPILOT:
+        # Scalper mode requires active monitoring — block unattended autopilot
+        from app.services.trading_mode import trading_mode_manager, TradingModeType
+        if (
+            signal.get("asset_type") == "options"
+            and trading_mode_manager.current.active_mode == TradingModeType.SCALPER
+            and trading_mode_manager.config.requires_monitoring
+        ):
+            signal["autopilot_blocked"] = "scalper_requires_manual_monitoring"
+            logger.warning(
+                "Autopilot blocked for %s — Scalper mode requires manual monitoring",
+                signal.get("ticker"),
+            )
+            return
+
         # All risk checks (kill switch, guardrails, duplicate) happen inside _execute_signal.
         # The inline guardrail block that was here is deleted — _execute_signal is the
         # single gate for all paths.
