@@ -1,0 +1,162 @@
+# Hetzner VPS — self-contained production stack (IBKR options via headless Gateway)
+#
+# Includes: ib-gateway, postgres, redis, backend, frontend, nginx
+# IB Gateway socket (4002) stays on the Docker network — NOT exposed publicly.
+# VNC (5900) binds to 127.0.0.1 only — reach via SSH tunnel for 2FA login.
+#
+# Usage:
+#   cp .env.hetzner.example .env.hetzner   # fill in secrets
+#   docker compose -f docker-compose.hetzner.yml --env-file .env.hetzner up -d --build
+#
+# VNC over SSH tunnel (from your laptop):
+#   ssh -L 5900:127.0.0.1:5900 deploy@YOUR_SERVER_IP
+#   open vnc://127.0.0.1:5900   (password = VNC_PASSWORD in .env.hetzner)
+
+version: "3.11"
+
+services:
+
+  # ── IB Gateway (headless — paper port 4002) ───────────────────────────────
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: olbosquant_ib_gateway
+    restart: always
+    environment:
+      TWS_USERID:           ${IBKR_USERNAME}
+      TWS_PASSWORD:         ${IBKR_PASSWORD}
+      TRADING_MODE:         ${IBKR_TRADING_MODE:-paper}
+      GATEWAY_OR_TWS:       gateway
+      VNC_SERVER_PASSWORD:  ${VNC_PASSWORD:-localdev}
+      TWOFA_TIMEOUT_ACTION: restart
+      # Re-login after IBKR daily session expiry (adjust to your timezone)
+      AUTO_RESTART_TIME:    ${IB_GATEWAY_AUTO_RESTART_TIME:-}
+    ports:
+      # VNC localhost-only — use SSH tunnel, never expose 5900 to the internet
+      - "127.0.0.1:5900:5900"
+    volumes:
+      - ib_gateway_data:/home/ibgateway/Jts
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4002 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: olbosquant_postgres
+    restart: always
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-options_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB:-options_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-options_user} -d ${POSTGRES_DB:-options_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: olbosquant_redis
+    restart: always
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: olbosquant_backend
+    restart: always
+    env_file:
+      - .env.hetzner
+    environment:
+      BROKER:            ibkr
+      IBKR_CONNECTION:   tws
+      IBKR_HOST:         ib-gateway
+      IBKR_PORT:         "4002"
+      IBKR_CLIENT_ID:    ${IBKR_CLIENT_ID:-10}
+      DATABASE_URL:      postgresql+asyncpg://${POSTGRES_USER:-options_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-options_db}
+      REDIS_URL:         redis://redis:6379
+    volumes:
+      - ml_models:/app/ml/model_registry
+      - app_logs:/app/logs
+    depends_on:
+      ib-gateway:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2G
+
+  # ── React frontend (production build) ───────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: olbosquant_frontend
+    restart: always
+    expose:
+      - "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: olbosquant_nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/hetzner-http.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+volumes:
+  ib_gateway_data:
+  postgres_data:
+  redis_data:
+  ml_models:
+  app_logs:

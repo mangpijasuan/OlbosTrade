@@ -45,6 +45,21 @@ olbosquant/
 
 ---
 
+## Deploy on Hetzner (24/7, no laptop)
+
+Run the full IBKR options stack on a VPS with headless IB Gateway:
+
+```bash
+# See full guide: deploy/HETZNER.md
+cp .env.hetzner.example .env.hetzner
+bash deploy/scripts/provision_hetzner.sh   # on fresh Ubuntu server
+bash deploy/scripts/deploy_hetzner.sh      # build + start stack
+```
+
+2FA is done via **VNC over SSH tunnel** when the gateway restarts (~daily). Port 4002 is never exposed publicly.
+
+---
+
 ## Daily Startup (Before Market Open)
 
 **This is the correct procedure every trading day:**
