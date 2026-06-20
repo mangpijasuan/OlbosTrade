@@ -790,5 +790,5 @@ class IBKRClient(BrokerInterface):
             net_liquidation=Decimal(values.get("NetLiquidation", "0") or "0"),
             cash_balance=Decimal(values.get("TotalCashValue", "0") or "0"),
             buying_power=Decimal(values.get("BuyingPower", values.get("OptionBuyingPower", "0")) or "0"),
-            trading_mode="paper" if settings.ibkr_port in (7497, 4002) else "live",
+            trading_mode="paper" if settings.ibkr_port in (7497, 4002, 4004) else "live",
         )

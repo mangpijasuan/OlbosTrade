@@ -129,6 +129,61 @@ docker exec -it olbosquant-db psql -U olbosquant -d olbosquantdb
 
 ---
 
+## IBKR Gateway (Docker)
+
+OlbosQuant talks to IBKR through the [gnzsnz/ib-gateway](https://github.com/gnzsnz/ib-gateway-docker) image via `ib_insync` (socket API, not Client Portal).
+
+### Start the gateway (same server)
+
+```bash
+docker run -d --name ibkr-gateway --restart unless-stopped \
+  --network docker_default \
+  -e TWS_USERID=your_ibkr_username \
+  -e TWS_PASSWORD=your_ibkr_password \
+  -e TRADING_MODE=paper \
+  -e GATEWAY_OR_TWS=gateway \
+  -e READ_ONLY_API=no \
+  -e TWOFA_TIMEOUT_ACTION=restart \
+  -e EXISTING_SESSION_DETECTED_ACTION=primaryoverride \
+  -e TRUSTED_IPS=127.0.0.1,172.18.0.0/16 \
+  -p 4002:4004 \
+  -v ibkr-gateway_ibkr_settings:/home/ibgateway/Jts \
+  ghcr.io/gnzsnz/ib-gateway:stable
+```
+
+Important:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `IBKR_HOST` | `ibkr-gateway` | Docker DNS on `docker_default` network |
+| `IBKR_PORT` | `4004` | gnzsnz **socat** publishes paper API on container port **4004** (not 4002) |
+| Host port map | `4002:4004` | Host clients use 4002; in-network clients use 4004 |
+| Workers | `1` | IBKR allows only one connection per `IBKR_CLIENT_ID` |
+
+After gateway restart, approve **2FA** on the IBKR mobile app if prompted. Check logs:
+
+```bash
+docker logs ibkr-gateway --tail 30    # expect "Login has completed"
+docker logs olbosquant-backend --tail 20   # expect "Broker connected successfully"
+```
+
+Test from the backend container:
+
+```bash
+docker exec olbosquant-backend python3 -c "
+import asyncio, os
+from ib_insync import IB
+async def t():
+    ib = IB()
+    await ib.connectAsync('ibkr-gateway', int(os.environ['IBKR_PORT']), clientId=99, timeout=20)
+    print('accounts', ib.managedAccounts())
+    ib.disconnect()
+asyncio.run(t())
+"
+```
+
+---
+
 ## RAM usage estimate
 
 | Container | RAM |

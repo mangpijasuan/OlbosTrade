@@ -238,7 +238,7 @@ async def get_broker_status():
     try:
         broker = get_broker()
         is_paper = "paper" in settings.alpaca_base_url if settings.broker == "alpaca" \
-                   else settings.ibkr_port in (7497, 4002)
+                   else settings.ibkr_port in (7497, 4002, 4004)
         return {
             "broker":           settings.broker,
             "supports_options": broker.supports_options,
