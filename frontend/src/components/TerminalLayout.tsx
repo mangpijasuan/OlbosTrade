@@ -37,7 +37,6 @@ const ICONS: Record<string, string> = {
 
 const NAV_ITEMS = [
   { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
-  { key: "equity",     label: "Equity Signals",icon: "backtest"  },
   { key: "backtest",   label: "Backtest",     icon: "backtest"   },
   { key: "paper",      label: "Trade Desk",   icon: "paper"      },
   { key: "risk",       label: "Risk",         icon: "risk"       },

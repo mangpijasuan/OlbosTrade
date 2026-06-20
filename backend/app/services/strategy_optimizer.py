@@ -15,7 +15,7 @@ Uses walk-forward validation — optimizes on rolling 6-month window,
 validates on following 1-month window. Never overfits to current conditions.
 
 Integration:
-    # Run monthly (wired into APScheduler in paper_trader)
+    # Run monthly (optional — wire into APScheduler if needed)
     result = await optimizer.optimize("bull_put_spread")
     # Parameters auto-applied to strategy_engine if improvement is validated
 """

@@ -226,7 +226,7 @@ async def test_wrong_column_exception_is_fail_closed():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. Sizing returns 0 → trade is skipped, no order placed (paper_trader path)
+# 5. Sizing returns 0 → trade is skipped, no order placed
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_calculate_position_size_returns_zero_for_tiny_budget():
@@ -243,25 +243,14 @@ def test_calculate_position_size_returns_zero_for_tiny_budget():
 
 
 @pytest.mark.asyncio
-async def test_zero_contracts_skips_trade_in_paper_trader():
-    """
-    When effective_contracts == 0 after sizing, paper_trader must record
-    'skipped_zero_size' and NOT call the dispatcher.
-    """
-    # We test the zero-size guard added to the paper_trader loop
-    # by checking the action_record written when contracts == 0.
-    from app.services.paper_trader import PaperTrader
-
-    pt = PaperTrader.__new__(PaperTrader)
-
-    # Simulate the sizing returning 0 — the guard we added logs skipped_zero_size
+async def test_zero_contracts_skips_trade_when_sizing_zero():
+    """When effective contracts == 0, trade desk must skip without placing order."""
     size_result = MagicMock(contracts=0)
     regime = MagicMock(size_multiplier=1.0, strategies_allowed=["bull_put_spread"])
 
     effective_contracts = int(size_result.contracts * regime.size_multiplier)
     assert effective_contracts == 0
 
-    # Verify the guard logic (extracted from loop body)
     actions = []
     if effective_contracts <= 0:
         actions.append({

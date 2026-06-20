@@ -135,7 +135,7 @@ class RegimeFeatures:
 class RegimeState:
     """
     Current regime classification with all downstream parameters.
-    Passed into paper_trader.run_signal_cycle() to control execution.
+    Passed into options_engine.scan() to control execution.
     """
     regime:                    RegimeType
     description:               str

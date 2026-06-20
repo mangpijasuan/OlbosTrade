@@ -29,9 +29,7 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = Field(default="")
     alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets")
 
-    # ── Legacy Tradier (kept for backward compat) ─────────────────────────
-    tradier_api_key: str = Field(default="")
-    tradier_sandbox: bool = Field(default=True)
+    # ── Legacy Tradier (removed — use IBKR or Alpaca) ─────────────────────
 
     # ── Database ──────────────────────────────────────────────────────────
     database_url: str = Field(
@@ -49,32 +47,8 @@ class Settings(BaseSettings):
     max_consecutive_losses: int = Field(default=3)
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
-
-    equity_scan_enabled: bool = Field(
-        default=False,
-        description="Enable background equity momentum scans (off for Alpha Options focus)",
-    )
-    options_exit_monitor_interval_seconds: int = Field(default=60)
-    # ── Equity signal settings ────────────────────────────────────────────
-    equity_watchlist: str = Field(
-        default="AAPL,NVDA,MSFT,META,AMZN,GOOGL,AMD,TSLA,SPY,QQQ,JPM,V,MA"
-    )
-    equity_signal_interval_minutes: int = Field(default=15)
-    equity_min_confidence: float = Field(default=0.62)
-    # Paper mode uses a lower confidence threshold to accumulate trade data
-    # for ML model training. Set equal to equity_min_confidence for live.
-    equity_min_confidence_paper: float = Field(default=0.45)
-    equity_min_risk_reward: float = Field(default=1.80)
-    earnings_gate_days: int = Field(default=3)
-    max_equity_positions: int = Field(default=5)
     max_options_positions: int = Field(default=5)
-
-    @property
-    def effective_equity_min_confidence(self) -> float:
-        """Use lower threshold in paper mode to build training data faster."""
-        if self.ibkr_trading_mode == "paper":
-            return self.equity_min_confidence_paper
-        return self.equity_min_confidence
+    options_exit_monitor_interval_seconds: int = Field(default=60)
 
     # ── Order execution ───────────────────────────────────────────────────
     # Spread limit price multiplier applied to estimated net credit.
@@ -133,10 +107,6 @@ class Settings(BaseSettings):
     sendgrid_api_key: str = Field(default="")
     alert_email: str = Field(default="")
     log_level: str = Field(default="INFO")
-
-    def get_equity_watchlist(self) -> list[str]:
-        """Parse comma-separated watchlist into a list."""
-        return [t.strip().upper() for t in self.equity_watchlist.split(",") if t.strip()]
 
 
 settings = Settings()

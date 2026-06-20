@@ -48,43 +48,11 @@ async def update_strategy_config(config: StrategyConfig):
 
 @router.get("/signals/current")
 async def get_current_signals():
-    """
-    Returns current actionable signals:
-    - Equity signals from the equity scan engine (BUY/SELL above confidence threshold)
-    - Options signals from regime-gated strategy list
-    """
+    """Returns current options signals from regime-gated strategy list."""
     from datetime import datetime, timezone
-    from app.core.config import settings
 
     signals = []
 
-    # ── Equity signals ────────────────────────────────────────────────────────
-    try:
-        from app.api.routes.equity import _recent_signals
-        from app.main import _current_regime
-
-        min_conf = settings.equity_min_confidence
-        equity_sigs = [
-            s for s in _recent_signals
-            if s.get("action") in ("BUY", "SELL")
-            and s.get("confidence", 0) >= min_conf
-        ][:5]
-
-        for s in equity_sigs:
-            signals.append({
-                "type":        "equity",
-                "ticker":      s["ticker"],
-                "action":      s["action"],
-                "confidence":  s["confidence"],
-                "generated_at": s["generated_at"],
-                "trade_plan":  s.get("trade_plan", {}),
-                "indicators":  s.get("indicators", {}),
-                "regime_gated": _current_regime.equity_allowed if _current_regime else False,
-            })
-    except Exception:
-        pass
-
-    # ── Options signals ───────────────────────────────────────────────────────
     try:
         from app.main import _current_regime
         if _current_regime and _current_regime.options_allowed:
@@ -111,24 +79,9 @@ async def get_current_signals():
 
 @router.get("/signals/{signal_id}/explanation")
 async def get_signal_explanation(signal_id: str):
-    """Explain the reasoning behind an equity signal."""
-    try:
-        from app.api.routes.equity import _recent_signals
-        sig = next((s for s in _recent_signals if s.get("id") == signal_id), None)
-        if not sig:
-            return {"signal_id": signal_id, "explanation": None, "error": "Signal not found"}
-        return {
-            "signal_id":   signal_id,
-            "ticker":      sig["ticker"],
-            "action":      sig["action"],
-            "confidence":  sig["confidence"],
-            "explanation": {
-                "reasons":         sig.get("reasons", {}),
-                "indicators":      sig.get("indicators", {}),
-                "orderflow_score": sig.get("orderflow_score"),
-                "iv_boost":        sig.get("iv_overlay_boost"),
-                "earnings_gated":  sig.get("earnings_gated"),
-            },
-        }
-    except Exception as exc:
-        return {"signal_id": signal_id, "explanation": None, "error": str(exc)}
+    """Signal explainability is provided via trade desk execution log and journal."""
+    return {
+        "signal_id": signal_id,
+        "explanation": None,
+        "message": "Use trade desk execution log or journal for signal details.",
+    }

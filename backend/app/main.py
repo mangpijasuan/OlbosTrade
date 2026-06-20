@@ -18,7 +18,7 @@ async def _yf_bars(ticker: str, limit: int = 60) -> list:
     """
     Fetch daily OHLCV bars via yfinance (free, no broker subscription needed).
     Returns a list of Bar-like objects compatible with the existing code.
-    Used by regime classifier, equity scan, and options scan instead of IBKR.
+    Used by regime classifier and options scan instead of IBKR.
     IBKR is reserved for order execution and account data only.
     """
     import yfinance as yf
@@ -61,7 +61,6 @@ from app.api.routes import (
     strategy,
     trading_mode,
 )
-from app.api.routes import equity
 from app.api.routes import trade_desk
 from app.api.routes import options_flow
 from app.core.config import settings
@@ -103,7 +102,6 @@ app.include_router(research.router,    prefix="/api/research",     tags=["Resear
 app.include_router(journal.router,     prefix="/api/journal",      tags=["Journal"])
 app.include_router(analytics.router,   prefix="/api/analytics",    tags=["Analytics"])
 app.include_router(trading_mode.router,prefix="/api/mode",         tags=["Trading Mode"])
-app.include_router(equity.router,      prefix="/api/equity",       tags=["Equity"])
 app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade Desk"])
 app.include_router(options_flow.router,prefix="/api/options-flow",  tags=["Options Flow"])
 
@@ -146,11 +144,9 @@ async def on_startup() -> None:
     _greeks_tracker = PortfolioGreeksTracker()
     logger.info("PortfolioGreeksTracker initialized")
 
-    # 3. Classify regime immediately; optional equity scan
+    # 3. Classify regime on startup
     async def _startup_market_init():
         await _reclassify_regime()
-        if settings.equity_scan_enabled:
-            await _run_equity_scan()
     asyncio.create_task(_startup_market_init())
 
     # 4. Start background scheduler
@@ -205,7 +201,6 @@ async def _background_scheduler() -> None:
     """Background task that runs periodic scans and updates."""
     global _current_regime
 
-    equity_interval_s  = settings.equity_signal_interval_minutes * 60
     options_interval_s = 30 * 60   # 30 minutes
     regime_interval_s  = 30 * 60   # 30 minutes
     greeks_interval_s  = 60        # 1 minute
@@ -214,9 +209,6 @@ async def _background_scheduler() -> None:
 
     import time as _time
     _now = _time.monotonic()
-    # Start timers at "now" so the scheduler doesn't fire immediately
-    # (startup already ran regime + equity scan)
-    last_equity  = _now
     last_options = _now
     last_regime  = _now
     last_greeks  = 0.0   # Greeks update on first tick is fine (lightweight)
@@ -252,21 +244,6 @@ async def _background_scheduler() -> None:
             if now - last_regime >= regime_interval_s:
                 await _reclassify_regime()
                 last_regime = now
-
-            # Equity scan — disabled by default for Alpha Options focus
-            if settings.equity_scan_enabled and now - last_equity >= equity_interval_s:
-                regime_blocks_equity = (
-                    _current_regime is not None
-                    and not getattr(_current_regime, "equity_allowed", True)
-                )
-                if not regime_blocks_equity:
-                    await _run_equity_scan()
-                else:
-                    logger.info(
-                        "Equity scan skipped — regime %s does not allow equities",
-                        getattr(_current_regime, "regime_type", "unknown"),
-                    )
-                last_equity = now
 
             # Every 30 min: unified options intelligence scan
             if now - last_options >= options_interval_s:
@@ -391,88 +368,6 @@ async def _reclassify_regime() -> None:
 
     except Exception as exc:
         logger.warning("Regime reclassify failed: %s", exc, exc_info=True)
-
-
-async def _run_equity_scan() -> None:
-    """Background scan — writes results into the same in-memory store as POST /api/equity/scan."""
-    try:
-        logger.info("Background equity signal scan starting")
-        import uuid
-        import pandas as pd
-        from datetime import datetime, timezone
-        from app.broker.broker_factory import get_broker
-        from app.services.equity_signal_engine import (
-            compute_indicators, compute_equity_trade_plan,
-            earnings_gate, score_equity_signal,
-        )
-        from app.services.orderflow_engine import get_orderflow_score
-        from app.api.routes.equity import _recent_signals   # shared in-memory store
-
-        watchlist = settings.get_equity_watchlist()
-
-        for ticker in watchlist[:5]:   # cap at 5 per background tick
-            try:
-                if earnings_gate(ticker, settings.earnings_gate_days):
-                    continue
-                # Use yfinance for historical bars — no broker subscription needed
-                bars = await _yf_bars(ticker, limit=120)
-                if len(bars) < 30:
-                    continue
-                df = pd.DataFrame([{
-                    "open": float(b.open), "high": float(b.high),
-                    "low": float(b.low),  "close": float(b.close), "volume": b.volume,
-                } for b in bars])
-                ind = compute_indicators(df)
-                if not ind:
-                    continue
-                broker = get_broker()
-                orderflow = await get_orderflow_score(ticker, broker)
-                action, confidence, reasons = score_equity_signal(ind, orderflow_score=orderflow)
-
-                trade_plan = {}
-                if action in ("BUY", "SELL") and confidence >= settings.effective_equity_min_confidence:
-                    trade_plan = compute_equity_trade_plan(
-                        ind, action, portfolio_value=settings.starting_capital,
-                    )
-
-                signal = {
-                    "id":              str(uuid.uuid4()),
-                    "ticker":          ticker,
-                    "asset_type":      "equity",
-                    "generated_at":    datetime.now(timezone.utc).isoformat(),
-                    "action":          action,
-                    "confidence":      round(confidence, 4),
-                    "orderflow_score": round(orderflow, 4),
-                    "iv_overlay_boost": 0.0,
-                    "earnings_gated":  False,
-                    "reasons":         reasons,
-                    "trade_plan":      trade_plan,
-                    "indicators": {
-                        "rsi":          ind.get("rsi"),
-                        "macd":         ind.get("macd"),
-                        "bb_pct_b":     ind.get("bb_pct_b"),
-                        "atr":          ind.get("atr"),
-                        "volume_ratio": ind.get("volume_ratio"),
-                    },
-                }
-                _recent_signals.insert(0, signal)
-                logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
-
-                # Route to execution handler (manual=skip, copilot=queue, autopilot=execute)
-                if action in ("BUY", "SELL") and confidence >= settings.effective_equity_min_confidence:
-                    try:
-                        from app.api.routes.trade_desk import handle_signal
-                        await handle_signal(signal)
-                    except Exception as exec_exc:
-                        logger.warning("Execution handler failed for %s: %s", ticker, exec_exc)
-
-            except Exception as exc:
-                logger.warning("Equity scan failed for %s: %s", ticker, exc)
-
-        del _recent_signals[200:]   # keep last 200 only
-
-    except Exception as exc:
-        logger.warning("Background equity scan failed: %s", exc)
 
 
 async def _run_options_scan() -> None:

@@ -16,7 +16,7 @@ olbosquant/
 │   │   ├── api/routes/   REST endpoints (market, paper_trade, trade_desk, …)
 │   │   ├── broker/       IBKR client · broker interface · fill simulator
 │   │   ├── models/       SQLAlchemy ORM models
-│   │   └── services/     Signal scorer · backtester · risk · regime · optimizer
+│   │   └── services/     Options engine · signal scorer · regime · exit monitor
 │   └── .env              Local config (copy from .env.example)
 ├── frontend/             React 18 · TypeScript · Vite · Bloomberg terminal UI
 │   └── src/

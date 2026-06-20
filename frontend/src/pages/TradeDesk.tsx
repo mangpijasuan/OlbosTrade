@@ -4,7 +4,7 @@
  * Execution modes: MANUAL (signals only) · COPILOT (you approve) · AUTOPILOT (auto-execute)
  */
 import React, { useState, useEffect, useCallback } from "react";
-import { usePaperTrade } from "../hooks/usePaperTrade";
+import { usePortfolio } from "../hooks/usePortfolio";
 import TradingModeSelector from "../components/TradingModeSelector";
 import { api } from "../api/client";
 
@@ -375,7 +375,7 @@ function PnLBreakdown() {
 
 // ── Main Trade Desk ────────────────────────────────────────────────────────────
 export default function TradeDesk() {
-  const { positions, lastSignal, cycleLog, loading, runCycle } = usePaperTrade();
+  const { positions, lastSignal, cycleLog, loading, refresh } = usePortfolio();
   const [tab, setTab] = useState<Tab>("signals");
   const [trades, setTrades]       = useState<any[]>([]);
   const [tradesLoading, setTradesLoading] = useState(true);
@@ -428,9 +428,9 @@ export default function TradeDesk() {
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn-t" onClick={runCycle}
+        <button className="btn-t" onClick={refresh}
           style={{ color: "var(--cyan)", borderColor: "var(--cyan)" }}>
-          {loading ? "RUNNING..." : "▶ RUN SIGNAL CYCLE"}
+          {loading ? "REFRESHING..." : "↻ REFRESH"}
         </button>
       </div>
 

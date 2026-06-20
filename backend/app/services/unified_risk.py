@@ -192,15 +192,9 @@ class UnifiedRiskEngine:
         if not emotion_ok:
             return RiskDecision(allowed=False, reason=emotion_reason, flags=flags + ["emotion_guard"])
 
-        # 3. Earnings gate for equities
+        # 3. Earnings gate — equities not used in Alpha Options; skip
         if instrument_type == "equity" and check_earnings:
-            from app.services.equity_signal_engine import earnings_gate
-            if earnings_gate(ticker, settings.earnings_gate_days):
-                return RiskDecision(
-                    allowed=False,
-                    reason=f"Earnings gate: {ticker} has earnings within {settings.earnings_gate_days} days",
-                    flags=flags + ["earnings_gate"],
-                )
+            pass
 
         # 4. Portfolio-level risk (Greeks limits, concentration)
         if proposed_trade is not None:

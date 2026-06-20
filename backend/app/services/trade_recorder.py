@@ -1,7 +1,7 @@
 """
 TradeRecorder — writes Trade rows and auto-creates JournalEntry records.
 
-Called by paper_trader.py immediately after a successful fill.
+Called by trade_desk and position_exit_monitor after fills.
 This is the missing link between execution and the journal/analytics.
 
 What it writes automatically:

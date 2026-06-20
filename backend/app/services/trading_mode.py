@@ -260,7 +260,7 @@ class TradingModeManager:
     Single source of truth for all mode-related configuration.
 
     Integration points:
-      - paper_trader.py reads mode config for DTE and sizing
+      - options_engine.py reads mode config for DTE and sizing
       - strategy_engine.py reads profit_target and stop_loss
       - guardrails.py reads signal_threshold and max_trades
       - frontend reads mode for display and user switching

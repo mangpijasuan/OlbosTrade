@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { usePaperTrade } from "../hooks/usePaperTrade";
+import { usePortfolio } from "../hooks/usePortfolio";
 import { useRisk }       from "../hooks/useRisk";
 
 const API = "";
@@ -204,7 +204,7 @@ function filterByRange(points: ChartPoint[], range: string): ChartPoint[] {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { positions, portfolio, greeks } = usePaperTrade();
+  const { positions, portfolio, greeks } = usePortfolio();
   const { guardrailStatus, portfolioState } = useRisk();
 
   const pv      = portfolio?.account_value ?? portfolio?.net_liquidation ?? 25000;

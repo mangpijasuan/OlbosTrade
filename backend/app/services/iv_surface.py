@@ -9,7 +9,7 @@ Computes:
   - Strike-level IV surface (volatility smile/skew across strikes)
   - VRP (Volatility Risk Premium) = IV rank minus realized vol
 
-Integrates into paper_trader.run_signal_cycle() and backtester.run()
+Integrates into options_engine.scan() and backtester.run()
 to replace the VIX-based IV rank approximation.
 """
 

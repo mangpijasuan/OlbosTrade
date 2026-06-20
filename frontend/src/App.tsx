@@ -10,12 +10,10 @@ import Strategy        from "./pages/Strategy";
 import Journal         from "./pages/Journal";
 import Research        from "./pages/Research";
 import ModeAnalytics   from "./pages/ModeAnalytics";
-import EquitySignals   from "./pages/EquitySignals";
 import OptionsFlow     from "./pages/OptionsFlow";
 
 const PAGES: Record<string, React.ComponentType> = {
   dashboard:  Dashboard,
-  equity:     EquitySignals,
   backtest:   Backtest,
   paper:      TradeDesk,
   risk:       RiskMonitor,

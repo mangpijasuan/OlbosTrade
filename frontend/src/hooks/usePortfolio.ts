@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
 
-export function usePaperTrade() {
+/** Live portfolio, positions, Greeks, and trade history from paper-trade API. */
+export function usePortfolio() {
   const [positions, setPositions]   = useState<any[]>([]);
   const [portfolio, setPortfolio]   = useState<any>(null);
   const [greeks, setGreeks]         = useState<any>(null);
@@ -29,22 +30,11 @@ export function usePaperTrade() {
     }
   }, []);
 
-  const runCycle = useCallback(async () => {
-    setLoading(true);
-    try {
-      // Trigger a manual signal cycle via the paper-trade toggle endpoint
-      await (api as any).runSignalCycle?.();
-      await refresh();
-    } catch {
-      await refresh();
-    }
-  }, [refresh]);
-
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 30000); // re-poll every 30s
+    const interval = setInterval(refresh, 30000);
     return () => clearInterval(interval);
   }, [refresh]);
 
-  return { positions, portfolio, greeks, lastSignal, cycleLog, loading, refresh, runCycle };
+  return { positions, portfolio, greeks, lastSignal, cycleLog, loading, refresh };
 }
