@@ -24,12 +24,12 @@ set -a
 source backend/.env.prod
 set +a
 
-# Confirm the olbos_default network exists (from the other app)
-CADDY_NETWORK=$(docker network ls --format '{{.Name}}' | grep -E '^(olbos_default|docker_default)$' | head -1)
+# Confirm the docker_default network exists (created by OlbosTerminal's Caddy stack)
+CADDY_NETWORK=$(docker network ls --format '{{.Name}}' | grep -E '^docker_default$' | head -1)
 if [[ -z "$CADDY_NETWORK" ]]; then
   echo "❌  Docker network not found."
-  echo "    Make sure the olbos app is running first:"
-  echo "    cd /opt/olbos && bash deploy/hetzner/up.sh"
+  echo "    Make sure the OlbosTerminal app is running first:"
+  echo "    cd /opt/olbosterminal && bash deploy/hetzner/up.sh"
   exit 1
 fi
 echo "      Using network: $CADDY_NETWORK"
@@ -65,7 +65,7 @@ echo "      ✅ Migrations applied"
 
 # ── 4. Add OlbosQuant to Caddy ────────────────────────────────────────────────
 echo "[4/4] Caddy configuration..."
-CADDYFILE=/opt/olbos/docker/Caddyfile
+CADDYFILE=/opt/olbosterminal/docker/Caddyfile
 
 if grep -q "olbosquant-backend" "$CADDYFILE" 2>/dev/null; then
   echo "      ✅ Caddy already configured for OlbosQuant"
@@ -79,7 +79,7 @@ else
   cat deploy/hetzner/Caddyfile.snippet
   echo ""
   echo "  Then reload Caddy:"
-  echo "    cd /opt/olbos && docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile"
+  echo "    cd /opt/olbosterminal && docker exec olbosterminal-caddy caddy reload --config /etc/caddy/Caddyfile"
 fi
 
 echo ""
