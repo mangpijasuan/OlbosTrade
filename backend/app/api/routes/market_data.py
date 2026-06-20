@@ -234,17 +234,38 @@ async def get_portfolio_greeks():
 
 @router.get("/broker")
 async def get_broker_status():
-    """Return active broker name and connection status."""
+    """Return active broker name, transport, and real connection status."""
     try:
         broker = get_broker()
-        is_paper = "paper" in settings.alpaca_base_url if settings.broker == "alpaca" \
-                   else settings.ibkr_port in (7497, 4002)
+        connected = False
+        connection_type = settings.broker
+
+        if settings.broker == "ibkr":
+            connection_type = settings.ibkr_connection.lower()
+            if connection_type in ("clientportal", "client_portal", "cp", "cpapi", "webapi"):
+                connected = (
+                    getattr(broker, "is_connected", False)
+                    and await broker.keepalive()
+                )
+            elif hasattr(broker, "ib"):
+                connected = (
+                    getattr(broker, "_connected", False)
+                    and broker.ib.isConnected()
+                )
+            is_paper = settings.ibkr_trading_mode == "paper"
+        elif settings.broker == "alpaca":
+            connected = True
+            is_paper = "paper" in settings.alpaca_base_url
+        else:
+            is_paper = True
+
         return {
-            "broker":           settings.broker,
-            "supports_options": broker.supports_options,
+            "broker":            settings.broker,
+            "connection_type":   connection_type,
+            "supports_options":  broker.supports_options,
             "supports_equities": broker.supports_equities,
-            "paper_mode":       is_paper,
-            "status":           "connected",
+            "paper_mode":        is_paper,
+            "status":            "connected" if connected else "disconnected",
         }
     except Exception as exc:
         return {

@@ -149,9 +149,11 @@ class Quote(BaseModel):
 class EquityOrderResult(BaseModel):
     """Result of an equity order submission."""
     order_id: str
-    status: Literal["submitted", "filled", "cancelled", "rejected", "pending"]
+    status: Literal["submitted", "filled", "partial", "cancelled", "rejected", "pending"]
     fill_price: Decimal | None = None
     filled_at: datetime | None = None
+    filled_quantity: int | None = None
+    remaining_quantity: int | None = None
     message: str | None = None
 
 

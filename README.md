@@ -40,7 +40,7 @@ olbosquant/
 |-----------|-------------|
 | Python | 3.9 or higher |
 | Node.js | 18 or higher |
-| IB Gateway | Paper trading, port 4002 |
+| IBKR Client Portal Gateway | Paper trading, port 5000 (default) |
 | PostgreSQL | 14+ (optional — only for journal/trade persistence) |
 
 ---
@@ -49,12 +49,21 @@ olbosquant/
 
 **This is the correct procedure every trading day:**
 
-### Step 1 — Open IB Gateway
-- Launch **IB Gateway** (not TWS)
-- Log in with your paper trading credentials
-- Confirm API is enabled: `Configure → API → Settings → Enable ActiveX and Socket Clients`
-- Socket port must be **4002**
-- Add `127.0.0.1` to trusted IP addresses
+### Step 1 — Start IBKR Client Portal Gateway
+
+**Default connection (recommended):** Client Portal Web API — not IB Gateway.
+
+1. Download and run the [IBKR Client Portal Gateway](https://www.interactivebrokers.com/en/trading/ib-api.php) (`clientportal.gw`)
+2. Open **https://localhost:5000/sso/Dispatcher** in your browser and log in
+3. Confirm `backend/.env` has:
+   ```env
+   BROKER=ibkr
+   IBKR_CONNECTION=clientportal
+   IBKR_CP_BASE_URL=https://localhost:5000/v1/api
+   IBKR_TRADING_MODE=paper
+   ```
+
+**Legacy option:** TWS / IB Gateway socket — set `IBKR_CONNECTION=tws` and use ports 4002 (Gateway paper) or 7497 (TWS paper).
 
 ### Step 2 — Start OlbosQuant
 ```bash
@@ -63,7 +72,7 @@ cd ~/Projects/olbosquant
 ```
 
 The script will:
-1. Verify IB Gateway is reachable on port 4002
+1. Verify Client Portal Gateway is reachable on port 5000 (or IB Gateway/TWS if `IBKR_CONNECTION=tws`)
 2. Kill any stale backend/frontend processes
 3. Start the backend on port 8000
 4. Start the frontend on port 3000
@@ -80,8 +89,8 @@ Expected output:
   OlbosQuant Health Check
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Backend  ✅  running
-  Broker   ✅  connected (PAPER)
-  IB GW    ✅  connected (port 4002)
+  Broker   ✅  connected (PAPER, clientportal)
+  CP GW    ✅  reachable (port 5000)
   SPY      📈  $741.75 (+0.54%)
   UI       ✅  http://localhost:3000
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -372,7 +381,13 @@ Then restart: `./stop.sh && ./start.sh`
 2. Check Vite proxy in `frontend/vite.config.ts` — target must be `http://localhost:8000`
 3. If yfinance errors: `pip3 install --upgrade yfinance` (requires ≥1.2.0)
 
-### Broker shows "not connected" but IB Gateway is open
+### Broker shows "not connected" but Client Portal Gateway is running
+- Confirm you logged in at **https://localhost:5000/sso/Dispatcher** (session expires after inactivity)
+- Confirm `IBKR_CONNECTION=clientportal` and `IBKR_CP_BASE_URL=https://localhost:5000/v1/api` in `backend/.env`
+- Run `./health.sh` — **CP GW** should show reachable on port 5000
+
+### Broker shows "not connected" (legacy TWS / IB Gateway mode)
+Set `IBKR_CONNECTION=tws`, then:
 - Confirm port: `Configure → API → Socket port` must be **4002** (Gateway) or **7497** (TWS)
 - Confirm trusted IP: `127.0.0.1` must be in the allowed list
 - Confirm `IBKR_PORT` in `backend/.env` matches what Gateway shows
@@ -409,7 +424,10 @@ Test coverage:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BROKER` | `ibkr` | Active broker: `ibkr` or `alpaca` |
-| `IBKR_HOST` | `127.0.0.1` | IB Gateway / TWS host |
+| `IBKR_CONNECTION` | `clientportal` | `clientportal` (REST) or `tws` (socket) |
+| `IBKR_CP_BASE_URL` | `https://localhost:5000/v1/api` | Client Portal REST base URL |
+| `IBKR_ACCOUNT_ID` | `` | Optional — auto-detected if blank |
+| `IBKR_HOST` | `127.0.0.1` | IB Gateway / TWS host (only when `IBKR_CONNECTION=tws`) |
 | `IBKR_PORT` | `4002` | `4002` = Gateway paper, `4001` = Gateway live, `7497` = TWS paper |
 | `IBKR_CLIENT_ID` | `2` | Must be unique — increment if "already in use" error |
 | `IBKR_TRADING_MODE` | `paper` | `paper` or `live` |
@@ -432,9 +450,10 @@ Test coverage:
 |---------|------|-------|
 | Backend (FastAPI) | `8000` | `http://localhost:8000` |
 | Frontend (Vite) | `3000` | `http://localhost:3000` |
-| IB Gateway paper | `4002` | Must be open before starting |
+| Client Portal Gateway | `5000` | Default — log in before starting |
+| IB Gateway paper | `4002` | Legacy (`IBKR_CONNECTION=tws`) |
 | IB Gateway live | `4001` | Do not use until paper validated |
-| TWS paper (alt) | `7497` | Only if using TWS instead of Gateway |
+| TWS paper (alt) | `7497` | Legacy socket mode only |
 
 ---
 

@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 _broker_instance: BrokerInterface | None = None
 
+_CP_ALIASES = frozenset({"clientportal", "client_portal", "cp", "cpapi", "webapi"})
+
 
 def get_broker() -> BrokerInterface:
     """
@@ -29,9 +31,21 @@ def get_broker() -> BrokerInterface:
     name = settings.broker.lower().strip()
 
     if name == "ibkr":
-        from app.broker.ibkr_client import IBKRClient
-        _broker_instance = IBKRClient()
-        logger.info("Active broker: IBKR (host=%s port=%s)", settings.ibkr_host, settings.ibkr_port)
+        conn = settings.ibkr_connection.lower().strip()
+        if conn in _CP_ALIASES:
+            from app.broker.ibkr_cp_client import IBKRClientPortalClient
+            _broker_instance = IBKRClientPortalClient()
+            logger.info(
+                "Active broker: IBKR Client Portal Web API (base=%s)",
+                settings.ibkr_cp_base_url,
+            )
+        else:
+            from app.broker.ibkr_client import IBKRClient
+            _broker_instance = IBKRClient()
+            logger.info(
+                "Active broker: IBKR TWS/Gateway via ib_insync (host=%s port=%s)",
+                settings.ibkr_host, settings.ibkr_port,
+            )
 
     elif name == "alpaca":
         from app.broker.alpaca_client import AlpacaClient

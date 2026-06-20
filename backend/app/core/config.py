@@ -19,10 +19,21 @@ class Settings(BaseSettings):
     broker: str = Field(default="ibkr", description="Active broker: ibkr | alpaca")
 
     # ── IBKR ──────────────────────────────────────────────────────────────
+    # Connection transport for BROKER=ibkr:
+    #   "clientportal" → IBKR Client Portal Web API (REST gateway, default)
+    #   "tws"          → legacy TWS / IB Gateway socket via ib_insync
+    ibkr_connection: str = Field(default="clientportal")
     ibkr_host: str = Field(default="127.0.0.1")
     ibkr_port: int = Field(default=7497)
     ibkr_client_id: int = Field(default=1)
     ibkr_trading_mode: str = Field(default="paper")
+
+    # ── IBKR Client Portal Web API ────────────────────────────────────────
+    # Run clientportal.gw locally; authenticate once in a browser at
+    # https://localhost:5000/sso/Dispatcher before trading.
+    ibkr_cp_base_url: str = Field(default="https://localhost:5000/v1/api")
+    ibkr_account_id: str = Field(default="")
+    ibkr_cp_verify_ssl: bool = Field(default=False)
 
     # ── Alpaca ────────────────────────────────────────────────────────────
     alpaca_api_key: str = Field(default="")

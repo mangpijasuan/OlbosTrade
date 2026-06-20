@@ -32,6 +32,9 @@ export default function BrokerStatus() {
   const connected = info.status === "connected";
   const modeLabel = info.paper_mode ? "paper" : "live";
   const brokerLabel = info.broker.toUpperCase();
+  const transport = (info as any).connection_type
+    ? String((info as any).connection_type).toUpperCase()
+    : null;
 
   return (
     <div style={{
@@ -61,7 +64,8 @@ export default function BrokerStatus() {
         {modeLabel}
       </span>
       <span style={{ color: "var(--ink-dim)" }}>
-        {connected ? "connected" : info.error || "disconnected"}
+        {connected ? "connected" : info.error || info.status || "disconnected"}
+        {transport ? ` · ${transport}` : ""}
       </span>
       <span style={{ flex: 1 }} />
       {info.supports_options && (

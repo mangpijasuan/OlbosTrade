@@ -4,7 +4,8 @@
 # Or set it up as a launchd service (see README)
 
 set -e
-PROJECT="/Users/mangpijasuan/Projects/olbosquant"
+PROJECT="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$PROJECT/backend/.env"
 LOG_DIR="$PROJECT/logs"
 mkdir -p "$LOG_DIR"
 
@@ -12,19 +13,34 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  OlbosQuant — System Startup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# ── 1. Check IB Gateway / TWS is reachable ───────────────────────────────────
-# Read port from .env (default 4002 for IB Gateway paper; use 7497 for TWS paper)
-IBKR_PORT=$(grep -E "^IBKR_PORT=" "$PROJECT/backend/.env" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-IBKR_PORT="${IBKR_PORT:-4002}"
-echo -n "[1/5] IB Gateway / TWS (port $IBKR_PORT)... "
-if python3 -c "import socket; s=socket.socket(); s.settimeout(2); r=s.connect_ex(('127.0.0.1',$IBKR_PORT)); s.close(); exit(r)" 2>/dev/null; then
-  echo "✅ CONNECTED"
+# ── 1. Check IBKR gateway is reachable ───────────────────────────────────────
+IBKR_CONN=$(grep -E "^IBKR_CONNECTION=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+IBKR_CONN="${IBKR_CONN:-clientportal}"
+
+if [ "$IBKR_CONN" = "clientportal" ] || [ "$IBKR_CONN" = "client_portal" ] || [ "$IBKR_CONN" = "cp" ]; then
+  echo -n "[1/5] Client Portal Gateway (port 5000)... "
+  if python3 -c "import socket; s=socket.socket(); s.settimeout(2); r=s.connect_ex(('127.0.0.1',5000)); s.close(); exit(r)" 2>/dev/null; then
+    echo "✅ REACHABLE"
+  else
+    echo "❌ NOT REACHABLE"
+    echo "    → Start IBKR Client Portal Gateway (clientportal.gw)"
+    echo "    → Log in at https://localhost:5000/sso/Dispatcher"
+    echo "    → Set IBKR_CONNECTION=clientportal in backend/.env (default)"
+    exit 1
+  fi
 else
-  echo "❌ NOT REACHABLE"
-  echo "    → Open IB Gateway (port 4002) or TWS (port 7497) and log in."
-  echo "    → Make sure API is enabled: Configure → API → Enable ActiveX and Socket Clients"
-  echo "    → Set IBKR_PORT=$IBKR_PORT in backend/.env to match your setup."
-  exit 1
+  IBKR_PORT=$(grep -E "^IBKR_PORT=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+  IBKR_PORT="${IBKR_PORT:-4002}"
+  echo -n "[1/5] IB Gateway / TWS (port $IBKR_PORT)... "
+  if python3 -c "import socket; s=socket.socket(); s.settimeout(2); r=s.connect_ex(('127.0.0.1',$IBKR_PORT)); s.close(); exit(r)" 2>/dev/null; then
+    echo "✅ CONNECTED"
+  else
+    echo "❌ NOT REACHABLE"
+    echo "    → Open IB Gateway (port 4002) or TWS (port 7497) and log in."
+    echo "    → Enable API: Configure → API → Enable ActiveX and Socket Clients"
+    echo "    → Set IBKR_PORT=$IBKR_PORT in backend/.env to match your setup."
+    exit 1
+  fi
 fi
 
 # ── 2. Kill any stale processes ───────────────────────────────────────────────
@@ -72,13 +88,14 @@ BROKER=$(curl -s http://localhost:8000/api/market/broker 2>/dev/null)
 SPY=$(curl -s http://localhost:8000/api/market/snapshot/SPY 2>/dev/null)
 
 BROKER_STATUS=$(echo "$BROKER" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','?'))" 2>/dev/null)
+CONN_TYPE=$(echo "$BROKER" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('connection_type','?'))" 2>/dev/null)
 SPY_PRICE=$(echo "$SPY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('mid','?'))" 2>/dev/null)
 
 echo "✅ DONE"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✅ OlbosQuant is LIVE"
-echo "  Broker : $BROKER_STATUS (IBKR paper)"
+echo "  Broker : $BROKER_STATUS ($CONN_TYPE)"
 echo "  SPY    : \$$SPY_PRICE"
 echo "  UI     : http://localhost:3000"
 echo "  Logs   : $LOG_DIR/"

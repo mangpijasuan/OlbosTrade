@@ -117,20 +117,43 @@ class AlpacaClient(BrokerInterface):
         from decimal import Decimal
         equity_positions = await self.get_equity_positions()
         positions = []
-        for ep in equity_positions:
-            positions.append(
-                Position(
-                    symbol=ep.symbol,
-                    underlying=ep.symbol,
-                    strike=Decimal("0"),
-                    expiration=date.today(),
-                    option_type="call",        # placeholder — equities have no option type
-                    quantity=ep.quantity,
-                    avg_cost=ep.avg_cost,
-                    current_price=ep.current_price,
-                    unrealized_pnl=ep.unrealized_pnl,
+
+        def _dec(v) -> Decimal:
+            try:
+                return Decimal(str(v))
+            except Exception:
+                return Decimal("0")
+
+        for p in equity_positions:
+            if isinstance(p, dict):
+                symbol = p.get("symbol", "")
+                positions.append(
+                    Position(
+                        symbol=symbol,
+                        underlying=symbol,
+                        strike=Decimal("0"),
+                        expiration=date.today(),
+                        option_type="call",
+                        quantity=int(float(p.get("qty", 0) or 0)),
+                        avg_cost=_dec(p.get("avg_entry_price", 0)),
+                        current_price=_dec(p.get("current_price")) if p.get("current_price") else None,
+                        unrealized_pnl=_dec(p.get("unrealized_pl")) if p.get("unrealized_pl") else None,
+                    )
                 )
-            )
+            else:
+                positions.append(
+                    Position(
+                        symbol=p.symbol,
+                        underlying=p.symbol,
+                        strike=Decimal("0"),
+                        expiration=date.today(),
+                        option_type="call",
+                        quantity=p.quantity,
+                        avg_cost=p.avg_cost,
+                        current_price=p.current_price,
+                        unrealized_pnl=p.unrealized_pnl,
+                    )
+                )
         return positions
 
     # ── Core BrokerInterface equity methods ─────────────────────────────────

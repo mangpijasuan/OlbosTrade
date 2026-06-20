@@ -229,13 +229,22 @@ async def _background_scheduler() -> None:
                 try:
                     from app.broker.broker_factory import get_broker
                     _broker = get_broker()
-                    is_connected = getattr(_broker, "_connected", False)
-                    if hasattr(_broker, "ib"):
-                        is_connected = is_connected and _broker.ib.isConnected()
-                    if not is_connected and hasattr(_broker, "connect"):
-                        logger.warning("Broker disconnected — attempting reconnect")
-                        await _broker.connect()
-                        logger.info("Broker reconnected successfully")
+                    if hasattr(_broker, "keepalive"):
+                        alive = await _broker.keepalive()
+                        if not alive:
+                            logger.warning(
+                                "Client Portal session lost — attempting reconnect"
+                            )
+                            await _broker.connect()
+                            logger.info("Client Portal reconnected")
+                    else:
+                        is_connected = getattr(_broker, "_connected", False)
+                        if hasattr(_broker, "ib"):
+                            is_connected = is_connected and _broker.ib.isConnected()
+                        if not is_connected and hasattr(_broker, "connect"):
+                            logger.warning("Broker disconnected — attempting reconnect")
+                            await _broker.connect()
+                            logger.info("Broker reconnected successfully")
                 except Exception as _rc_exc:
                     logger.warning("Broker reconnect failed: %s", _rc_exc)
                 last_reconnect = now
