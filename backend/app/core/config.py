@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     options_flow_channel: str = Field(default="options_flow_live")
     # Data retention: rows older than this are archived to JSONL and deleted.
     options_flow_retention_days: int = Field(default=90)
-    options_flow_archive_dir: str = Field(default="/data/archive")
+    options_flow_archive_dir: str = Field(default="/app/data/archive")
 
     def get_options_flow_watchlist(self) -> list[str]:
         """Parse the comma-separated options-flow watchlist into a list."""

@@ -22,6 +22,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbosquant-db:5432/olbosquantdb
       REDIS_URL: redis://olbosquant-redis:6379
+    volumes:
+      - olbosquant_archive:/app/data/archive
     depends_on:
       olbosquant-db:
         condition: service_healthy
@@ -121,6 +123,7 @@ services:
 
 volumes:
   olbosquant_pgdata:
+  olbosquant_archive:
 
 networks:
   olbosquant_internal:
