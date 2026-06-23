@@ -94,6 +94,11 @@ _current_regime: Optional[object] = None   # RegimeState
 _greeks_tracker: Optional[object] = None   # PortfolioGreeksTracker
 _signal_scorer: Optional[object] = None    # SignalScorer (lazy — loads model pkl)
 
+# Tracks when a DB-open trade was first seen missing from the broker, so we can
+# wait for execution data before booking an exit instead of fabricating $0 P&L.
+_close_pending: dict[str, datetime] = {}
+CLOSE_GRACE_SECONDS = 300   # wait up to 5 min for a real exit price, then book unknown
+
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
@@ -732,13 +737,84 @@ async def _run_options_scan() -> None:
         logger.warning("Options scan failed: %s", exc)
 
 
+def _fill_after_entry(fill_time, entry_dt) -> bool:
+    """True if an execution happened at/after the trade's entry (tz-safe)."""
+    if fill_time is None or entry_dt is None:
+        return True   # can't tell — don't exclude
+    try:
+        from datetime import timezone as _tz
+        ft = fill_time if fill_time.tzinfo else fill_time.replace(tzinfo=_tz.utc)
+        ed = entry_dt if entry_dt.tzinfo else entry_dt.replace(tzinfo=_tz.utc)
+        return ft >= ed
+    except Exception:
+        return True
+
+
+def _compute_exit_price(fills: list, trade, is_equity: bool):
+    """
+    Reconstruct the per-share cost-to-close from real IBKR executions.
+
+    Only counts the CLOSING-side fills that occurred at/after entry, weighted by
+    shares — never averages the opening fill into the exit (the old bug). Returns
+    None when the close cannot be reliably reconstructed, so the caller books an
+    unknown P&L instead of a fabricated number.
+    """
+    if not fills:
+        return None
+    entry_dt = getattr(trade, "entry_date", None)
+
+    def _wavg(rows) -> Optional[float]:
+        sh = sum(r["shares"] for r in rows)
+        if sh <= 0:
+            return None
+        return sum(r["price"] * r["shares"] for r in rows) / sh
+
+    if is_equity:
+        # Long closes with a SELL (SLD); short closes with a BUY (BOT).
+        close_side = "BOT" if (trade.spread_type or "").lower() == "equity_short" else "SLD"
+        rows = [
+            f for f in fills
+            if f["secType"] in ("STK", "") and f["side"] == close_side
+            and _fill_after_entry(f["time"], entry_dt)
+        ]
+        px = _wavg(rows)
+        return round(px, 4) if px is not None else None
+
+    # Options credit spread: close = buy back the short leg + sell the long leg.
+    # cost_to_close (per share, net debit) = short_buyback − long_sale.
+    right = "C" if (trade.spread_type or "").lower().startswith("c") else "P"
+    short_k = float(trade.short_strike or 0)
+    long_k  = float(trade.long_strike or 0)
+
+    def _leg(strike: float, side: str) -> Optional[float]:
+        rows = [
+            f for f in fills
+            if f["secType"] == "OPT" and f["right"] == right
+            and abs(f["strike"] - strike) < 0.01 and f["side"] == side
+            and _fill_after_entry(f["time"], entry_dt)
+        ]
+        return _wavg(rows)
+
+    short_close = _leg(short_k, "BOT")   # bought back the short leg
+    long_close  = _leg(long_k, "SLD")    # sold the long leg
+    if short_close is None or long_close is None:
+        return None
+    return round(short_close - long_close, 4)
+
+
 async def _poll_fills() -> None:
     """
     Compare live broker positions against open DB trades.
-    When a position disappears from IBKR (fully closed), fetch the actual
-    fill price from IBKR execution history and record the real P&L.
+
+    When a position disappears from IBKR (fully closed), reconstruct the actual
+    cost-to-close from IBKR execution history and record the real P&L. If a real
+    exit price cannot be determined, the trade is held open and retried for a
+    grace window; only after that does it close with UNKNOWN P&L (never a
+    fabricated $0), with a CRITICAL alert for manual reconciliation.
     """
     try:
+        import asyncio
+        from datetime import datetime, timezone
         from app.broker.broker_factory import get_broker
         from app.core.database import AsyncSessionLocal
         from app.models.trade import Trade
@@ -762,61 +838,89 @@ async def _poll_fills() -> None:
             open_trades = result.scalars().all()
 
         if not open_trades:
+            _close_pending.clear()
             return
 
-        # Fetch recent IBKR executions once — keyed by symbol → avg fill price
-        exit_prices: dict[str, float] = {}
+        # Fetch recent IBKR executions once — detailed per-fill records so we can
+        # match the closing side / specific option legs (not a blind all-time avg).
+        fills_by_symbol: dict[str, list] = {}
         try:
             ib = getattr(broker, "ib", None)
             if ib is not None:
-                import asyncio
                 from ib_insync import ExecutionFilter
                 fills = await asyncio.wait_for(
                     ib.reqExecutionsAsync(ExecutionFilter()),
                     timeout=5.0,
                 )
-                # Group fills by symbol, average the fill prices weighted by shares
-                sym_total: dict[str, float] = {}
-                sym_shares: dict[str, float] = {}
                 for fill in fills:
-                    sym = (fill.contract.symbol or "").upper()
-                    shares = abs(fill.execution.shares or 0)
-                    price  = fill.execution.price or 0
-                    if sym and shares > 0:
-                        sym_total[sym]  = sym_total.get(sym, 0) + price * shares
-                        sym_shares[sym] = sym_shares.get(sym, 0) + shares
-                for sym, total in sym_total.items():
-                    exit_prices[sym] = round(total / sym_shares[sym], 4)
+                    c  = fill.contract
+                    ex = fill.execution
+                    sym = (c.symbol or "").upper()
+                    rec = {
+                        "secType": c.secType or "",
+                        "strike":  float(c.strike or 0),
+                        "right":   (c.right or "").upper(),
+                        "side":    (ex.side or "").upper(),   # BOT / SLD
+                        "price":   float(ex.price or 0),
+                        "shares":  abs(float(ex.shares or 0)),
+                        "time":    getattr(ex, "time", None),
+                    }
+                    if sym and rec["shares"] > 0 and rec["price"] > 0:
+                        fills_by_symbol.setdefault(sym, []).append(rec)
         except Exception as _exec_exc:
             logger.debug("Could not fetch IBKR executions: %s", _exec_exc)
 
+        now = datetime.now(timezone.utc)
+        still_missing: set[str] = set()
+
         for trade in open_trades:
             underlying = (trade.underlying or "").upper()
+            tid = str(trade.id)
             if not underlying or underlying in live_symbols:
-                continue  # still open — skip
+                _close_pending.pop(tid, None)
+                continue  # still open at broker
 
-            # Get actual exit price from execution history, fall back to entry price
-            exit_price = exit_prices.get(underlying)
-            entry_price = float(trade.credit_received or trade.short_strike or 0)
+            still_missing.add(tid)
+
+            spread_type = (trade.spread_type or "").lower()
+            is_equity   = (trade.strategy == "equity") or spread_type.startswith("equity")
+            exit_price  = _compute_exit_price(fills_by_symbol.get(underlying), trade, is_equity)
 
             if exit_price is not None:
-                cost_to_close = exit_price
-                exit_reason   = "position_closed_at_broker"
-            else:
-                # No execution data — use entry price so P&L = 0 (neutral, not fake profit)
-                cost_to_close = entry_price
-                exit_reason   = "position_closed_at_broker_estimated"
+                await trade_recorder.record_exit(
+                    trade_id=tid,
+                    cost_to_close=exit_price,
+                    exit_reason="position_closed_at_broker",
+                )
+                _close_pending.pop(tid, None)
+                logger.info(
+                    "Auto-closed %s (%s) — cost_to_close=%.4f source=ibkr_execution",
+                    tid, underlying, exit_price,
+                )
+                continue
 
-            await trade_recorder.record_exit(
-                trade_id=str(trade.id),
-                cost_to_close=cost_to_close,
-                exit_reason=exit_reason,
+            # No reliable exit price yet — wait within the grace window before
+            # booking unknown, in case the execution report arrives shortly.
+            first_missing = _close_pending.setdefault(tid, now)
+            elapsed = (now - first_missing).total_seconds()
+            if elapsed < CLOSE_GRACE_SECONDS:
+                logger.warning(
+                    "Position %s (%s) gone from broker but no execution price yet "
+                    "— holding open, will retry (%.0fs/%ds elapsed)",
+                    tid, underlying, elapsed, CLOSE_GRACE_SECONDS,
+                )
+                continue
+
+            await trade_recorder.record_close_unknown(
+                trade_id=tid,
+                exit_reason="closed_price_unavailable",
             )
-            logger.info(
-                "Auto-closed %s (%s) — exit_price=%.4f source=%s",
-                trade.id, underlying, cost_to_close,
-                "ibkr_execution" if exit_price is not None else "estimated",
-            )
+            _close_pending.pop(tid, None)
+
+        # Drop pending markers for trades that are no longer missing/open
+        for tid in list(_close_pending.keys()):
+            if tid not in still_missing:
+                _close_pending.pop(tid, None)
 
     except Exception as exc:
         logger.debug("_poll_fills: %s", exc)  # non-fatal
@@ -899,9 +1003,11 @@ async def guardrail_status():
             daily_pnl   = float((await session.execute(_pnl_window(today))).scalar() or 0)
             weekly_pnl  = float((await session.execute(_pnl_window(week_start))).scalar() or 0)
             monthly_pnl = float((await session.execute(_pnl_window(month_start))).scalar() or 0)
+            # Count trades ENTERED today (matches the daily-cap semantic used in
+            # trade_desk._fetch_portfolio_state), regardless of open/closed status.
             trades_today = int((await session.execute(
                 select(func.count(Trade.id)).where(
-                    and_(Trade.status == "closed", func.date(Trade.exit_date) == today)
+                    func.date(Trade.entry_date) == today
                 )
             )).scalar() or 0)
             recent = (await session.execute(

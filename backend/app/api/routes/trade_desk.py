@@ -67,10 +67,11 @@ async def _fetch_portfolio_state() -> PortfolioState:
             weekly_pnl  = await _sum_pnl(week_start)
             monthly_pnl = await _sum_pnl(month_start)
 
+            # Daily trade cap counts every trade ENTERED today, regardless of
+            # status — a trade opened and closed the same day still used a slot.
             trades_today = int((await _db.execute(
                 select(func.count()).where(
-                    Trade.status == "open",
-                    Trade.entry_date >= today,
+                    func.date(Trade.entry_date) == today,
                 )
             )).scalar() or 0)
 

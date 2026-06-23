@@ -216,6 +216,52 @@ class TradeRecorder:
             logger.error("record_exit failed for %s: %s", trade_id, exc)
             return False
 
+    async def record_close_unknown(
+        self,
+        *,
+        trade_id:    str,
+        exit_reason: str,
+    ) -> bool:
+        """
+        Close a trade whose real exit price could NOT be determined.
+
+        Marks the trade closed with pnl = NULL (unknown) rather than fabricating a
+        neutral $0 close. Analytics and guardrail P&L windows filter on
+        ``pnl IS NOT NULL``, so an unknown close is excluded instead of polluting
+        win-rate / loss-limit math with a fake zero. Emits CRITICAL so the trade
+        can be reconciled by hand against the broker.
+
+        Returns True on success.
+        """
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    trade = await session.get(Trade, uuid.UUID(trade_id))
+                    if trade is None:
+                        logger.warning("record_close_unknown: trade %s not found", trade_id)
+                        return False
+                    trade.cost_to_close = None
+                    trade.pnl           = None
+                    trade.pnl_pct       = None
+                    trade.status        = "closed"
+                    trade.exit_date     = datetime.now(timezone.utc)
+                    trade.exit_reason   = exit_reason
+
+            logger.critical(
+                "Trade %s closed with UNKNOWN P&L (reason=%s) — broker position is "
+                "gone but no execution price was available. Manual reconciliation "
+                "required to record realized P&L.",
+                trade_id, exit_reason,
+            )
+            return True
+
+        except Exception as exc:
+            logger.error("record_close_unknown failed for %s: %s", trade_id, exc)
+            return False
+
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 trade_recorder = TradeRecorder()
