@@ -30,6 +30,10 @@ async def _load_trades_from_db(
 
         trades = []
         for t in db_trades:
+            # Skip closes with unknown P&L (pnl=NULL) — counting them as $0 would
+            # pollute win rate, drawdown and Sharpe with a fabricated flat trade.
+            if t.pnl is None:
+                continue
             entry = t.entry_date.date() if t.entry_date else date.today()
             exit_d = t.exit_date.date() if t.exit_date else None
 
