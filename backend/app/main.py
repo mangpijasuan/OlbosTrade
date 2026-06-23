@@ -471,10 +471,72 @@ async def _run_equity_scan() -> None:
         logger.warning("Background equity scan failed: %s", exc)
 
 
+async def _live_spread_quote(
+    broker, symbol: str, expiry_iso: str,
+    short_strike: float, long_strike: float, opt_type: str,
+) -> Optional[dict]:
+    """
+    Price a vertical spread off the LIVE options chain (real NBBO mids).
+
+    Returns a dict with per-contract ``net_credit`` (dollars), the actual
+    available strikes nearest the requested ones, and the short-leg delta — or
+    ``None`` when a live chain / valid quotes are not available (e.g. no IBKR
+    options market-data subscription), in which case the caller falls back to the
+    Black-Scholes estimate.
+
+    Using the real chain means the submitted limit price tracks where the spread
+    can actually fill, instead of a theoretical Black-Scholes mid.
+    """
+    try:
+        chain = await broker.get_options_chain(symbol, expiry_iso)
+    except Exception as exc:
+        logger.debug("Live options chain unavailable for %s %s: %s", symbol, expiry_iso, exc)
+        return None
+
+    legs = chain.puts if opt_type == "put" else chain.calls
+    if not legs:
+        return None
+
+    def _nearest(target: float):
+        return min(legs, key=lambda c: abs(float(c.strike) - target))
+
+    short_c = _nearest(short_strike)
+    long_c = _nearest(long_strike)
+    if float(short_c.strike) == float(long_c.strike):
+        return None  # chain too sparse to form the spread
+
+    def _mid(c) -> Optional[float]:
+        bid = float(c.bid or 0)
+        ask = float(c.ask or 0)
+        if bid > 0 and ask > 0 and ask >= bid:
+            return (bid + ask) / 2.0
+        last = float(getattr(c, "last", 0) or 0)
+        return last if last > 0 else None
+
+    short_mid = _mid(short_c)
+    long_mid = _mid(long_c)
+    if short_mid is None or long_mid is None:
+        return None
+
+    net_credit_ps = short_mid - long_mid
+    if net_credit_ps <= 0:
+        return None  # not a credit at these strikes — let BS / strike selection handle it
+
+    short_delta = abs(float(short_c.greeks.delta)) if short_c.greeks and short_c.greeks.delta else None
+    return {
+        "net_credit":   round(net_credit_ps * 100, 2),
+        "short_delta":  short_delta,
+        "short_strike": float(short_c.strike),
+        "long_strike":  float(long_c.strike),
+    }
+
+
 async def _run_options_scan() -> None:
     """
     Generate options spread signals based on current regime and SPY bars.
-    Uses Black-Scholes to select ~0.30 delta short strike, 5pt wide spread.
+    Uses Black-Scholes to select ~0.30 delta short strike, 5pt wide spread, then
+    prices the spread off the live IBKR chain when available (Black-Scholes mid is
+    the fallback when there is no options market-data subscription).
     Routes through execution handler (manual/copilot/autopilot).
     """
     if _current_regime is None or not getattr(_current_regime, "options_allowed", False):
@@ -534,7 +596,7 @@ async def _run_options_scan() -> None:
         long_strike  = short_strike - 5.0 if not is_call else short_strike + 5.0
         spread_width = abs(short_strike - long_strike)
 
-        # Estimate net credit (short premium - long premium)
+        # Black-Scholes estimate (fallback / no-subscription path)
         try:
             short_px = pricer.put_price(spot, short_strike, T, RISK_FREE, vix_est) if not is_call \
                        else pricer.call_price(spot, short_strike, T, RISK_FREE, vix_est)
@@ -543,6 +605,27 @@ async def _run_options_scan() -> None:
             net_credit = round((short_px - long_px) * 100, 2)  # per contract $
         except Exception:
             net_credit = 0.0
+
+        # Prefer the LIVE chain price when a quote is available — the limit then
+        # tracks where the spread can actually fill instead of a theoretical mid.
+        credit_source = "black_scholes"
+        broker = get_broker()
+        live = await _live_spread_quote(
+            broker, "SPY", target_exp.isoformat(), short_strike, long_strike, opt_type,
+        )
+        if live and live["net_credit"] > 0:
+            short_strike = live["short_strike"]
+            long_strike  = live["long_strike"]
+            spread_width = abs(short_strike - long_strike)
+            net_credit   = live["net_credit"]
+            if live["short_delta"] is not None:
+                best_short_delta = live["short_delta"]
+            credit_source = "live_chain"
+
+        if spread_width <= 0 or net_credit <= 0:
+            logger.info("Options scan: no usable spread (width=%.1f credit=%.2f) — skipping",
+                        spread_width, net_credit)
+            return
 
         credit_per_share = net_credit / 100.0
         max_loss_dollars = round((spread_width - credit_per_share) * 100, 2)
@@ -588,7 +671,7 @@ async def _run_options_scan() -> None:
         # regime's options size multiplier — same machinery the equity path uses.
         from app.services.risk_manager import RiskManager
         try:
-            acct = await get_broker().get_account_summary()
+            acct = await broker.get_account_summary()
             portfolio_value = float(acct.net_liquidation or settings.starting_capital)
         except Exception:
             portfolio_value = settings.starting_capital
@@ -631,14 +714,15 @@ async def _run_options_scan() -> None:
                 "breakeven":     round(short_strike - credit_per_share, 2) if not is_call
                                  else round(short_strike + credit_per_share, 2),
             },
-            "sigma":    round(sigma, 4),
-            "vix_used": round(vix_est * 100, 1),
+            "sigma":         round(sigma, 4),
+            "vix_used":      round(vix_est * 100, 1),
+            "credit_source": credit_source,
         }
 
         logger.info(
-            "Options signal: %s SPY %s %s/%s exp %s credit $%.2f score=%.3f qty=%d",
+            "Options signal: %s SPY %s %s/%s exp %s credit $%.2f (%s) score=%.3f qty=%d",
             strategy, opt_type, short_strike, long_strike, target_exp, net_credit,
-            signal_score, quantity,
+            credit_source, signal_score, quantity,
         )
 
         from app.api.routes.trade_desk import handle_signal
