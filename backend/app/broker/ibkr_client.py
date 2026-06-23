@@ -576,25 +576,62 @@ class IBKRClient(BrokerInterface):
         stock = Stock(ticker, "SMART", "USD")
         await self.ib.qualifyContractsAsync(stock)
 
+        from ib_insync import MarketOrder, StopOrder
+
         ib_action = side
-        if order_type == "market":
-            from ib_insync import MarketOrder
-            order = MarketOrder(action=ib_action, totalQuantity=qty, tif="DAY")
-        else:
-            order = LimitOrder(action=ib_action, totalQuantity=qty,
-                               lmtPrice=limit_price or 0.0, tif="DAY")
+
+        def _build_entry() -> object:
+            if order_type == "market":
+                return MarketOrder(action=ib_action, totalQuantity=qty, tif="DAY")
             # explicit DAY to match IB Gateway order preset — avoids Error 10349 cancel
+            return LimitOrder(action=ib_action, totalQuantity=qty,
+                              lmtPrice=limit_price or 0.0, tif="DAY")
 
-        if take_profit:
-            order.takeProfitPrice = take_profit
-        if stop:
-            order.stopLossPrice = stop
-            order.orderType = "LMT" if take_profit else order.orderType
+        # A stop and/or take-profit means a bracket: a parent entry order with
+        # OCO child exit orders attached via parentId. The previous code set
+        # `order.takeProfitPrice` / `order.stopLossPrice` attributes that
+        # ib_insync ignores entirely — so protective exits NEVER reached IBKR.
+        use_bracket = (stop is not None) or (take_profit is not None)
 
-        logger.info("Submitting equity order: %s %s x%d @ %s",
-                    side, ticker, qty, f"${limit_price:.2f}" if limit_price else "MKT")
+        if use_bracket:
+            exit_action = "SELL" if ib_action == "BUY" else "BUY"
+            parent_id = self.ib.client.getReqId()
 
-        trade = self.ib.placeOrder(stock, order)
+            parent = _build_entry()
+            parent.orderId = parent_id
+            parent.transmit = False   # hold until all children are queued
+
+            children = []
+            if take_profit:
+                tp = LimitOrder(action=exit_action, totalQuantity=qty,
+                                lmtPrice=round(float(take_profit), 2), tif="GTC")
+                tp.orderId = self.ib.client.getReqId()
+                tp.parentId = parent_id
+                # transmit the whole bracket on the last child only
+                tp.transmit = stop is None
+                children.append(tp)
+            if stop:
+                sl = StopOrder(action=exit_action, totalQuantity=qty,
+                               stopPrice=round(float(stop), 2), tif="GTC")
+                sl.orderId = self.ib.client.getReqId()
+                sl.parentId = parent_id
+                sl.transmit = True   # last leg fires the entire bracket
+                children.append(sl)
+
+            logger.info(
+                "Submitting equity BRACKET: %s %s x%d @ %s | TP=%s SL=%s",
+                side, ticker, qty,
+                f"${limit_price:.2f}" if limit_price else "MKT",
+                f"${take_profit:.2f}" if take_profit else "—",
+                f"${stop:.2f}" if stop else "—",
+            )
+            trade = self.ib.placeOrder(stock, parent)
+            for child in children:
+                self.ib.placeOrder(stock, child)
+        else:
+            logger.info("Submitting equity order: %s %s x%d @ %s",
+                        side, ticker, qty, f"${limit_price:.2f}" if limit_price else "MKT")
+            trade = self.ib.placeOrder(stock, _build_entry())
 
         # ── Real-time status logging ───────────────────────────────────────────
         def _on_status(t=trade):

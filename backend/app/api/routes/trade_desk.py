@@ -362,6 +362,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 order_type=signal.get("order_type", "limit"),
                 limit_price=trade_plan.get("entry_price"),
                 stop=trade_plan.get("stop_price"),
+                take_profit=trade_plan.get("target_price"),
             )
 
             # Encode direction so exit P&L is computed with the right sign.

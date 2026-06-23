@@ -92,6 +92,7 @@ app.add_middleware(
 # ── Global singletons (populated at startup) ───────────────────────────────
 _current_regime: Optional[object] = None   # RegimeState
 _greeks_tracker: Optional[object] = None   # PortfolioGreeksTracker
+_signal_scorer: Optional[object] = None    # SignalScorer (lazy — loads model pkl)
 
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
@@ -516,6 +517,7 @@ async def _run_options_scan() -> None:
         target_delta = 0.30
 
         best_short, best_delta_diff = spot, 1.0
+        best_short_delta = target_delta
         for offset in range(-60, 61, 5):
             s = round(spot + offset)
             try:
@@ -524,11 +526,13 @@ async def _run_options_scan() -> None:
                 if abs(d_abs - target_delta) < best_delta_diff:
                     best_delta_diff = abs(d_abs - target_delta)
                     best_short = s
+                    best_short_delta = d_abs
             except Exception:
                 continue
 
         short_strike = float(best_short)
         long_strike  = short_strike - 5.0 if not is_call else short_strike + 5.0
+        spread_width = abs(short_strike - long_strike)
 
         # Estimate net credit (short premium - long premium)
         try:
@@ -540,6 +544,70 @@ async def _run_options_scan() -> None:
         except Exception:
             net_credit = 0.0
 
+        credit_per_share = net_credit / 100.0
+        max_loss_dollars = round((spread_width - credit_per_share) * 100, 2)
+
+        # ── AI signal scoring gate ──────────────────────────────────────────
+        # Mirror the equity path: an options spread must pass the scorer before
+        # it is routed to execution. Previously options bypassed the scorer with
+        # signal_score=0, so every spread that the regime allowed was traded.
+        global _signal_scorer
+        if _signal_scorer is None:
+            from app.services.signal_scorer import SignalScorer
+            _signal_scorer = SignalScorer()
+        from app.services.signal_scorer import SignalFeatures
+
+        feat = _current_regime.features_used
+        features = SignalFeatures(
+            iv_rank=float(getattr(feat, "iv_rank", 0.0)) if feat else 0.0,
+            iv_percentile=float(getattr(feat, "iv_percentile", 0.0)) if feat else 0.0,
+            vix_level=float(getattr(feat, "vix", vix_est * 100)) if feat else vix_est * 100,
+            spy_rsi_14=float(getattr(feat, "rsi_14", 50.0)) if feat else 50.0,
+            spy_adx_14=float(getattr(feat, "adx_14", 20.0)) if feat else 20.0,
+            spy_trend_direction=1.0 if (feat and getattr(feat, "spy_return_20d", 0.0) >= 0) else -1.0,
+            days_to_expiry=float(dte_target),
+            short_strike_delta=float(best_short_delta),
+            spread_width=float(spread_width),
+            credit_to_width_ratio=(credit_per_share / spread_width) if spread_width else 0.0,
+            earnings_days_away=60.0,   # SPY (ETF) — no single-name earnings event
+            spy_realized_vol_20d=float(sigma),
+            iv_minus_rv=float(vix_est - sigma),
+        )
+        score_result = await _signal_scorer.score_async(features)
+        signal_score = float(score_result.score)
+        if not score_result.approved:
+            logger.info(
+                "Options signal rejected by AI scorer: SPY %s score=%.3f — %s",
+                strategy, signal_score, score_result.rejection_reason,
+            )
+            return
+
+        # ── Position sizing via RiskManager ─────────────────────────────────
+        # Previously every spread was quantity=1. Size off portfolio value, the
+        # spread's max loss, the active trading mode's risk-per-trade %, and the
+        # regime's options size multiplier — same machinery the equity path uses.
+        from app.services.risk_manager import RiskManager
+        try:
+            acct = await get_broker().get_account_summary()
+            portfolio_value = float(acct.net_liquidation or settings.starting_capital)
+        except Exception:
+            portfolio_value = settings.starting_capital
+        risk_pct  = trading_mode_manager.config.risk_per_trade_pct
+        size_mult = float(getattr(_current_regime, "options_size_multiplier", 1.0))
+        quantity  = RiskManager().calculate_position_size(
+            portfolio_value=portfolio_value,
+            max_loss_per_spread=max_loss_dollars,
+            risk_pct=risk_pct,
+            size_multiplier=size_mult,
+        )
+        if quantity <= 0:
+            logger.info(
+                "Options signal skipped — sized to 0 contracts "
+                "(portfolio=$%.0f max_loss=$%.0f risk_pct=%.3f mult=%.2f)",
+                portfolio_value, max_loss_dollars, risk_pct, size_mult,
+            )
+            return
+
         signal = {
             "id":           str(uuid.uuid4()),
             "ticker":       "SPY",
@@ -548,6 +616,9 @@ async def _run_options_scan() -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "action":       "SELL_SPREAD",
             "confidence":   round(getattr(_current_regime, "confidence", 0.5), 4),
+            "signal_score": round(signal_score, 4),
+            "quantity":     int(quantity),
+            "iv_rank":      round(features.iv_rank, 2),
             "regime":       _current_regime.regime.value,
             "spread": {
                 "option_type":   opt_type,
@@ -556,17 +627,18 @@ async def _run_options_scan() -> None:
                 "expiration":    target_exp.isoformat(),
                 "dte":           dte_target,
                 "net_credit":    net_credit,
-                "max_loss":      round((5.0 - net_credit / 100) * 100, 2),
-                "breakeven":     round(short_strike - net_credit / 100, 2) if not is_call
-                                 else round(short_strike + net_credit / 100, 2),
+                "max_loss":      max_loss_dollars,
+                "breakeven":     round(short_strike - credit_per_share, 2) if not is_call
+                                 else round(short_strike + credit_per_share, 2),
             },
             "sigma":    round(sigma, 4),
             "vix_used": round(vix_est * 100, 1),
         }
 
         logger.info(
-            "Options signal: %s SPY %s %s/%s exp %s credit $%.2f",
+            "Options signal: %s SPY %s %s/%s exp %s credit $%.2f score=%.3f qty=%d",
             strategy, opt_type, short_strike, long_strike, target_exp, net_credit,
+            signal_score, quantity,
         )
 
         from app.api.routes.trade_desk import handle_signal
@@ -678,7 +750,11 @@ async def _update_portfolio_greeks() -> None:
         # Rebuild the tracker from live positions on every tick
         _greeks_tracker._positions.clear()
         for pos in positions:
-            if getattr(pos, "option_type", None):
+            # Equities carry a placeholder option_type="call" and strike=0 from the
+            # broker client, so option_type alone misclassifies them as options
+            # (with zero Greeks). Use the strike==0 sentinel to detect equities.
+            is_option = bool(getattr(pos, "option_type", None)) and float(getattr(pos, "strike", 0) or 0) != 0
+            if is_option:
                 # Options position — use broker-supplied Greeks if available
                 greeks = getattr(pos, "greeks", None)
                 _greeks_tracker.add_options_position(
