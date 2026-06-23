@@ -364,12 +364,16 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 stop=trade_plan.get("stop_price"),
             )
 
+            # Encode direction so exit P&L is computed with the right sign.
+            # SELL = short (profit when price falls), default BUY = long.
+            equity_direction = "equity_short" if action.upper() == "SELL" else "equity_long"
+
             # Stage 5: fill recording — CRITICAL on failure (filled but unrecorded is dangerous)
             from app.services.trade_recorder import trade_recorder
             recorded = await trade_recorder.record_fill(
                 strategy="equity",
                 underlying=ticker,
-                option_type="equity",
+                option_type=equity_direction,
                 short_strike=trade_plan.get("entry_price") or 0,
                 long_strike=trade_plan.get("stop_price") or 0,
                 expiration=date.today(),
@@ -427,7 +431,13 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
 
             from app.core.config import settings as _cfg
             aggression = getattr(_cfg, "limit_price_aggression", 1.0)
-            limit_px   = Decimal(str(round(credit * aggression, 2)))
+            # `credit` (net_credit) is a PER-CONTRACT dollar amount (already x100,
+            # e.g. $150 for a $1.50 spread). The broker expects a PER-SHARE net
+            # price (1.50) — IB applies the x100 multiplier itself. Passing 150
+            # asked for a $150 credit per spread and the order NEVER filled, which
+            # is why no options trades were ever executed. Convert back to per-share.
+            credit_per_share = float(credit) / 100.0
+            limit_px   = Decimal(str(round(credit_per_share * aggression, 2)))
 
             order = SpreadOrder(
                 strategy=strategy,
@@ -455,7 +465,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 long_strike=float(long_str),
                 expiration=expiry_date,
                 quantity=quantity,
-                entry_credit=float(credit),
+                # Store per-share net credit (1.50, not 150) so record_exit's
+                # x100 contract multiplier yields correct dollar P&L.
+                entry_credit=credit_per_share,
                 spread_width=abs(float(short_str) - float(long_str)),
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),

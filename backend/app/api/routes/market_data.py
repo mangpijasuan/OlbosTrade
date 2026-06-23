@@ -39,12 +39,18 @@ async def _yfinance_snapshot(symbol: str) -> dict:
             last = float(intra["Close"].dropna().iloc[-1])
         else:
             last = float(daily_closes.iloc[-1])
-        # prev_close: last completed daily bar (yesterday's close)
-        prev_close = float(daily_closes.iloc[-1]) if intra.empty else float(daily_closes.iloc[-1])
-        # When market is open, daily[-1] is yesterday — use it as reference
-        # When market is closed, intra is empty so last == daily[-1] and prev is daily[-2]
-        if intra.empty and len(daily_closes) >= 2:
+        # prev_close = the previous COMPLETED session's close, i.e. the reference
+        # for today's % change.
+        #
+        # NOTE: yfinance's daily history includes TODAY's in-progress bar as the
+        # last row during/after market open. So `daily_closes.iloc[-1]` is today's
+        # (current) price — using it as prev_close made change_pct ~= 0 and the
+        # ticker always render green. The correct reference is iloc[-2] whenever a
+        # prior session exists, regardless of whether the market is open.
+        if len(daily_closes) >= 2:
             prev_close = float(daily_closes.iloc[-2])
+        else:
+            prev_close = float(daily_closes.iloc[-1])
         chg_pct    = round((last - prev_close) / prev_close * 100, 2) if prev_close else 0.0
         return {
             "symbol":     symbol,

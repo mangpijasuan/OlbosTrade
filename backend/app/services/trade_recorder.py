@@ -175,9 +175,27 @@ class TradeRecorder:
                         logger.warning("record_exit: trade %s not found", trade_id)
                         return False
 
-                    credit = float(trade.credit_received or 0)
+                    entry  = float(trade.credit_received or 0)
                     qty    = int(getattr(trade, "quantity", None) or 1)
-                    pnl    = (credit - cost_to_close) * qty * 100
+
+                    # Equity has no x100 contract multiplier; options do.
+                    # Direction is encoded in spread_type ("equity_long"/"equity_short").
+                    spread_type = (getattr(trade, "spread_type", "") or "").lower()
+                    is_equity   = (getattr(trade, "strategy", "") == "equity") or spread_type.startswith("equity")
+
+                    if is_equity:
+                        multiplier = 1
+                        if spread_type == "equity_short":
+                            # Short: profit when exit price is below entry.
+                            pnl = (entry - cost_to_close) * qty * multiplier
+                        else:
+                            # Long (default): profit when exit price is above entry.
+                            pnl = (cost_to_close - entry) * qty * multiplier
+                    else:
+                        # Credit spread: entry credit received, pay cost_to_close to exit.
+                        multiplier = 100
+                        pnl = (entry - cost_to_close) * qty * multiplier
+
                     starting_capital = float(settings.starting_capital)
                     pnl_pct = pnl / starting_capital if starting_capital > 0 else 0.0
 
