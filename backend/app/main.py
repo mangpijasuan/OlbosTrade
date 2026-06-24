@@ -143,7 +143,10 @@ async def on_startup() -> None:
         # Wire kill switch — must happen after broker is available
         from app.services.kill_switch import kill_switch_service
         kill_switch_service.configure(broker)
-        logger.info("Kill switch wired to broker")
+        # Restore engaged state from DB so a restart can't silently re-enable
+        # trading after the kill switch was engaged.
+        await kill_switch_service.rehydrate()
+        logger.info("Kill switch wired to broker (engaged=%s)", kill_switch_service.is_engaged)
     except Exception as exc:
         logger.warning("Broker initialization failed (non-fatal): %s", exc)
 
@@ -415,8 +418,10 @@ async def _run_equity_scan() -> None:
             try:
                 if earnings_gate(ticker, settings.earnings_gate_days):
                     continue
-                # Use yfinance for historical bars — no broker subscription needed
-                bars = await _yf_bars(ticker, limit=120)
+                # Use yfinance for historical bars — no broker subscription needed.
+                # Need >=200 bars so EMA200 computes; with only 120 it was always
+                # NaN, forcing above_ema200=False and skewing every signal bearish.
+                bars = await _yf_bars(ticker, limit=250)
                 if len(bars) < 30:
                     continue
                 df = pd.DataFrame([{

@@ -288,8 +288,54 @@ class KillSwitch:
         if self._scheduler is not None:
             self._scheduler.resume()
 
+        # Persist the reset so a restart does NOT re-engage from the prior
+        # engage event (rehydrate() reads the most recent event of either type).
+        try:
+            async with AsyncSessionLocal() as session:
+                session.add(GuardrailEvent(
+                    event_type="kill_switch_reset",
+                    notes="manual reset via OLBOSQUANT_MANUAL_RESET",
+                ))
+                await session.commit()
+        except Exception as exc:
+            logger.error("Kill switch: failed to persist reset event: %s", exc)
+
         logger.warning("Kill switch RESET — trading re-enabled after manual review")
         return {"reset": True, "trading_enabled": True}
+
+    async def rehydrate(self) -> None:
+        """
+        Restore engaged state from the DB on startup.
+
+        The kill switch is a safety control — if it was engaged when the process
+        died/restarted, it MUST come back engaged, or a restart would silently
+        re-enable trading. Reads the most recent kill_switch / kill_switch_reset
+        event: if the latest is an engage with no later reset, re-engage (flag
+        only — positions were already flattened when it first engaged).
+        """
+        try:
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(GuardrailEvent)
+                    .where(GuardrailEvent.event_type.in_(("kill_switch", "kill_switch_reset")))
+                    .order_by(GuardrailEvent.timestamp.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
+            if row is not None and row.event_type == "kill_switch":
+                async with self._lock:
+                    self._engaged = True
+                    self._engaged_at = row.timestamp
+                    self._reason = "restored as engaged after restart"
+                logger.critical(
+                    "🛑 Kill switch RESTORED as ENGAGED from DB (last engage at %s) — "
+                    "trading stays halted until a manual reset.",
+                    row.timestamp.isoformat() if row.timestamp else "unknown",
+                )
+        except Exception as exc:
+            logger.error(
+                "Kill switch rehydrate failed (defaulting to NOT engaged): %s", exc
+            )
 
 
 # ── Singleton instance ────────────────────────────────────────────────────────
