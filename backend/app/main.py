@@ -536,6 +536,72 @@ async def _live_spread_quote(
     }
 
 
+async def _yf_options_quote(
+    symbol: str, target_expiry_iso: str,
+    short_strike: float, long_strike: float, opt_type: str,
+) -> Optional[dict]:
+    """
+    Price a vertical spread off yfinance's (free, ~15-min delayed) option chain.
+
+    Used as the no-cost fallback when the broker chain has no quotes (IBKR without
+    an options market-data subscription). Snaps to the nearest listed expiration and
+    strikes, and prices each leg at its bid/ask mid (last price if bid/ask missing).
+    yfinance does not provide greeks, so short_delta is left None and the caller
+    keeps its Black-Scholes delta estimate. Returns None if no usable credit quote.
+    """
+    import asyncio
+    loop = asyncio.get_running_loop()
+
+    def _fetch() -> Optional[dict]:
+        try:
+            import yfinance as yf
+            from datetime import date as _date
+            tk = yf.Ticker(symbol)
+            expirations = list(tk.options or [])
+            if not expirations:
+                return None
+            target = _date.fromisoformat(target_expiry_iso)
+            chosen = min(expirations,
+                         key=lambda e: abs((_date.fromisoformat(e) - target).days))
+            chain = tk.option_chain(chosen)
+            df = chain.puts if opt_type == "put" else chain.calls
+            if df is None or df.empty:
+                return None
+
+            def _leg(strike: float):
+                idx = (df["strike"] - strike).abs().idxmin()
+                row = df.loc[idx]
+                bid = float(row.get("bid", 0) or 0)
+                ask = float(row.get("ask", 0) or 0)
+                last = float(row.get("lastPrice", 0) or 0)
+                if bid > 0 and ask > 0 and ask >= bid:
+                    mid = (bid + ask) / 2.0
+                elif last > 0:
+                    mid = last
+                else:
+                    mid = None
+                return float(row["strike"]), mid
+
+            s_strike, s_mid = _leg(short_strike)
+            l_strike, l_mid = _leg(long_strike)
+            if s_mid is None or l_mid is None or s_strike == l_strike:
+                return None
+            net = s_mid - l_mid
+            if net <= 0:
+                return None
+            return {
+                "net_credit":   round(net * 100, 2),
+                "short_delta":  None,
+                "short_strike": s_strike,
+                "long_strike":  l_strike,
+                "expiration":   chosen,
+            }
+        except Exception:
+            return None
+
+    return await loop.run_in_executor(None, _fetch)
+
+
 async def _run_options_scan() -> None:
     """
     Generate options spread signals based on current regime and SPY bars.
@@ -626,6 +692,19 @@ async def _run_options_scan() -> None:
             if live["short_delta"] is not None:
                 best_short_delta = live["short_delta"]
             credit_source = "live_chain"
+        else:
+            # Free fallback: price off yfinance's (delayed) option chain before
+            # falling back to the Black-Scholes theoretical mid.
+            yq = await _yf_options_quote(
+                "SPY", target_exp.isoformat(), short_strike, long_strike, opt_type,
+            )
+            if yq and yq["net_credit"] > 0:
+                short_strike = yq["short_strike"]
+                long_strike  = yq["long_strike"]
+                spread_width = abs(short_strike - long_strike)
+                net_credit   = yq["net_credit"]
+                target_exp   = date.fromisoformat(yq["expiration"])
+                credit_source = "yfinance_chain"
 
         if spread_width <= 0 or net_credit <= 0:
             logger.info("Options scan: no usable spread (width=%.1f credit=%.2f) — skipping",
