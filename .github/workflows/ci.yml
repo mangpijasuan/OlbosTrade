@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: New/critical modules — hard 95% gate
+        run: >
+          pytest tests/test_trade_frequency_controller.py tests/test_symphony.py
+          --cov=app.services.trade_frequency_controller
+          --cov=app.services.symphony
+          --cov-report=term-missing --cov-fail-under=95
+      - name: Whole-app coverage (ratchet floor; target 95%)
+        run: pytest --cov=app --cov-report=term-missing

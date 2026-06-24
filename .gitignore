@@ -38,3 +38,8 @@ logs/
 # Alembic
 alembic/versions/*.pyc
 backtest_results.json
+
+# Coverage
+backend/.coverage
+.coverage
+htmlcov/

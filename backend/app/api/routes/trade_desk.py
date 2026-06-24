@@ -325,6 +325,23 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         logger.error("Risk gate refused trade for %s (fail closed): %s", ticker, exc)
         return _blocked(f"risk_gate_error: {exc}")
 
+    # ── Stage 1c: Trade Frequency Controller (before the risk engine) ───────────
+    # Profitability before activity: per-mode daily cap, min confidence, max risk
+    # score, and a positive-EV quality filter. Reuses the portfolio-state read.
+    # Manual trades bypass it — the user is overriding signal generation on purpose
+    # (they still face the kill switch, market hours, guardrails, and sizing).
+    if approved_by != "manual":
+        from app.services.trade_frequency_controller import trade_frequency_controller
+        freq = trade_frequency_controller.evaluate(
+            signal, trades_today=portfolio_state.trades_today,
+        )
+        if not freq.allowed:
+            logger.info(
+                "Frequency controller blocked %s: %s (score=%.3f risk=%d ev=%.3f)",
+                ticker, freq.reason, freq.weighted_score, freq.risk_score, freq.expected_value,
+            )
+            return _blocked(f"frequency_controller: {freq.reason}")
+
     _guardrail = GuardrailEngine()
     guardrail_status = _guardrail.check_all(portfolio_state)
     if not guardrail_status.trading_allowed:

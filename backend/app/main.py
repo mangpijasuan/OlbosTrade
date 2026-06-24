@@ -371,6 +371,7 @@ async def _run_equity_scan() -> None:
         from app.api.routes.equity import _recent_signals   # shared in-memory store
 
         watchlist = settings.get_equity_watchlist()
+        routable: list = []   # qualifying signals to rank + route highest-first
 
         for ticker in watchlist[:5]:   # cap at 5 per background tick
             try:
@@ -422,16 +423,26 @@ async def _run_equity_scan() -> None:
                 _recent_signals.insert(0, signal)
                 logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
 
-                # Route to execution handler (manual=skip, copilot=queue, autopilot=execute)
+                # Collect actionable signals; rank + route after the loop so the
+                # highest-quality opportunities reach the frequency controller first.
                 if action in ("BUY", "SELL") and confidence >= settings.effective_equity_min_confidence:
-                    try:
-                        from app.api.routes.trade_desk import handle_signal
-                        await handle_signal(signal)
-                    except Exception as exec_exc:
-                        logger.warning("Execution handler failed for %s: %s", ticker, exec_exc)
+                    routable.append(signal)
 
             except Exception as exc:
                 logger.warning("Equity scan failed for %s: %s", ticker, exc)
+
+        # Rank by weighted quality score, then route highest-first. The frequency
+        # controller inside handle_signal enforces the per-mode daily cap, so once
+        # capacity is reached the lower-ranked signals are blocked, not the best.
+        if routable:
+            from app.services.trade_frequency_controller import trade_frequency_controller
+            from app.api.routes.trade_desk import handle_signal
+            for sig in trade_frequency_controller.rank(routable):
+                try:
+                    await handle_signal(sig)
+                except Exception as exec_exc:
+                    logger.warning("Execution handler failed for %s: %s",
+                                   sig.get("ticker"), exec_exc)
 
         del _recent_signals[200:]   # keep last 200 only
 

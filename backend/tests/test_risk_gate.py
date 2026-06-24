@@ -35,13 +35,18 @@ def _market_always_open():
 # ── Signal fixtures ────────────────────────────────────────────────────────────
 
 def _equity_signal(ticker="AAPL", shares=10, limit_price=150.0):
+    # Realistic autopilot signal: high confidence + positive reward:risk so it
+    # clears the Trade Frequency Controller and reaches the stage under test.
     return {
         "id":         "sig-001",
         "ticker":     ticker,
         "action":     "BUY",
         "asset_type": "equity",
+        "confidence": 0.95,
         "trade_plan": {"shares": shares, "entry_price": limit_price,
-                       "stop_price": None, "target_price": None},
+                       "stop_price": None, "target_price": None,
+                       "risk_reward": 2.0},
+        "indicators": {"volume_ratio": 1.5},
         "signal_score": 0.8,
         "iv_rank": 30.0,
         "regime": "normal",
@@ -56,12 +61,14 @@ def _options_signal(ticker="SPY", quantity=1):
         "asset_type": "options",
         "strategy":   "bull_put_spread",
         "quantity":   quantity,
+        "confidence": 0.92,
         "spread": {
             "expiration":   "2025-06-20",
             "short_strike": 450,
             "long_strike":  445,
             "option_type":  "put",
             "net_credit":   1.50,
+            "max_loss":     3.50,
         },
         "signal_score": 0.75,
         "iv_rank": 45.0,

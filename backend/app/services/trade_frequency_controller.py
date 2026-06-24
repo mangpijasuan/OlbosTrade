@@ -1,0 +1,196 @@
+"""
+Portfolio-level Trade Frequency Controller + Signal Ranking.
+
+Sits in the pipeline BEFORE the risk engine:
+
+    Signal Generation → Signal Ranking → Trade Frequency Controller
+    → Risk Engine → Portfolio Engine → Execution → IBKR
+
+Purpose: profitability before activity. It ranks candidate signals by a weighted
+quality score and throttles execution per the active risk mode (Conservative /
+Balanced / Aggressive) — enforcing per-mode daily caps, a minimum confidence, a
+maximum risk score, and a positive-expected-value quality filter. It NEVER
+manufactures trades: if nothing qualifies, nothing trades.
+
+This complements (does not replace) the existing GuardrailEngine, which keeps
+veto authority over loss limits, drawdown, cooling-off, and concentration.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from app.services.trading_mode import TradingModeType, trading_mode_manager
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# ── Per-mode frequency / quality rules ──────────────────────────────────────────
+@dataclass(frozen=True)
+class FrequencyRule:
+    target_per_day:        int     # soft target (informational)
+    hard_max_per_day:      int     # hard cap — never exceeded
+    min_confidence:        float   # 0..1 minimum signal confidence to qualify
+    max_risk_score:        int     # 0..100 maximum acceptable risk score
+    capital_deploy_min:    float   # informational deployment band (0..1)
+    capital_deploy_max:    float
+
+
+MODE_RULES: dict[TradingModeType, FrequencyRule] = {
+    TradingModeType.CONSERVATIVE: FrequencyRule(
+        target_per_day=2, hard_max_per_day=3, min_confidence=0.90,
+        max_risk_score=20, capital_deploy_min=0.20, capital_deploy_max=0.40),
+    TradingModeType.BALANCED: FrequencyRule(
+        target_per_day=6, hard_max_per_day=10, min_confidence=0.75,
+        max_risk_score=40, capital_deploy_min=0.40, capital_deploy_max=0.70),
+    TradingModeType.AGGRESSIVE: FrequencyRule(
+        target_per_day=15, hard_max_per_day=40, min_confidence=0.65,
+        max_risk_score=60, capital_deploy_min=0.70, capital_deploy_max=0.95),
+    # Scalper inherits aggressive-style frequency but keeps the tightest cap.
+    TradingModeType.SCALPER: FrequencyRule(
+        target_per_day=20, hard_max_per_day=40, min_confidence=0.65,
+        max_risk_score=60, capital_deploy_min=0.50, capital_deploy_max=0.95),
+}
+
+
+def rule_for(mode: TradingModeType) -> FrequencyRule:
+    return MODE_RULES.get(mode, MODE_RULES[TradingModeType.BALANCED])
+
+
+# ── Signal scoring (used for ranking + the quality filter) ──────────────────────
+def _confidence(signal: dict) -> float:
+    """Unified 0..1 confidence — equities use 'confidence', options 'signal_score'."""
+    c = signal.get("confidence")
+    if c is None:
+        c = signal.get("signal_score", 0.0)
+    try:
+        return max(0.0, min(1.0, float(c)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _reward_risk(signal: dict) -> float:
+    """Reward:risk ratio. Equity: trade_plan.risk_reward. Options: credit/max_loss."""
+    tp = signal.get("trade_plan") or {}
+    if tp.get("risk_reward") is not None:
+        try:
+            return max(0.0, float(tp["risk_reward"]))
+        except (TypeError, ValueError):
+            return 0.0
+    spread = signal.get("spread") or {}
+    credit = float(spread.get("net_credit", 0) or 0)
+    max_loss = float(spread.get("max_loss", 0) or 0)
+    if max_loss > 0:
+        return max(0.0, credit / max_loss)
+    return 0.0
+
+
+def _liquidity(signal: dict) -> float:
+    """0..1 liquidity proxy. Equity: volume_ratio (capped). Options: 0.5 placeholder
+    until the Options Intelligence engine supplies real bid/ask depth."""
+    ind = signal.get("indicators") or {}
+    vr = ind.get("volume_ratio")
+    if vr is not None:
+        try:
+            return max(0.0, min(1.0, float(vr) / 2.0))  # 2x avg volume ⇒ 1.0
+        except (TypeError, ValueError):
+            return 0.5
+    return 0.5
+
+
+def expected_value(signal: dict) -> float:
+    """
+    Per-$1-risk expected value proxy: EV = p·reward − (1−p)·1, where p is the
+    confidence used as a probability-of-profit proxy. Refined later by the
+    Options Intelligence engine (true POP). EV > 0 is the quality gate.
+    """
+    p = _confidence(signal)
+    rr = _reward_risk(signal)
+    return round(p * rr - (1.0 - p), 4)
+
+
+def weighted_score(signal: dict) -> float:
+    """
+    Ranking score (0..1-ish): 0.40 confidence + 0.25 EV + 0.20 reward:risk
+    + 0.15 liquidity. Higher ranks execute first.
+    """
+    conf = _confidence(signal)
+    ev = expected_value(signal)
+    ev_score = max(0.0, min(1.0, (ev + 1.0) / 2.0))   # map EV∈[-1,1] → [0,1]
+    rr_score = max(0.0, min(1.0, _reward_risk(signal) / 3.0))  # 3:1 ⇒ 1.0
+    liq = _liquidity(signal)
+    return round(0.40 * conf + 0.25 * ev_score + 0.20 * rr_score + 0.15 * liq, 4)
+
+
+def risk_score(signal: dict) -> int:
+    """
+    0..100 risk score (higher = riskier). v1: inverse of confidence, nudged up by
+    a poor reward:risk. Enriched later with position size / spread width / Greeks.
+    """
+    base = (1.0 - _confidence(signal)) * 100.0
+    rr = _reward_risk(signal)
+    if rr and rr < 1.0:
+        base += (1.0 - rr) * 15.0   # sub-1:1 reward:risk adds risk
+    return int(max(0, min(100, round(base))))
+
+
+@dataclass
+class GateDecision:
+    allowed: bool
+    reason: str
+    weighted_score: float
+    risk_score: int
+    expected_value: float
+
+
+class TradeFrequencyController:
+    """Stateless gate + ranker. Daily count is supplied by the caller (DB-backed)."""
+
+    def rank(self, signals: list[dict]) -> list[dict]:
+        """Highest-quality first."""
+        return sorted(signals, key=weighted_score, reverse=True)
+
+    def evaluate(
+        self,
+        signal: dict,
+        trades_today: int,
+        mode: Optional[TradingModeType] = None,
+    ) -> GateDecision:
+        if mode is None:
+            mode = trading_mode_manager.current.active_mode
+        rule = rule_for(mode)
+
+        ws = weighted_score(signal)
+        rs = risk_score(signal)
+        ev = expected_value(signal)
+        conf = _confidence(signal)
+
+        # 1. Hard daily cap — never exceeded (profitability before activity).
+        if trades_today >= rule.hard_max_per_day:
+            return GateDecision(False,
+                f"daily_cap: {trades_today}/{rule.hard_max_per_day} for {mode.value}",
+                ws, rs, ev)
+
+        # 2. Minimum confidence for the mode.
+        if conf < rule.min_confidence:
+            return GateDecision(False,
+                f"below_min_confidence: {conf:.2f} < {rule.min_confidence:.2f} ({mode.value})",
+                ws, rs, ev)
+
+        # 3. Maximum risk score for the mode.
+        if rs > rule.max_risk_score:
+            return GateDecision(False,
+                f"risk_score_too_high: {rs} > {rule.max_risk_score} ({mode.value})",
+                ws, rs, ev)
+
+        # 4. Positive expected value — quality filter (never trade negative EV).
+        if ev <= 0:
+            return GateDecision(False, f"non_positive_ev: {ev}", ws, rs, ev)
+
+        return GateDecision(True, "ok", ws, rs, ev)
+
+
+# ── Singleton ───────────────────────────────────────────────────────────────────
+trade_frequency_controller = TradeFrequencyController()

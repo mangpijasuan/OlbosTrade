@@ -19,6 +19,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+# These tests exercise capital-preservation / sizing, not market hours or signal
+# quality. Force the market open so _execute_signal reaches those stages regardless
+# of when the suite runs.
+@pytest.fixture(autouse=True)
+def _market_always_open():
+    with patch("app.utils.market_hours.is_market_open", return_value=True):
+        yield
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. Sizing returns 0 → no trade (risk_manager + paper_trader)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -99,10 +108,11 @@ async def test_execute_signal_blocks_iron_condor_in_preservation():
         "asset_type": "options",
         "strategy": "iron_condor",
         "quantity": 1,
+        "confidence": 0.92,
         "spread": {
             "expiration": "2025-06-20",
             "short_strike": 450, "long_strike": 440,
-            "option_type": "put", "net_credit": 2.00,
+            "option_type": "put", "net_credit": 2.00, "max_loss": 8.00,
         },
     }
 
@@ -129,10 +139,11 @@ async def test_execute_signal_allows_credit_spread_in_preservation():
         "asset_type": "options",
         "strategy": "bull_put_spread",
         "quantity": 1,
+        "confidence": 0.92,
         "spread": {
             "expiration": "2025-06-20",
             "short_strike": 450, "long_strike": 440,
-            "option_type": "put", "net_credit": 1.50,
+            "option_type": "put", "net_credit": 1.50, "max_loss": 3.50,
         },
     }
 

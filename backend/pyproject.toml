@@ -1,0 +1,34 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    # Thin external-IO adapters that require a live broker / network to exercise
+    # meaningfully; covered by mocked unit tests where practical, excluded from
+    # the line-coverage gate to keep it honest.
+    "app/broker/ibkr_client.py",
+    "app/services/data_fetcher.py",
+    "app/main.py",
+    "alembic/*",
+    "tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# TARGET = 95% (institutional). This whole-app floor is a RATCHET: it must never
+# drop, and we raise it as each module gains tests until it reaches 95. New/changed
+# modules are held to 95% directly in CI (see .github/workflows/ci.yml). Setting a
+# hard 95 here today would keep CI permanently red on the large untested legacy
+# surface, which hides real regressions — so we ratchet honestly instead.
+fail_under = 30
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
