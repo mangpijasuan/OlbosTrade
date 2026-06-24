@@ -64,6 +64,7 @@ from app.api.routes import (
 from app.api.routes import equity
 from app.api.routes import trade_desk
 from app.api.routes import symphony
+from app.api.routes import options
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -116,6 +117,7 @@ app.include_router(trading_mode.router,prefix="/api/mode",         tags=["Tradin
 app.include_router(equity.router,      prefix="/api/equity",       tags=["Equity"])
 app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade Desk"])
 app.include_router(symphony.router,    prefix="/api/symphony",     tags=["Symphony"])
+app.include_router(options.router,     prefix="/api/options",      tags=["Options"])
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────
@@ -749,6 +751,20 @@ async def _run_options_scan() -> None:
             )
             return
 
+        # ── Options Intelligence: real POP / EV / Kelly for this spread ─────────
+        # Drives the frequency controller's quality filter with the true
+        # probability of profit instead of a proxy.
+        intel = None
+        try:
+            from app.services.options_intelligence import analyze_spread
+            intel = analyze_spread(
+                spot=spot, short_strike=short_strike, long_strike=long_strike,
+                option_type=opt_type, dte=float(dte_target), iv=vix_est,
+                credit_per_share=credit_per_share, r=RISK_FREE,
+            )
+        except Exception as _intel_exc:
+            logger.debug("Options intelligence failed: %s", _intel_exc)
+
         signal = {
             "id":           str(uuid.uuid4()),
             "ticker":       "SPY",
@@ -756,7 +772,12 @@ async def _run_options_scan() -> None:
             "strategy":     strategy,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "action":       "SELL_SPREAD",
-            "confidence":   round(getattr(_current_regime, "confidence", 0.5), 4),
+            # Confidence = real probability of profit when available; the frequency
+            # controller then computes EV = POP·reward − (1−POP) directly.
+            "confidence":   round(intel.pop, 4) if intel else round(getattr(_current_regime, "confidence", 0.5), 4),
+            "pop":          round(intel.pop, 4) if intel else None,
+            "kelly_fraction": intel.kelly_fraction if intel else None,
+            "intelligence": intel.as_dict() if intel else None,
             "signal_score": round(signal_score, 4),
             "quantity":     int(quantity),
             "iv_rank":      round(features.iv_rank, 2),
