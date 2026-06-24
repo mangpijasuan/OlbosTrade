@@ -24,10 +24,11 @@ jobs:
       - name: New/critical modules — hard 95% gate
         run: >
           pytest tests/test_trade_frequency_controller.py tests/test_symphony.py
-          tests/test_options_intelligence.py
+          tests/test_options_intelligence.py tests/test_performance_analytics.py
           --cov=app.services.trade_frequency_controller
           --cov=app.services.symphony
           --cov=app.services.options_intelligence
+          --cov=app.services.performance_analytics
           --cov-report=term-missing --cov-fail-under=95
       - name: Whole-app coverage (ratchet floor; target 95%)
         run: pytest --cov=app --cov-report=term-missing

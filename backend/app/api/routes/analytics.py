@@ -150,6 +150,28 @@ async def get_mode_detail(mode_name: str):
     }
 
 
+@router.get("/performance")
+async def get_performance():
+    """Portfolio-wide performance metrics over all closed trades with known P&L."""
+    from app.services.performance_analytics import compute_performance
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as session:
+            trades = (await session.execute(
+                select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
+            )).scalars().all()
+        rows = [{"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
+                for t in trades]
+    except Exception as exc:
+        return {"error": str(exc),
+                **compute_performance([], settings.starting_capital)}
+
+    return compute_performance(rows, settings.starting_capital)
+
+
 @router.get("/signal-score-impact")
 async def get_signal_score_impact():
     """
