@@ -12,6 +12,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk }       from "../hooks/useRisk";
+import ExecutiveSummary  from "../components/ExecutiveSummary";
 
 const API = "";
 
@@ -284,7 +285,10 @@ export default function Dashboard() {
     : 0;
 
   return (
-    <div style={{ display: "grid", gridTemplateRows: "auto 1fr auto", height: "100%", gap: 0 }}>
+    <div style={{ display: "grid", gridTemplateRows: "auto auto 1fr auto", height: "100%", overflow: "auto", gap: 0 }}>
+
+      {/* Executive summary header */}
+      <ExecutiveSummary />
 
       {/* Top stat bar */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>

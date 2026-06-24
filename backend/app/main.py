@@ -98,6 +98,10 @@ _signal_scorer: Optional[object] = None    # SignalScorer (lazy — loads model 
 _close_pending: dict[str, datetime] = {}
 CLOSE_GRACE_SECONDS = 300   # wait up to 5 min for a real exit price, then book unknown
 
+# Heartbeat: monotonic timestamp of the last background-scheduler loop, used by the
+# Executive Summary's "Trading Agent — Running" health check.
+_scheduler_last_tick: float = 0.0
+
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
@@ -162,7 +166,7 @@ async def on_startup() -> None:
 
 async def _background_scheduler() -> None:
     """Background task that runs periodic scans and updates."""
-    global _current_regime
+    global _current_regime, _scheduler_last_tick
 
     equity_interval_s  = settings.equity_signal_interval_minutes * 60
     options_interval_s = 30 * 60   # 30 minutes
@@ -188,6 +192,7 @@ async def _background_scheduler() -> None:
     while True:
         try:
             now = time.monotonic()
+            _scheduler_last_tick = now   # heartbeat for the System Health panel
 
             # Every 60s: ensure broker is still connected (auto-reconnect)
             if now - last_reconnect >= reconnect_interval_s:
@@ -1102,3 +1107,96 @@ async def guardrail_history():
 async def get_trading_mode():
     from app.services.trading_mode import trading_mode_manager
     return {"mode": trading_mode_manager.current.active_mode.value, "signal_threshold": settings.signal_score_threshold}
+
+
+# ── Executive Summary (Dashboard header) ────────────────────────────────────
+@app.get("/api/dashboard/summary", tags=["Dashboard"])
+async def dashboard_summary():
+    """
+    Aggregated header for the Executive Summary panel: total equity, total P&L,
+    day P&L, and a System Health checklist (broker, DB, agent, market hours,
+    kill switch, config) with an issue count.
+    """
+    import time as _t
+    from datetime import date as _date
+    from sqlalchemy import select, func, and_
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.execution_mode import execution_mode_manager
+    from app.services.kill_switch import kill_switch_service
+    from app.utils.market_hours import market_status
+
+    cap = float(settings.starting_capital)
+
+    # ── P&L from DB (known-pnl closed trades only) ──────────────────────────
+    total_pnl = day_pnl = 0.0
+    db_ok = True
+    try:
+        today = _date.today()
+        async with AsyncSessionLocal() as s:
+            total_pnl = float((await s.execute(
+                select(func.coalesce(func.sum(Trade.pnl), 0)).where(
+                    Trade.status == "closed", Trade.pnl.isnot(None))
+            )).scalar() or 0)
+            day_pnl = float((await s.execute(
+                select(func.coalesce(func.sum(Trade.pnl), 0)).where(
+                    and_(Trade.status == "closed", Trade.pnl.isnot(None),
+                         func.date(Trade.exit_date) == today))
+            )).scalar() or 0)
+    except Exception:
+        db_ok = False
+
+    # ── Equity from broker (fall back to capital + realized P&L) ────────────
+    total_equity = cap + total_pnl
+    broker_ok = False
+    broker_detail = "Disconnected"
+    try:
+        from app.broker.broker_factory import get_broker
+        broker = get_broker()
+        ib = getattr(broker, "ib", None)
+        broker_ok = bool(getattr(broker, "_connected", False)) and bool(ib.isConnected()) if ib else False
+        if broker_ok:
+            acct = await broker.get_account_summary()
+            nl = float(acct.net_liquidation or 0)
+            if nl > 0:
+                total_equity = nl
+            paper = settings.ibkr_trading_mode.lower() != "live"
+            broker_detail = f"Connected — account {'PAPER' if paper else 'LIVE'}"
+    except Exception:
+        broker_ok = False
+
+    # ── Background agent heartbeat ──────────────────────────────────────────
+    agent_ok = bool(_scheduler_last_tick) and (_t.monotonic() - _scheduler_last_tick) < 90
+    exec_mode = execution_mode_manager.mode.value
+
+    mkt = market_status()
+    ks_engaged = kill_switch_service.is_engaged
+    gate_on = getattr(settings, "market_hours_only", True)
+
+    health = [
+        {"name": "IBKR Gateway", "status": "ok" if broker_ok else "error",
+         "detail": broker_detail},
+        {"name": "PostgreSQL", "status": "ok" if db_ok else "error",
+         "detail": "Connected" if db_ok else "Unreachable"},
+        {"name": "Trading Agent", "status": "ok" if agent_ok else "warn",
+         "detail": f"Running — {exec_mode}" if agent_ok else "Not ticking"},
+        {"name": "Market Hours", "status": "ok" if mkt["is_open"] else "warn",
+         "detail": "Market open" if mkt["is_open"] else f"Market closed ({mkt['reason']})"},
+        {"name": "Kill Switch",
+         "status": "error" if ks_engaged else "ok",
+         "detail": "ENGAGED — trading halted" if ks_engaged else "Disarmed"},
+        {"name": "Config", "status": "ok",
+         "detail": f"Mode {exec_mode} · market-hours gate {'on' if gate_on else 'off'} "
+                   f"· RoR threshold {settings.signal_score_threshold}"},
+    ]
+    issues = sum(1 for h in health if h["status"] != "ok")
+
+    return {
+        "total_equity":  round(total_equity, 2),
+        "total_pnl":     round(total_pnl, 2),
+        "total_pnl_pct": round(total_pnl / cap * 100, 2) if cap else 0.0,
+        "day_pnl":       round(day_pnl, 2),
+        "day_pnl_pct":   round(day_pnl / cap * 100, 2) if cap else 0.0,
+        "health":        health,
+        "issues":        issues,
+    }
