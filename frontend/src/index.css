@@ -175,3 +175,42 @@ body {
 /* Divider */
 .div-v { width: 1px; background: var(--line-dim); align-self: stretch; }
 .div-h { height: 1px; background: var(--line-dim); }
+
+/* ── Executive / dashboard cards (Bloomberg-style) ───────────────────────── */
+.exec-card {
+  background: linear-gradient(180deg, var(--bg-2) 0%, rgba(8,14,26,0.55) 100%);
+  border: 1px solid var(--line-dim);
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+.exec-card:hover {
+  border-color: var(--line);
+  box-shadow: 0 8px 26px rgba(0,0,0,0.35);
+  transform: translateY(-1px);
+}
+/* subtle gold accent tab, top-left */
+.exec-card::after {
+  content: "";
+  position: absolute;
+  left: 0; top: 0;
+  height: 2px; width: 40px;
+  background: var(--cyan);
+  opacity: 0.5;
+}
+
+/* Pills (flags / tags) */
+.pill {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+/* Slightly richer scrollbar on hover for the terminal feel */
+::-webkit-scrollbar-thumb:hover { background: var(--ink-dim); }
+
+/* Panel title gets a faint gold glow to lift the hierarchy */
+.panel-title { text-shadow: 0 0 10px var(--cyan-glow); }

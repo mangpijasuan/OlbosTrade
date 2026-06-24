@@ -1,122 +1,231 @@
 /**
- * ExecutiveSummary — dashboard header.
+ * ExecutiveSummary — Bloomberg-style dashboard header.
  *
- * Three KPI cards (Total Equity, Total P&L, Day P&L) over a System Health
- * checklist (broker, DB, agent, market hours, kill switch, config) with an
- * issue count. Data from GET /api/dashboard/summary (polled every 15s).
+ *   KPI cards (Total Equity / Total P&L / Day P&L)
+ *   Performance panel (Sharpe, Sortino, Calmar, win rate, profit factor, …)
+ *   Portfolio Heat gauge (capital at risk + exposures + concentration flags)
+ *   System Health checklist
+ *
+ * Data: /api/dashboard/summary, /api/analytics/performance, /api/portfolio/heat
+ * (polled every 15s).
  */
 import React, { useEffect, useState } from "react";
 
-type Health = { name: string; status: "ok" | "warn" | "error"; detail: string };
-type Summary = {
-  total_equity: number;
-  total_pnl: number;
-  total_pnl_pct: number;
-  day_pnl: number;
-  day_pnl_pct: number;
-  health: Health[];
-  issues: number;
+// ── Inline icon set ─────────────────────────────────────────────────────────
+const ICON: Record<string, string> = {
+  dollar:   "M12 1v22 M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
+  pnl:      "M3 3v18h18 M7 16v2 M12 11v7 M17 7v11",
+  trend:    "M23 6l-9.5 9.5-5-5L1 18 M17 6h6v6",
+  activity: "M22 12h-4l-3 9L9 3l-3 9H2",
+  gauge:    "M12 14a2 2 0 100-4 2 2 0 000 4z M12 14l4-4 M3.5 18a9 9 0 1117 0",
+  perf:     "M3 3v18h18 M7 14l3-3 3 3 5-6",
+  check:    "M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
+  warn:     "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
+  cross:    "M12 22a10 10 0 100-20 10 10 0 000 20z M15 9l-6 6 M9 9l6 6",
 };
 
+const Icon = ({ name, size = 14, color = "currentColor" }: { name: string; size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+    strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    {ICON[name].split(" M").map((seg, i) => <path key={i} d={(i ? "M" : "") + seg} />)}
+  </svg>
+);
+
+// ── Types ───────────────────────────────────────────────────────────────────
+type Health = { name: string; status: "ok" | "warn" | "error"; detail: string };
+interface Summary {
+  total_equity: number; total_pnl: number; total_pnl_pct: number;
+  day_pnl: number; day_pnl_pct: number; health: Health[]; issues: number;
+}
+interface Performance {
+  total_trades: number; win_rate: number; profit_factor: number; expectancy: number;
+  payoff_ratio: number; avg_hold_days: number; sharpe: number; sortino: number;
+  calmar: number; max_drawdown_pct: number; cagr_pct: number; sample_size_warning: boolean;
+}
+interface Heat {
+  portfolio_heat_pct: number; heat_status: "ok" | "elevated" | "high";
+  total_risk_dollars: number; position_count: number;
+  largest_underlying: string | null; largest_underlying_pct: number;
+  largest_sector: string | null; largest_sector_pct: number;
+  exposure_by_underlying: Record<string, number>; concentration_flags: string[];
+}
+
+// ── Formatters ──────────────────────────────────────────────────────────────
 const money = (n: number) =>
   (n >= 0 ? "+" : "-") + "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
 const plain = (n: number) =>
   "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const STATUS_COLOR: Record<string, string> = {
-  ok: "var(--green)", warn: "var(--amber)", error: "var(--red)",
-};
+const STATUS = { ok: "var(--green)", warn: "var(--amber)", error: "var(--red)" } as const;
+const HEAT = { ok: "var(--green)", elevated: "var(--amber)", high: "var(--red)" } as const;
 
-function Card({ label, value, sub, valueColor, icon }: {
-  label: string; value: string; sub?: string; valueColor?: string; icon: string;
-}) {
+// ── KPI card ────────────────────────────────────────────────────────────────
+function Kpi({ label, value, sub, color, icon }:
+  { label: string; value: string; sub?: string; color?: string; icon: string }) {
   return (
-    <div style={{
-      background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-      padding: "14px 18px", flex: 1, minWidth: 220,
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.12em",
-          color: "var(--ink-faint)", textTransform: "uppercase" }}>{label}</span>
-        <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>{icon}</span>
+    <div className="exec-card" style={{ flex: 1, minWidth: 210, padding: "16px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <span className="kicker">{label}</span>
+        <span style={{ color: "var(--cyan)", opacity: 0.7 }}><Icon name={icon} size={15} /></span>
       </div>
-      <div style={{ fontFamily: "var(--mono)", fontSize: 26, fontWeight: 700,
-        color: valueColor || "var(--ink)", lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", marginTop: 7 }}>{sub}</div>}
+      <div className="mono" style={{ fontSize: 27, fontWeight: 700, color: color || "var(--ink)", lineHeight: 1, letterSpacing: "-0.02em" }}>
+        {value}
+      </div>
+      {sub && <div className="mono" style={{ fontSize: 11, color: "var(--ink-dim)", marginTop: 8 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ── Small metric tile ───────────────────────────────────────────────────────
+function Tile({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div style={{ background: "var(--bg-2)", padding: "11px 13px" }}>
+      <div className="kicker" style={{ fontSize: 8.5, marginBottom: 5 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 15, fontWeight: 600, color: color || "var(--ink)" }}>{value}</div>
+    </div>
+  );
+}
+
+function PanelHead({ icon, title, right }: { icon: string; title: string; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ color: "var(--cyan)" }}><Icon name={icon} size={13} /></span>
+        <span className="panel-title">{title}</span>
+      </span>
+      {right}
     </div>
   );
 }
 
 function HealthRow({ h }: { h: Health }) {
-  const color = STATUS_COLOR[h.status] || "var(--ink-dim)";
-  const glyph = h.status === "ok" ? "✓" : h.status === "warn" ? "⚠" : "✕";
-  const tint = h.status === "ok" ? "rgba(34,197,94,0.06)"
-             : h.status === "warn" ? "rgba(245,158,11,0.07)"
-             : "rgba(239,68,68,0.07)";
+  const color = STATUS[h.status];
+  const tint = h.status === "ok" ? "rgba(34,197,94,0.05)"
+    : h.status === "warn" ? "rgba(245,158,11,0.06)" : "rgba(239,68,68,0.06)";
+  const icon = h.status === "ok" ? "check" : h.status === "warn" ? "warn" : "cross";
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 12, padding: "9px 14px",
-      background: tint, borderLeft: `2px solid ${color}`,
-      borderBottom: "1px solid var(--line-dim)",
-    }}>
-      <span style={{ color, fontSize: 13, width: 16, textAlign: "center" }}>{glyph}</span>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 130 }}>
-        {h.name}
-      </span>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 12, color }}>{h.detail}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 14px",
+      background: tint, borderLeft: `2px solid ${color}`, borderBottom: "1px solid var(--line-dim)" }}>
+      <span style={{ color }}><Icon name={icon} size={13} /></span>
+      <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 128 }}>{h.name}</span>
+      <span className="mono" style={{ fontSize: 12, color }}>{h.detail}</span>
     </div>
   );
 }
 
 export default function ExecutiveSummary() {
   const [s, setS] = useState<Summary | null>(null);
+  const [perf, setPerf] = useState<Performance | null>(null);
+  const [heat, setHeat] = useState<Heat | null>(null);
 
   useEffect(() => {
-    const load = () =>
-      fetch("/api/dashboard/summary").then(r => r.json()).then(setS).catch(() => {});
+    const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
+    const load = async () => {
+      setS(await j("/api/dashboard/summary"));
+      setPerf(await j("/api/analytics/performance"));
+      setHeat(await j("/api/portfolio/heat"));
+    };
     load();
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, []);
 
   const pnlColor = (n: number) => (n >= 0 ? "var(--green)" : "var(--red)");
+  const pct = (n: number) => `${n >= 0 ? "+" : ""}${n}%`;
 
   return (
-    <div style={{ padding: "16px 16px 8px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-        <span style={{ width: 3, height: 16, background: "var(--cyan)" }} />
-        <span style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700,
-          letterSpacing: "0.14em", color: "var(--ink)" }}>EXECUTIVE SUMMARY</span>
+    <div style={{ padding: "18px 16px 10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <span style={{ width: 3, height: 17, background: "var(--cyan)", boxShadow: "0 0 10px var(--cyan-glow)" }} />
+        <span className="mono" style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.16em", color: "var(--ink)" }}>
+          EXECUTIVE SUMMARY
+        </span>
       </div>
 
       {/* KPI cards */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-        <Card label="Total Equity" icon="$"
-          value={s ? plain(s.total_equity) : "—"} />
-        <Card label="Total P&L" icon="▦"
-          value={s ? money(s.total_pnl) : "—"}
-          valueColor={s ? pnlColor(s.total_pnl) : undefined}
-          sub={s ? `${s.total_pnl_pct >= 0 ? "+" : ""}${s.total_pnl_pct}% since open` : undefined} />
-        <Card label="Day P&L" icon="↗"
-          value={s ? money(s.day_pnl) : "—"}
-          valueColor={s ? pnlColor(s.day_pnl) : undefined}
-          sub={s ? `${s.day_pnl_pct >= 0 ? "+" : ""}${s.day_pnl_pct}% today` : undefined} />
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <Kpi label="Total Equity" icon="dollar" value={s ? plain(s.total_equity) : "—"} />
+        <Kpi label="Total P&L" icon="pnl"
+          value={s ? money(s.total_pnl) : "—"} color={s ? pnlColor(s.total_pnl) : undefined}
+          sub={s ? `${pct(s.total_pnl_pct)} since open` : undefined} />
+        <Kpi label="Day P&L" icon="trend"
+          value={s ? money(s.day_pnl) : "—"} color={s ? pnlColor(s.day_pnl) : undefined}
+          sub={s ? `${pct(s.day_pnl_pct)} today` : undefined} />
+      </div>
+
+      {/* Performance + Portfolio Heat */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
+        {/* Performance */}
+        <div className="exec-card">
+          <PanelHead icon="perf" title="Performance"
+            right={perf && perf.sample_size_warning
+              ? <span className="mono" style={{ fontSize: 9.5, color: "var(--amber)" }}>
+                  {perf.total_trades} trades · low sample
+                </span>
+              : perf && <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-dim)" }}>{perf.total_trades} trades</span>} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "var(--line-dim)" }}>
+            <Tile label="Win Rate" value={perf ? `${(perf.win_rate * 100).toFixed(0)}%` : "—"}
+              color={perf && perf.win_rate >= 0.5 ? "var(--green)" : "var(--ink)"} />
+            <Tile label="Profit Factor" value={perf ? perf.profit_factor.toFixed(2) : "—"}
+              color={perf && perf.profit_factor >= 1.5 ? "var(--green)" : "var(--ink)"} />
+            <Tile label="Sharpe" value={perf ? perf.sharpe.toFixed(2) : "—"}
+              color={perf && perf.sharpe >= 1 ? "var(--cyan)" : "var(--ink)"} />
+            <Tile label="Sortino" value={perf ? perf.sortino.toFixed(2) : "—"}
+              color={perf && perf.sortino >= 1 ? "var(--cyan)" : "var(--ink)"} />
+            <Tile label="Calmar" value={perf ? perf.calmar.toFixed(2) : "—"} />
+            <Tile label="Max DD" value={perf ? `${perf.max_drawdown_pct}%` : "—"}
+              color={perf && perf.max_drawdown_pct > 15 ? "var(--red)" : "var(--ink)"} />
+            <Tile label="Expectancy" value={perf ? money(perf.expectancy) : "—"}
+              color={perf ? pnlColor(perf.expectancy) : undefined} />
+            <Tile label="Avg Hold" value={perf ? `${perf.avg_hold_days}d` : "—"} />
+          </div>
+        </div>
+
+        {/* Portfolio Heat */}
+        <div className="exec-card">
+          <PanelHead icon="gauge" title="Portfolio Heat"
+            right={heat && <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-dim)" }}>{heat.position_count} open</span>} />
+          <div style={{ padding: "14px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+              <span className="mono" style={{ fontSize: 24, fontWeight: 700,
+                color: heat ? HEAT[heat.heat_status] : "var(--ink)" }}>
+                {heat ? `${heat.portfolio_heat_pct}%` : "—"}
+              </span>
+              <span className="kicker">{heat ? `${plain(heat.total_risk_dollars)} at risk` : ""}</span>
+            </div>
+            <div style={{ height: 8, background: "var(--bg-4)", borderRadius: 4, overflow: "hidden", marginBottom: 12 }}>
+              <div style={{ height: "100%", borderRadius: 4, transition: "width .5s ease",
+                width: `${heat ? Math.min(100, heat.portfolio_heat_pct) : 0}%`,
+                background: heat ? HEAT[heat.heat_status] : "var(--ink-faint)" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-dim)" }}>
+              <span>Top name: <b style={{ color: "var(--ink)" }}>{heat?.largest_underlying || "—"}</b> {heat ? `${heat.largest_underlying_pct}%` : ""}</span>
+              <span>Sector: <b style={{ color: "var(--ink)" }}>{heat?.largest_sector || "—"}</b></span>
+            </div>
+            {heat && heat.concentration_flags.length > 0 && (
+              <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {heat.concentration_flags.map((f, i) => (
+                  <span key={i} className="mono" style={{ fontSize: 9, padding: "2px 8px", borderRadius: 10,
+                    background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "var(--red)" }}>
+                    {f.split(" ")[0]}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* System health */}
-      <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-        <div className="panel-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-          <span className="panel-title">⚡ System Health</span>
-          {s && (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 11,
-              color: s.issues === 0 ? "var(--green)" : "var(--amber)" }}>
-              {s.issues === 0 ? "All systems nominal" : `${s.issues} issue${s.issues > 1 ? "s" : ""} detected`}
-            </span>
-          )}
-        </div>
+      <div className="exec-card">
+        <PanelHead icon="activity" title="System Health"
+          right={s && <span className="mono" style={{ fontSize: 10.5,
+            color: s.issues === 0 ? "var(--green)" : "var(--amber)" }}>
+            {s.issues === 0 ? "All systems nominal" : `${s.issues} issue${s.issues > 1 ? "s" : ""} detected`}
+          </span>} />
         {s ? s.health.map(h => <HealthRow key={h.name} h={h} />)
-           : <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>}
+          : <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>}
       </div>
     </div>
   );
