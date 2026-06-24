@@ -46,21 +46,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Redis ─────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: olbosquant_redis
-    restart: unless-stopped
-    ports:
-      - "6380:6379"   # 6380 on host — avoids any local redis conflict
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # ── FastAPI backend (port 8001 locally to avoid clash with OLBOS on 8000) ─
   backend:
     build:
@@ -75,9 +60,8 @@ services:
       IBKR_HOST: host.docker.internal
       IBKR_PORT: "4002"
       IBKR_CLIENT_ID: "10"
-      # Override DB/Redis URLs to use Docker service names
+      # Override DB URL to use Docker service name
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-options_user}:${POSTGRES_PASSWORD:-options_pass}@postgres:5432/${POSTGRES_DB:-options_db}
-      REDIS_URL: redis://redis:6379
     ports:
       - "8001:8000"   # 8001 on host — OLBOS uses 8000
     volumes:
@@ -86,9 +70,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-      # ib-gateway removed — gateway runs natively on the Mac at host.docker.internal:4002
+      # ib-gateway runs natively on the Mac at host.docker.internal:4002
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # ── React frontend — Vite dev server with hot reload ─────────────────────
@@ -113,5 +95,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   ib_gateway_data:

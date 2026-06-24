@@ -254,38 +254,6 @@ def test_calculate_position_size_returns_zero_for_tiny_budget():
 
 
 @pytest.mark.asyncio
-async def test_zero_contracts_skips_trade_in_paper_trader():
-    """
-    When effective_contracts == 0 after sizing, paper_trader must record
-    'skipped_zero_size' and NOT call the dispatcher.
-    """
-    # We test the zero-size guard added to the paper_trader loop
-    # by checking the action_record written when contracts == 0.
-    from app.services.paper_trader import PaperTrader
-
-    pt = PaperTrader.__new__(PaperTrader)
-
-    # Simulate the sizing returning 0 — the guard we added logs skipped_zero_size
-    size_result = MagicMock(contracts=0)
-    regime = MagicMock(size_multiplier=1.0, strategies_allowed=["bull_put_spread"])
-
-    effective_contracts = int(size_result.contracts * regime.size_multiplier)
-    assert effective_contracts == 0
-
-    # Verify the guard logic (extracted from loop body)
-    actions = []
-    if effective_contracts <= 0:
-        actions.append({
-            "action":   "skipped_zero_size",
-            "strategy": "bull_put_spread",
-            "reason":   "sizing returned 0 contracts",
-        })
-
-    assert len(actions) == 1
-    assert actions[0]["action"] == "skipped_zero_size"
-
-
-@pytest.mark.asyncio
 async def test_zero_shares_skipped_in_execute_signal():
     """_execute_signal skips equity orders when shares == 0."""
     from app.api.routes.trade_desk import _execute_signal

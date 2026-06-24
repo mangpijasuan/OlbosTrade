@@ -255,20 +255,16 @@ async def get_broker_status():
     """Return active broker name and connection status."""
     try:
         broker = get_broker()
-        if settings.broker == "alpaca":
-            is_paper = "paper" in settings.alpaca_base_url
-            connected = True   # Alpaca is stateless REST
-        else:
-            # Live IBKR ports are 4001 (gateway) / 7496 (TWS). Anything else —
-            # including custom container ports like 4004 — is paper, and
-            # IBKR_TRADING_MODE is the authoritative override.
-            is_paper = settings.ibkr_trading_mode.lower() != "live" \
-                       and settings.ibkr_port not in (4001, 7496)
-            # Report the REAL socket state, not just "object exists" (the old
-            # hardcoded "connected" lied during the Gateway outage).
-            ib = getattr(broker, "ib", None)
-            connected = bool(getattr(broker, "_connected", False)) and \
-                        bool(ib.isConnected()) if ib is not None else False
+        # Live IBKR ports are 4001 (gateway) / 7496 (TWS). Anything else —
+        # including custom container ports like 4004 — is paper, and
+        # IBKR_TRADING_MODE is the authoritative override.
+        is_paper = settings.ibkr_trading_mode.lower() != "live" \
+                   and settings.ibkr_port not in (4001, 7496)
+        # Report the REAL socket state, not just "object exists" (the old
+        # hardcoded "connected" lied during the Gateway outage).
+        ib = getattr(broker, "ib", None)
+        connected = bool(getattr(broker, "_connected", False)) and \
+                    bool(ib.isConnected()) if ib is not None else False
         return {
             "broker":           settings.broker,
             "supports_options": broker.supports_options,

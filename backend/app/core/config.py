@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     # ── Active broker ─────────────────────────────────────────────────────
-    broker: str = Field(default="ibkr", description="Active broker: ibkr | alpaca")
+    broker: str = Field(default="ibkr", description="Active broker: ibkr")
 
     # ── IBKR ──────────────────────────────────────────────────────────────
     ibkr_host: str = Field(default="127.0.0.1")
@@ -24,20 +24,10 @@ class Settings(BaseSettings):
     ibkr_client_id: int = Field(default=1)
     ibkr_trading_mode: str = Field(default="paper")
 
-    # ── Alpaca ────────────────────────────────────────────────────────────
-    alpaca_api_key: str = Field(default="")
-    alpaca_secret_key: str = Field(default="")
-    alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets")
-
-    # ── Legacy Tradier (kept for backward compat) ─────────────────────────
-    tradier_api_key: str = Field(default="")
-    tradier_sandbox: bool = Field(default=True)
-
     # ── Database ──────────────────────────────────────────────────────────
     database_url: str = Field(
         default="postgresql+asyncpg://options_user:options_pass@localhost:5432/options_db"
     )
-    redis_url: str = Field(default="redis://localhost:6379")
 
     # ── Trading Rules ─────────────────────────────────────────────────────
     starting_capital: float = Field(default=25000.0)
@@ -88,38 +78,6 @@ class Settings(BaseSettings):
     retry_price_step: float = Field(default=0.05)
     # Maximum number of cancel-and-retry attempts per order.
     max_order_retries: int = Field(default=2)
-
-    # ── Options Flow (Options Intelligence module) ────────────────────────
-    # Master switch. Streaming real options flow requires a LIVE IBKR OPRA
-    # market-data subscription (reqTickByTickData does not work on delayed
-    # data). This app currently runs IBKR on delayed-frozen data, so the
-    # default is OFF — the module wires up cleanly and activates the moment a
-    # live subscription is available and this flag is set to true.
-    options_flow_enabled: bool = Field(default=False)
-    # Emit synthetic ticks so the full pipeline (ingest → sweep → DB → WS →
-    # UI) can be exercised without a live data feed. For demos / testing only.
-    options_flow_demo_mode: bool = Field(default=False)
-    options_flow_watchlist: str = Field(default="SPY,QQQ,IWM,AAPL,TSLA,NVDA")
-    options_flow_max_dte: int = Field(default=60)
-    # Max number of option contracts to subscribe to concurrently. IBKR caps
-    # market-data lines at 100; tick-by-tick + a quote line are used per
-    # contract, so stay well under the cap.
-    options_flow_max_contracts: int = Field(default=40)
-    options_flow_sweep_window_ms: int = Field(default=500)
-    options_flow_block_min_size: int = Field(default=500)
-    options_flow_large_sweep_premium: float = Field(default=500_000.0)
-    options_flow_channel: str = Field(default="options_flow_live")
-    # Data retention: rows older than this are archived to JSONL and deleted.
-    options_flow_retention_days: int = Field(default=90)
-    options_flow_archive_dir: str = Field(default="/data/archive")
-
-    def get_options_flow_watchlist(self) -> list[str]:
-        """Parse the comma-separated options-flow watchlist into a list."""
-        return [
-            t.strip().upper()
-            for t in self.options_flow_watchlist.split(",")
-            if t.strip()
-        ]
 
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)

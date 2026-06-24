@@ -37,3 +37,4 @@ logs/
 
 # Alembic
 alembic/versions/*.pyc
+backtest_results.json

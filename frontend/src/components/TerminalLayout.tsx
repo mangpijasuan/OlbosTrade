@@ -46,7 +46,6 @@ const NAV_ITEMS = [
   { key: "journal",    label: "Journal",      icon: "journal"    },
   { key: "research",   label: "Research",     icon: "research"   },
   { key: "analytics",  label: "Analytics",    icon: "analytics"  },
-  { key: "flow",       label: "Flow",         icon: "flow"       },
 ];
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────
