@@ -72,6 +72,12 @@ class Settings(BaseSettings):
         return self.equity_min_confidence
 
     # ── Order execution ───────────────────────────────────────────────────
+    # When True, orders are only submitted during US regular trading hours
+    # (09:30–16:00 ET, Mon–Fri, excluding holidays). The app still runs 24/7 —
+    # only order submission pauses outside RTH and resumes automatically at the
+    # open. Set False to allow order attempts at any time (not recommended:
+    # options don't trade after hours and equity fills are poor).
+    market_hours_only: bool = Field(default=True)
     # Spread limit price multiplier applied to estimated net credit.
     # 1.0 = submit at mid (best fill rate). 0.90 = accept 10% less credit.
     # Lower values → more fills, lower credit received.

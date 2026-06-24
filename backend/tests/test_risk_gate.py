@@ -21,6 +21,17 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
+
+# These tests exercise the risk gate, not market hours. Force the market-hours
+# guard open so _execute_signal reaches the guardrail/sizing stages regardless of
+# when the suite runs. (is_market_open is imported inside _execute_signal at call
+# time, so patching the module attribute is sufficient.)
+@pytest.fixture(autouse=True)
+def _market_always_open():
+    with patch("app.utils.market_hours.is_market_open", return_value=True):
+        yield
+
+
 # ── Signal fixtures ────────────────────────────────────────────────────────────
 
 def _equity_signal(ticker="AAPL", shares=10, limit_price=150.0):

@@ -192,6 +192,18 @@ async def get_iv_rank(symbol: str):
         return {"symbol": symbol, "iv_rank": None, "error": str(exc)}
 
 
+@router.get("/status")
+async def get_market_status():
+    """
+    Whether the US market is open right now (RTH, ET, holiday-aware) and whether
+    order execution is currently gated by market hours.
+    """
+    from app.utils.market_hours import market_status
+    status = market_status()
+    status["execution_gated"] = bool(getattr(settings, "market_hours_only", True))
+    return status
+
+
 @router.get("/regime")
 async def get_regime():
     """Return current regime classification and active strategies."""

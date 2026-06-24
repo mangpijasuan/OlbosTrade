@@ -302,6 +302,22 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         logger.warning("Order blocked for %s — kill switch is engaged", ticker)
         return _blocked("kill_switch")
 
+    # ── Stage 1b: Market hours ─────────────────────────────────────────────────
+    # Pause order submission outside US regular trading hours. The scanner keeps
+    # generating signals 24/7; execution auto-resumes at the next open. Options
+    # don't trade after hours and after-hours equity fills are poor, so this
+    # covers every path (autopilot, copilot approval, manual).
+    from app.core.config import settings as _mh_cfg
+    if getattr(_mh_cfg, "market_hours_only", True):
+        from app.utils.market_hours import is_market_open, market_status
+        if not is_market_open():
+            status = market_status()
+            logger.info(
+                "Order blocked for %s — market closed (%s, %s)",
+                ticker, status["reason"], status["now_et"],
+            )
+            return _blocked(f"market_closed: {status['reason']}")
+
     # ── Stage 2: Guardrail risk check (fail closed) ────────────────────────────
     try:
         portfolio_state = await _fetch_portfolio_state()
