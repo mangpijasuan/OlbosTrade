@@ -16,6 +16,9 @@
 set -uo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
+VERBOSE=0
+[ "${1:-}" = "--verbose" ] && VERBOSE=1
+
 GATEWAY="ibkr-gateway"
 BACKEND="olbosquant-backend"
 GW_HOST="ibkr-gateway"          # docker service name the backend connects to
@@ -25,6 +28,7 @@ COOLDOWN=900                    # seconds; don't restart again within 15 min
 STAMP="/tmp/ibkr-watchdog-last-restart"
 
 ts() { date -u +%FT%TZ; }
+vsay() { [ "$VERBOSE" = 1 ] && echo "$(ts) $*"; return 0; }
 
 _running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || echo false)" = "true" ]; }
 
@@ -73,6 +77,7 @@ PY
 probe=$(printf '%s' "$probe" | tr -d '[:space:]')
 
 if [ "$probe" = "OK" ]; then
+  vsay "watchdog: gateway healthy (IBKR API probe=OK)"
   exit 0   # healthy — nothing to do
 fi
 
