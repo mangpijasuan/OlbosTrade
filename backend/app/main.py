@@ -63,6 +63,7 @@ from app.api.routes import (
 )
 from app.api.routes import equity
 from app.api.routes import trade_desk
+from app.api.routes import symphony
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -114,6 +115,7 @@ app.include_router(analytics.router,   prefix="/api/analytics",    tags=["Analyt
 app.include_router(trading_mode.router,prefix="/api/mode",         tags=["Trading Mode"])
 app.include_router(equity.router,      prefix="/api/equity",       tags=["Equity"])
 app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade Desk"])
+app.include_router(symphony.router,    prefix="/api/symphony",     tags=["Symphony"])
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────
