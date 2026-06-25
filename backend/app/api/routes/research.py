@@ -120,12 +120,20 @@ class CreateExperiment(BaseModel):
     strategy:   str
     hypothesis: Optional[str] = None
     spec:       Optional[dict] = None
+    # Registry metadata (Phase 2) — optional at creation, required before promotion.
+    version:     Optional[str] = None
+    author:      Optional[str] = None
+    asset_class: Optional[str] = None
+    market_type: Optional[str] = None
+    supported_regimes: Optional[list] = None
+    risk_profile: Optional[str] = None
 
 
 class TransitionRequest(BaseModel):
-    target:  str                       # backtested | paper | promoted | archived | draft
-    metrics: Optional[dict] = None     # backtest metrics (→ backtested)
-    perf:    Optional[dict] = None      # paper performance (→ promoted)
+    target:     str                    # backtested | walk_forward | paper | promoted | archived | draft
+    metrics:    Optional[dict] = None   # backtest metrics (→ backtested / → walk_forward)
+    wf_metrics: Optional[dict] = None   # walk-forward (out-of-sample) metrics (→ paper)
+    perf:       Optional[dict] = None    # paper performance (→ promoted)
 
 
 async def _experiment_or_none(session, exp_id: str):
@@ -161,7 +169,9 @@ async def create_experiment(req: CreateExperiment):
     try:
         exp = ResearchExperiment(
             name=req.name, strategy=req.strategy, hypothesis=req.hypothesis,
-            stage=DRAFT, spec=req.spec,
+            stage=DRAFT, spec=req.spec, version=req.version, author=req.author,
+            asset_class=req.asset_class, market_type=req.market_type,
+            supported_regimes=req.supported_regimes, risk_profile=req.risk_profile,
         )
         async with AsyncSessionLocal() as session:
             session.add(exp)
@@ -186,7 +196,8 @@ async def transition_experiment(exp_id: str, req: TransitionRequest):
             if exp is None:
                 return {"error": "experiment not found"}
             result = transition(exp.as_dict(), req.target,
-                                metrics=req.metrics, perf=req.perf)
+                                metrics=req.metrics, wf_metrics=req.wf_metrics,
+                                perf=req.perf)
             if not result.ok:
                 return {"ok": False, "reason": result.reason, "experiment": exp.as_dict()}
             for k, v in result.patch.items():
@@ -219,3 +230,38 @@ async def lab_baselines():
                               for k, v in baselines.items()}}
     except Exception as exc:
         return {"baselines": {}, "error": str(exc)}
+
+
+@router.get("/registry")
+async def get_registry():
+    """
+    Canonical Strategy Registry view: every strategy's most-advanced lifecycle
+    stage, experiment counts, production set, and metadata-completeness flags.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.research_experiment import ResearchExperiment
+    from app.services import strategy_registry as reg
+    from sqlalchemy import select
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(ResearchExperiment).order_by(ResearchExperiment.created_at.desc())
+            )).scalars().all()
+        exps = [r.as_dict() for r in rows]
+        strategies = reg.by_strategy(exps)
+        # Annotate each experiment's metadata completeness for the UI.
+        for s in strategies.values():
+            members = [e for e in exps if e.get("strategy") == s["strategy"]]
+            complete = any(reg.validate_metadata(e)[0] for e in members)
+            s["metadata_complete"] = complete
+        return {"summary": reg.summarize(exps),
+                "strategies": list(strategies.values())}
+    except Exception as exc:
+        return {"summary": {}, "strategies": [], "error": str(exc)}
+
+
+@router.get("/features")
+async def get_features():
+    """Feature Store catalog — the single registry of indicator/feature formulas."""
+    from app.services.feature_store import catalog
+    return {"features": catalog(), "total": len(catalog())}

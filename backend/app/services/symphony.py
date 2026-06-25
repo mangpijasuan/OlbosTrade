@@ -35,56 +35,12 @@ class StrategyError(Exception):
     """Raised when a strategy tree is malformed or can't be evaluated."""
 
 
-# ── Indicators (operate on a chronological close Series, as-of last element) ────
-def _rsi(s: pd.Series, window: int) -> float:
-    delta = s.diff()
-    gain = delta.clip(lower=0).rolling(window).mean()
-    loss = (-delta.clip(upper=0)).rolling(window).mean()
-    rs = gain / loss.replace(0, np.nan)
-    rsi = 100 - 100 / (1 + rs)
-    val = rsi.iloc[-1]
-    return float(val) if val == val else 50.0  # NaN → neutral
-
-
-def _sma(s: pd.Series, window: int) -> float:
-    return float(s.tail(window).mean())
-
-
-def _ema(s: pd.Series, window: int) -> float:
-    return float(s.ewm(span=window, adjust=False).mean().iloc[-1])
-
-
-def _price(s: pd.Series, window: int = 0) -> float:
-    return float(s.iloc[-1])
-
-
-def _cumulative_return(s: pd.Series, window: int) -> float:
-    if len(s) <= window:
-        window = len(s) - 1
-    if window <= 0:
-        return 0.0
-    return float(s.iloc[-1] / s.iloc[-1 - window] - 1.0)
-
-
-def _volatility(s: pd.Series, window: int) -> float:
-    rets = s.pct_change().tail(window)
-    v = rets.std() * np.sqrt(252)
-    return float(v) if v == v else 0.0
-
-
-def _max_drawdown(s: pd.Series, window: int) -> float:
-    w = s.tail(window)
-    peak = w.cummax()
-    dd = (w / peak - 1.0).min()
-    return float(abs(dd)) if dd == dd else 0.0
-
-
-_INDICATORS = {
-    "rsi": _rsi, "sma": _sma, "ema": _ema, "price": _price,
-    "current_price": _price, "cumulative_return": _cumulative_return,
-    "cum_return": _cumulative_return, "volatility": _volatility,
-    "max_drawdown": _max_drawdown,
-}
+# ── Indicators ──────────────────────────────────────────────────────────────────
+# The math lives in the centralized Feature Store (single source of truth); the
+# Symphony evaluator references the same series-indicator implementations so a
+# formula is never duplicated. Aliases (price/current_price, cumulative_return/
+# cum_return) are preserved by the store's SERIES_INDICATORS export.
+from app.services.feature_store import SERIES_INDICATORS as _INDICATORS
 
 _OPS = {
     ">": lambda a, b: a > b, "<": lambda a, b: a < b,
@@ -200,7 +156,7 @@ def evaluate(node: Any, data: dict[str, pd.Series]) -> dict[str, float]:
         for sub in subs:
             tk = _primary_ticker(sub)
             try:
-                vol = _volatility(_series(data, tk), window) if tk else 0.0
+                vol = _INDICATORS["volatility"](_series(data, tk), window) if tk else 0.0
             except StrategyError:
                 vol = 0.0
             invs.append(1.0 / vol if vol > 1e-9 else 0.0)

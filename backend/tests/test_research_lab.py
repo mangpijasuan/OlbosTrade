@@ -6,11 +6,15 @@ import pytest
 
 from app.services.strategy_health import StrategyBaseline
 from app.services.research_lab import (
-    ARCHIVED, BACKTESTED, DRAFT, PAPER, PROMOTED,
+    ARCHIVED, BACKTESTED, DRAFT, PAPER, PROMOTED, WALK_FORWARD,
     DEFAULT_GATES, PromotionGates,
     baseline_from_performance, baselines_from_experiments,
-    can_transition, evaluate_backtest_gate, evaluate_paper_gate, transition,
+    can_transition, evaluate_backtest_gate, evaluate_paper_gate,
+    evaluate_walkforward_gate, transition,
 )
+
+_STRONG_BT = {"sharpe": 1.5, "total_return_pct": 20, "max_drawdown_pct": 8}
+_GOOD_WF = {"oos_sharpe": 1.1, "oos_return_pct": 12, "max_drawdown_pct": 9, "is_sharpe": 1.4}
 
 
 # ── gates ────────────────────────────────────────────────────────────────────────
@@ -104,24 +108,63 @@ def test_transition_to_backtested_stores_metrics():
     assert r.ok and r.patch["stage"] == BACKTESTED and r.patch["backtest_metrics"] == m
 
 
-# ── transition: paper (backtest gate) ──────────────────────────────────────────────
-def test_transition_to_paper_blocks_on_weak_backtest():
+# ── walk-forward gate ───────────────────────────────────────────────────────────────
+def test_walkforward_gate_pass():
+    ok, reasons = evaluate_walkforward_gate(_GOOD_WF)
+    assert ok and "cleared" in reasons[0]
+
+
+def test_walkforward_gate_no_metrics():
+    ok, reasons = evaluate_walkforward_gate({})
+    assert not ok and "no walk-forward metrics" in reasons
+
+
+@pytest.mark.parametrize("wf,frag", [
+    ({"oos_sharpe": 0.1, "oos_return_pct": 5, "max_drawdown_pct": 5}, "OOS sharpe"),
+    ({"oos_sharpe": 1.0, "oos_return_pct": -3, "max_drawdown_pct": 5}, "OOS return"),
+    ({"oos_sharpe": 1.0, "oos_return_pct": 5, "max_drawdown_pct": 99}, "OOS drawdown"),
+    ({"oos_sharpe": 0.5, "oos_return_pct": 5, "max_drawdown_pct": 5, "is_sharpe": 2.0}, "degradation"),
+])
+def test_walkforward_gate_failures(wf, frag):
+    ok, reasons = evaluate_walkforward_gate(wf)
+    assert not ok and any(frag in r for r in reasons)
+
+
+# ── transition: backtested → walk_forward (backtest gate) ────────────────────────────
+def test_transition_to_walkforward_blocks_on_weak_backtest():
     exp = {"stage": BACKTESTED, "backtest_metrics": {"sharpe": 0.1, "total_return_pct": 1, "max_drawdown_pct": 5}}
-    r = transition(exp, PAPER)
+    r = transition(exp, WALK_FORWARD)
     assert not r.ok and "backtest gate failed" in r.reason
 
 
-def test_transition_to_paper_passes_strong_backtest():
-    exp = {"stage": BACKTESTED, "backtest_metrics": {"sharpe": 1.5, "total_return_pct": 20, "max_drawdown_pct": 8}}
+def test_transition_to_walkforward_passes_strong_backtest():
+    exp = {"stage": BACKTESTED, "backtest_metrics": _STRONG_BT}
+    r = transition(exp, WALK_FORWARD, wf_metrics=_GOOD_WF)
+    assert r.ok and r.patch["stage"] == WALK_FORWARD
+    assert r.patch["walk_forward_metrics"] == _GOOD_WF
+
+
+def test_transition_to_walkforward_accepts_inline_metrics():
+    r = transition({"stage": BACKTESTED}, WALK_FORWARD, metrics=_STRONG_BT)
+    assert r.ok
+
+
+# ── transition: walk_forward → paper (walk-forward gate) ─────────────────────────────
+def test_transition_to_paper_blocks_on_weak_walkforward():
+    exp = {"stage": WALK_FORWARD, "walk_forward_metrics": {"oos_sharpe": 0.1, "oos_return_pct": 1, "max_drawdown_pct": 5}}
+    r = transition(exp, PAPER)
+    assert not r.ok and "walk-forward gate failed" in r.reason
+
+
+def test_transition_to_paper_passes_strong_walkforward():
+    exp = {"stage": WALK_FORWARD, "walk_forward_metrics": _GOOD_WF}
     r = transition(exp, PAPER)
     assert r.ok and r.patch["stage"] == PAPER
 
 
-def test_transition_to_paper_accepts_inline_metrics():
-    exp = {"stage": BACKTESTED}
-    m = {"sharpe": 1.5, "total_return_pct": 20, "max_drawdown_pct": 8}
-    r = transition(exp, PAPER, metrics=m)
-    assert r.ok
+def test_transition_to_paper_accepts_inline_wf_metrics():
+    r = transition({"stage": WALK_FORWARD}, PAPER, wf_metrics=_GOOD_WF)
+    assert r.ok and r.patch["walk_forward_metrics"] == _GOOD_WF
 
 
 # ── transition: promoted (paper gate + baseline) ───────────────────────────────────

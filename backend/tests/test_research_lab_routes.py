@@ -9,8 +9,9 @@ import pytest
 from app.api.routes.research import (
     CreateExperiment, TransitionRequest,
     create_experiment, list_experiments, transition_experiment, lab_baselines,
+    get_registry, get_features,
 )
-from app.services.research_lab import BACKTESTED, DRAFT, PAPER, PROMOTED
+from app.services.research_lab import BACKTESTED, DRAFT, PAPER, PROMOTED, WALK_FORWARD
 
 
 def _session(rows=None, one=None):
@@ -86,7 +87,7 @@ async def test_transition_not_found():
 async def test_transition_gate_blocks():
     exp = _Exp(stage=BACKTESTED, backtest_metrics={"sharpe": 0.1, "total_return_pct": 1, "max_drawdown_pct": 5})
     with patch("app.core.database.AsyncSessionLocal", return_value=_session(one=exp)):
-        out = await transition_experiment("e1", TransitionRequest(target=PAPER))
+        out = await transition_experiment("e1", TransitionRequest(target=WALK_FORWARD))
     assert out["ok"] is False and "backtest gate failed" in out["reason"]
 
 
@@ -94,8 +95,8 @@ async def test_transition_gate_blocks():
 async def test_transition_success_persists_patch():
     exp = _Exp(stage=BACKTESTED, backtest_metrics={"sharpe": 1.5, "total_return_pct": 20, "max_drawdown_pct": 8})
     with patch("app.core.database.AsyncSessionLocal", return_value=_session(one=exp)):
-        out = await transition_experiment("e1", TransitionRequest(target=PAPER))
-    assert out["ok"] is True and exp.stage == PAPER
+        out = await transition_experiment("e1", TransitionRequest(target=WALK_FORWARD))
+    assert out["ok"] is True and exp.stage == WALK_FORWARD
 
 
 @pytest.mark.asyncio
@@ -129,3 +130,30 @@ async def test_lab_baselines_db_error():
     with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("x")):
         out = await lab_baselines()
     assert out["baselines"] == {} and "error" in out
+
+
+# ── registry + features endpoints ────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_get_registry():
+    rows = [_Exp(stage=PROMOTED, strategy="bull_put_spread"),
+            _Exp(stage=DRAFT, strategy="iron_condor")]
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(rows=rows)):
+        out = await get_registry()
+    assert out["summary"]["total_strategies"] == 2
+    names = {s["strategy"] for s in out["strategies"]}
+    assert names == {"bull_put_spread", "iron_condor"}
+    assert all("metadata_complete" in s for s in out["strategies"])
+
+
+@pytest.mark.asyncio
+async def test_get_registry_db_error():
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("down")):
+        out = await get_registry()
+    assert out["strategies"] == [] and "error" in out
+
+
+@pytest.mark.asyncio
+async def test_get_features_catalog():
+    out = await get_features()
+    assert out["total"] >= 12
+    assert any(f["name"] == "rsi" for f in out["features"])

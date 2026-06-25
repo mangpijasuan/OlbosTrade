@@ -11,19 +11,20 @@ import React, { useEffect, useState } from "react";
 
 interface Experiment {
   id: string; name: string; strategy: string; hypothesis: string | null;
-  stage: "draft" | "backtested" | "paper" | "promoted" | "archived";
+  stage: "draft" | "backtested" | "walk_forward" | "paper" | "promoted" | "archived";
   backtest_metrics: Record<string, number> | null;
   paper_perf: Record<string, number> | null;
   baseline: Record<string, number> | null;
 }
 
-const STAGES = ["draft", "backtested", "paper", "promoted"] as const;
+const STAGES = ["draft", "backtested", "walk_forward", "paper", "promoted"] as const;
 const STAGE_COLOR: Record<string, string> = {
-  draft: "var(--ink-dim)", backtested: "var(--cyan)",
+  draft: "var(--ink-dim)", backtested: "var(--cyan)", walk_forward: "var(--cyan)",
   paper: "var(--amber)", promoted: "var(--green)", archived: "var(--ink-faint)",
 };
 const NEXT: Record<string, string | null> = {
-  draft: "backtested", backtested: "paper", paper: "promoted", promoted: null, archived: "draft",
+  draft: "backtested", backtested: "walk_forward", walk_forward: "paper",
+  paper: "promoted", promoted: null, archived: "draft",
 };
 
 const STRATEGIES = ["bull_put_spread", "bear_call_spread", "iron_condor", "bull_call_debit_spread"];
@@ -62,6 +63,9 @@ export default function ResearchLab() {
     const body: any = { target };
     if (target === "backtested" && !e.backtest_metrics)
       body.metrics = { sharpe: 1.0, total_return_pct: 12.0, max_drawdown_pct: 10.0 };
+    // Walk-forward (out-of-sample) demo metrics for the WALK_FORWARD → PAPER gate.
+    if (target === "paper")
+      body.wf_metrics = { oos_sharpe: 0.9, oos_return_pct: 9.0, max_drawdown_pct: 11.0, is_sharpe: 1.1 };
     const r = await fetch(`/api/research/lab/experiments/${e.id}/transition`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
