@@ -119,6 +119,12 @@ new stage added — we do NOT create a parallel system:
 - **Config** (`app/core/config.py` + `.env.prod`) — add `LLM_PROVIDER`,
   `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, optional `LLM_MODEL` override.
   Requirements: add `google-genai` (and `anthropic` if not present).
+  **Defaults (testing period = free/cheap):** `LLM_PROVIDER=gemini`,
+  `LLM_MODEL` = a current Gemini **Flash** model (free-tier eligible; exact id
+  confirmed at implementation time). Cost-guards: cap output tokens, short
+  grounded prompts, and a simple per-session rate limit so the free tier isn't
+  blown. Switching to Claude later is a one-line env change
+  (`LLM_PROVIDER=anthropic`).
 - **`app/api/routes/research.py`** (edit) — `POST /api/research/assistant`.
   UI: chat panel on the Research page.
 
