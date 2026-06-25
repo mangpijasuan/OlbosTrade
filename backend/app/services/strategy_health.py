@@ -85,12 +85,14 @@ class StrategyHealth:
     losing_streak:     int
     expectancy_ratio:  float | None   # live / baseline (None if baseline ≤ 0)
     reasons:           list[str] = field(default_factory=list)
+    score:             float = 0.0    # composite 0–100 health score
 
     def as_dict(self) -> dict:
         return {
             "strategy": self.strategy,
             "status": self.status,
             "action": self.action,
+            "score": round(self.score, 1),
             "sample_size": self.sample_size,
             "win_rate": round(self.win_rate, 4),
             "expectancy": round(self.expectancy, 2),
@@ -101,6 +103,49 @@ class StrategyHealth:
                                  if self.expectancy_ratio is not None else None),
             "reasons": self.reasons,
         }
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+# Health-score component weights (sum = 1.0).
+_SCORE_WEIGHTS = {
+    "win_rate": 0.20, "expectancy": 0.20, "profit_factor": 0.15,
+    "sharpe": 0.15, "sortino": 0.10, "drawdown": 0.10, "streak": 0.10,
+}
+
+
+def health_score(perf: dict, base: StrategyBaseline,
+                 expectancy_ratio: float | None, losing_streak: int) -> float:
+    """
+    Composite 0–100 strategy-health score from the performance components,
+    measured against the strategy's baseline. Higher = healthier. Drives
+    allocation. (Regime compatibility is handled by the meta-strategy layer, not
+    baked into this intrinsic score.)
+    """
+    wr = float(perf.get("win_rate", 0.0))
+    pf = float(perf.get("profit_factor", 0.0))
+    sharpe = float(perf.get("sharpe", 0.0))
+    sortino = float(perf.get("sortino", 0.0))
+    dd = float(perf.get("rolling_max_dd_30_pct", 0.0))
+
+    wr_s = _clamp01(wr / base.win_rate) if base.win_rate > 0 else _clamp01(wr)
+    exp_s = (_clamp01(expectancy_ratio) if expectancy_ratio is not None
+             else (1.0 if float(perf.get("expectancy", 0.0)) > 0 else 0.0))
+    pf_s = _clamp01(pf / 2.0)                       # PF 2.0 ⇒ full marks
+    sharpe_s = _clamp01(sharpe / 2.0)              # Sharpe 2.0 ⇒ full marks
+    sortino_s = _clamp01(sortino / 2.0)
+    dd_s = 1.0 - _clamp01(dd / base.max_drawdown_pct) if base.max_drawdown_pct > 0 else 1.0
+    streak_s = 1.0 - _clamp01(losing_streak / base.max_losing_streak) \
+        if base.max_losing_streak > 0 else 1.0
+
+    w = _SCORE_WEIGHTS
+    total = (w["win_rate"] * wr_s + w["expectancy"] * exp_s
+             + w["profit_factor"] * pf_s + w["sharpe"] * sharpe_s
+             + w["sortino"] * sortino_s + w["drawdown"] * dd_s
+             + w["streak"] * streak_s)
+    return round(100.0 * total, 1)
 
 
 def _max_losing_streak(pnls: list[float]) -> int:
@@ -148,6 +193,7 @@ def evaluate_strategy_health(
     profit_factor = perf["profit_factor"]
     dd = perf["rolling_max_dd_30_pct"]
     ratio = (expectancy / base.expectancy) if base.expectancy > 0 else None
+    score = health_score(perf, base, ratio, streak)
 
     reasons: list[str] = []
 
@@ -155,7 +201,8 @@ def evaluate_strategy_health(
     if n < min_sample:
         reasons.append(f"only {n}/{min_sample} closed trades — collecting data")
         return StrategyHealth(strategy, INSUFFICIENT, ACTION_NONE, n, win_rate,
-                              expectancy, profit_factor, dd, streak, ratio, reasons)
+                              expectancy, profit_factor, dd, streak, ratio, reasons,
+                              score=score)
 
     # ── Degraded (suspend) checks ────────────────────────────────────────────
     if expectancy <= 0:
@@ -168,7 +215,8 @@ def evaluate_strategy_health(
         reasons.append(f"rolling drawdown {dd:.1f}% > {base.max_drawdown_pct:.1f}%")
     if reasons:
         return StrategyHealth(strategy, DEGRADED, ACTION_SUSPEND, n, win_rate,
-                              expectancy, profit_factor, dd, streak, ratio, reasons)
+                              expectancy, profit_factor, dd, streak, ratio, reasons,
+                              score=score)
 
     # ── Watch (reduce) checks ────────────────────────────────────────────────
     if ratio is not None and ratio < _WATCH_RATIO:
@@ -177,11 +225,13 @@ def evaluate_strategy_health(
         reasons.append(f"win rate {win_rate:.0%} below baseline {base.win_rate:.0%}")
     if reasons:
         return StrategyHealth(strategy, WATCH, ACTION_REDUCE, n, win_rate,
-                              expectancy, profit_factor, dd, streak, ratio, reasons)
+                              expectancy, profit_factor, dd, streak, ratio, reasons,
+                              score=score)
 
     reasons.append("performing at or above baseline")
     return StrategyHealth(strategy, HEALTHY, ACTION_NONE, n, win_rate,
-                          expectancy, profit_factor, dd, streak, ratio, reasons)
+                          expectancy, profit_factor, dd, streak, ratio, reasons,
+                          score=score)
 
 
 def evaluate_all(

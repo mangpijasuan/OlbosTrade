@@ -134,13 +134,8 @@ async def get_signal_explanation(signal_id: str):
         return {"signal_id": signal_id, "explanation": None, "error": str(exc)}
 
 
-@router.get("/health")
-async def get_strategy_health(min_sample: int = 20):
-    """
-    Per-strategy health: live win rate / expectancy / drawdown vs. baseline, with
-    a degradation grade (healthy / watch / degraded / insufficient_data) and a
-    recommended action. Suspended strategies should accept no new entries.
-    """
+async def _evaluate_health(min_sample: int):
+    """Shared loader: grade every strategy from closed trades + promoted baselines."""
     from app.core.config import settings
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
@@ -149,31 +144,63 @@ async def get_strategy_health(min_sample: int = 20):
     from app.services.strategy_health import evaluate_all
     from sqlalchemy import select
 
-    overrides = {}
-    try:
-        async with AsyncSessionLocal() as session:
-            trades = (await session.execute(
-                select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
-            )).scalars().all()
-            # Real, evidence-based baselines from PROMOTED Research Lab experiments.
-            promoted = (await session.execute(
-                select(ResearchExperiment).where(ResearchExperiment.stage == PROMOTED)
-            )).scalars().all()
-            overrides = baselines_from_experiments([e.as_dict() for e in promoted])
-    except Exception as exc:
-        return {"strategies": [], "error": str(exc)}
+    async with AsyncSessionLocal() as session:
+        trades = (await session.execute(
+            select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
+        )).scalars().all()
+        promoted = (await session.execute(
+            select(ResearchExperiment).where(ResearchExperiment.stage == PROMOTED)
+        )).scalars().all()
+        overrides = baselines_from_experiments([e.as_dict() for e in promoted])
 
     by_strategy: dict[str, list[dict]] = {}
     for t in trades:
         by_strategy.setdefault(str(t.strategy), []).append(
             {"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
         )
+    return evaluate_all(by_strategy, settings.starting_capital,
+                        overrides=overrides, min_sample=min_sample)
 
-    health = evaluate_all(by_strategy, settings.starting_capital,
-                          overrides=overrides, min_sample=min_sample)
+
+@router.get("/health")
+async def get_strategy_health(min_sample: int = 20):
+    """
+    Per-strategy health: live win rate / expectancy / drawdown vs. baseline, a
+    0–100 score, a degradation grade (healthy / watch / degraded /
+    insufficient_data), and a recommended action. Suspended strategies accept no
+    new entries.
+    """
+    try:
+        health = await _evaluate_health(min_sample)
+    except Exception as exc:
+        return {"strategies": [], "error": str(exc)}
     suspended = [h.strategy for h in health if h.status == "degraded"]
     return {
         "strategies": [h.as_dict() for h in health],
         "suspended": suspended,
         "total_strategies": len(health),
+    }
+
+
+@router.get("/meta")
+async def get_meta_strategy(min_sample: int = 20):
+    """
+    Meta-strategy decisions: given the active regime + each strategy's health,
+    which strategies are active and at what allocation tilt. Feeds the Capital
+    Allocation Engine.
+    """
+    from app.services.meta_strategy import decide, active_strategies
+    try:
+        health = await _evaluate_health(min_sample)
+    except Exception as exc:
+        return {"regime": None, "decisions": [], "error": str(exc)}
+
+    from app.main import _current_regime
+    regime = getattr(getattr(_current_regime, "regime", None), "value", None) or "unknown"
+    decisions = decide(regime, [h.as_dict() for h in health])
+    return {
+        "regime": regime,
+        "decisions": [d.as_dict() for d in decisions],
+        "active_strategies": active_strategies(decisions),
+        "total": len(decisions),
     }

@@ -52,11 +52,16 @@ interface Heat {
 }
 interface StratHealth {
   strategy: string; status: "healthy" | "watch" | "degraded" | "insufficient_data";
-  action: "none" | "reduce" | "suspend"; sample_size: number;
+  action: "none" | "reduce" | "suspend"; score: number; sample_size: number;
   win_rate: number; expectancy: number; drawdown_pct: number;
   expectancy_ratio: number | null; reasons: string[];
 }
 interface StratHealthResp { strategies: StratHealth[]; suspended: string[]; total_strategies: number; }
+interface MetaDecision {
+  strategy: string; active: boolean; tilt: number; health_status: string;
+  health_score: number; regime_sanctioned: boolean; reason: string;
+}
+interface MetaResp { regime: string | null; decisions: MetaDecision[]; active_strategies: string[]; }
 interface HealthDetail {
   scanner: { alive: boolean; last_tick_age_seconds: number | null };
   observability: { counters: Record<string, number>; uptime_seconds: number };
@@ -144,6 +149,10 @@ function StratRow({ h }: { h: StratHealth }) {
       </span>
       <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em",
         color: cfg.color, minWidth: 78 }}>{cfg.label}</span>
+      <span className="mono" style={{ fontSize: 13, fontWeight: 700, minWidth: 44,
+        color: h.score >= 70 ? "var(--green)" : h.score >= 45 ? "var(--amber)" : "var(--red)" }}>
+        {h.score.toFixed(0)}
+      </span>
       <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)", display: "flex", gap: 14, flexWrap: "wrap" }}>
         <span>n={h.sample_size}</span>
         <span>win {(h.win_rate * 100).toFixed(0)}%</span>
@@ -162,6 +171,7 @@ export default function ExecutiveSummary() {
   const [heat, setHeat] = useState<Heat | null>(null);
   const [strat, setStrat] = useState<StratHealthResp | null>(null);
   const [detail, setDetail] = useState<HealthDetail | null>(null);
+  const [meta, setMeta] = useState<MetaResp | null>(null);
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -171,6 +181,7 @@ export default function ExecutiveSummary() {
       setHeat(await j("/api/portfolio/heat"));
       setStrat(await j("/api/strategy/health"));
       setDetail(await j("/api/health/detail"));
+      setMeta(await j("/api/strategy/meta"));
     };
     load();
     const id = setInterval(load, 15000);
@@ -280,6 +291,31 @@ export default function ExecutiveSummary() {
           ? strat.strategies.map(h => <StratRow key={h.strategy} h={h} />)
           : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               {strat ? "No closed trades yet — collecting data." : "Loading…"}
+            </div>}
+      </div>
+
+      {/* Meta-strategy — which strategies are active given regime + health */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="strategy" title="Meta-Strategy"
+          right={meta && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            regime: <b style={{ color: "var(--cyan)" }}>{meta.regime || "—"}</b> · {meta.active_strategies.length} active
+          </span>} />
+        {meta && meta.decisions.length > 0
+          ? meta.decisions.map(d => (
+            <div key={d.strategy} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px",
+              borderBottom: "1px solid var(--line-dim)",
+              borderLeft: `2px solid ${d.active ? "var(--green)" : "var(--ink-faint)"}`,
+              opacity: d.active ? 1 : 0.6 }}>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 150 }}>{d.strategy}</span>
+              <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, minWidth: 60,
+                color: d.active ? "var(--green)" : "var(--red)" }}>{d.active ? "ACTIVE" : "OFF"}</span>
+              <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)", flex: 1 }}>
+                tilt <b style={{ color: "var(--ink)" }}>{(d.tilt * 100).toFixed(0)}%</b> · {d.reason}
+              </span>
+            </div>
+          ))
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {meta ? "No strategies tracked yet." : "Loading…"}
             </div>}
       </div>
 

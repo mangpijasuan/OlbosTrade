@@ -17,7 +17,9 @@ from app.services.strategy_health import (
     baseline_for,
     evaluate_all,
     evaluate_strategy_health,
+    health_score,
     is_suspended,
+    _clamp01,
     _max_losing_streak,
 )
 
@@ -184,3 +186,42 @@ def test_is_suspended_only_degraded():
 def test_no_trades_grades_insufficient():
     h = evaluate_strategy_health("bull_put_spread", [], CAP, min_sample=20)
     assert h.status == INSUFFICIENT and h.sample_size == 0 and h.losing_streak == 0
+
+
+# ── health_score (0–100) ──────────────────────────────────────────────────────────
+def test_clamp01():
+    assert _clamp01(-1) == 0.0 and _clamp01(2) == 1.0 and _clamp01(0.5) == 0.5
+
+
+def test_health_score_bounds_and_monotonic():
+    base = StrategyBaseline(win_rate=0.8, expectancy=50.0)
+    strong = {"win_rate": 0.85, "profit_factor": 2.5, "sharpe": 2.0, "sortino": 2.5,
+              "expectancy": 60.0, "rolling_max_dd_30_pct": 2.0}
+    weak = {"win_rate": 0.3, "profit_factor": 0.5, "sharpe": 0.1, "sortino": 0.1,
+            "expectancy": 5.0, "rolling_max_dd_30_pct": 30.0}
+    hi = health_score(strong, base, 1.2, 0)
+    lo = health_score(weak, base, 0.1, 5)
+    assert 0.0 <= lo <= 100.0 and 0.0 <= hi <= 100.0
+    assert hi > lo
+    assert hi > 80     # strong across the board
+
+
+def test_health_score_expectancy_ratio_none_uses_sign():
+    base = StrategyBaseline(win_rate=0.5, expectancy=0.0)   # ratio will be None
+    pos = health_score({"win_rate": 0.6, "expectancy": 10.0}, base, None, 0)
+    neg = health_score({"win_rate": 0.6, "expectancy": -10.0}, base, None, 0)
+    assert pos > neg
+
+
+def test_health_score_handles_zero_baselines():
+    base = StrategyBaseline(win_rate=0.0, expectancy=10.0, max_drawdown_pct=0.0,
+                            max_losing_streak=0)
+    s = health_score({"win_rate": 0.5, "profit_factor": 1.5}, base, 1.0, 3)
+    assert 0.0 <= s <= 100.0    # no div-by-zero
+
+
+def test_evaluate_sets_score_and_serialises():
+    h = evaluate_strategy_health("bull_put_spread", _trades([60] * 20 + [-40] * 5),
+                                 CAP, min_sample=20)
+    assert 0.0 <= h.score <= 100.0
+    assert "score" in h.as_dict()
