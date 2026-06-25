@@ -22,6 +22,7 @@ const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
 
 const ICONS: Record<string, string> = {
   dashboard:  "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
+  symphony:   "M9 18V5l12-2v13 M9 13l12-2 M6 21a3 3 0 100-6 3 3 0 000 6z M18 19a3 3 0 100-6 3 3 0 000 6z",
   equity:     "M23 6l-9.5 9.5-5-5L1 18 M17 6h6v6",
   backtest:   "M18 20V10 M12 20V4 M6 20v-6",
   paper:      "M3 3v18h18 M7 15l3-3 3 3 5-6",
@@ -38,6 +39,7 @@ const ICONS: Record<string, string> = {
 
 const NAV_ITEMS = [
   { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
+  { key: "symphony",   label: "Symphony",     icon: "symphony"   },
   { key: "equity",     label: "Equity Signals",icon: "equity"    },
   { key: "backtest",   label: "Backtest",     icon: "backtest"   },
   { key: "paper",      label: "Trade Desk",   icon: "paper"      },

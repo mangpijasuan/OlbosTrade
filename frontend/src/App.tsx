@@ -11,9 +11,11 @@ import Journal         from "./pages/Journal";
 import Research        from "./pages/Research";
 import ModeAnalytics   from "./pages/ModeAnalytics";
 import EquitySignals   from "./pages/EquitySignals";
+import Symphony        from "./pages/Symphony";
 
 const PAGES: Record<string, React.ComponentType> = {
   dashboard:  Dashboard,
+  symphony:   Symphony,
   equity:     EquitySignals,
   backtest:   Backtest,
   paper:      TradeDesk,
