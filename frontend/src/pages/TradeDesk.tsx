@@ -192,6 +192,23 @@ function ApprovalsQueue() {
                     max loss: <span style={{ color: "var(--red)" }}>${s.spread.max_loss?.toFixed(2)}</span>
                   </div>
                 )}
+                {s.intelligence && (
+                  <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap",
+                    fontFamily: "var(--mono)", fontSize: 10 }}>
+                    <span style={{ color: "var(--ink-dim)" }}>POP <b style={{
+                      color: (s.intelligence.pop ?? 0) >= 0.7 ? "var(--green)" : "var(--amber)" }}>
+                      {((s.intelligence.pop ?? 0) * 100).toFixed(0)}%</b></span>
+                    <span style={{ color: "var(--ink-dim)" }}>EV <b style={{
+                      color: (s.intelligence.expected_value ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                      ${(s.intelligence.expected_value ?? 0).toFixed(0)}</b></span>
+                    <span style={{ color: "var(--ink-dim)" }}>Kelly <b style={{ color: "var(--cyan)" }}>
+                      {((s.intelligence.kelly_fraction ?? 0) * 100).toFixed(1)}%</b></span>
+                    <span style={{ color: "var(--ink-dim)" }}>P(touch) <b style={{ color: "var(--ink)" }}>
+                      {((s.intelligence.prob_touch_short ?? 0) * 100).toFixed(0)}%</b></span>
+                    <span style={{ color: "var(--ink-dim)" }}>Δ <b style={{ color: "var(--ink)" }}>
+                      {(s.intelligence.delta_short ?? 0).toFixed(2)}</b></span>
+                  </div>
+                )}
                 {!s.spread && (
                   <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
                     Equity signal · queued at {s.queued_at ? new Date(s.queued_at).toLocaleTimeString() : "—"}
