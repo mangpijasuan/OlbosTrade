@@ -199,6 +199,9 @@ async def _background_scheduler() -> None:
         try:
             now = time.monotonic()
             _scheduler_last_tick = now   # heartbeat for the System Health panel
+            from app.services.observability import observability as _obs
+            _obs.incr("scanner.tick")
+            _obs.gauge("scanner.last_tick_monotonic", now)
 
             # Every 60s: ensure broker is still connected (auto-reconnect)
             if now - last_reconnect >= reconnect_interval_s:
@@ -738,7 +741,16 @@ async def _run_options_scan() -> None:
         except Exception:
             portfolio_value = settings.starting_capital
         risk_pct  = trading_mode_manager.config.risk_per_trade_pct
-        size_mult = float(getattr(_current_regime, "options_size_multiplier", 1.0))
+        regime_mult = float(getattr(_current_regime, "options_size_multiplier", 1.0))
+        # Volatility-based sizing: scale the regime budget inversely with vol so
+        # dollar risk stays steady across calm/fearful tape (Batch C).
+        from app.services.volatility_sizing import vol_adjusted_multiplier, describe as _vol_desc
+        _vix_for_sizing = float(getattr(feat, "vix", vix_est * 100)) if feat else vix_est * 100
+        _ivr_for_sizing = float(getattr(feat, "iv_rank", 30.0)) if feat else 30.0
+        size_mult = vol_adjusted_multiplier(regime_mult, _ivr_for_sizing, _vix_for_sizing)
+        logger.info("Vol sizing: %s → mult %.2f×%.2f=%.2f",
+                    _vol_desc(_ivr_for_sizing, _vix_for_sizing)["stance"],
+                    regime_mult, size_mult / max(regime_mult, 1e-9), size_mult)
         quantity  = RiskManager().calculate_position_size(
             portfolio_value=portfolio_value,
             max_loss_per_spread=max_loss_dollars,
@@ -1051,6 +1063,32 @@ async def _update_portfolio_greeks() -> None:
 async def health_check() -> dict[str, str]:
     """Returns 200 OK when the service is up."""
     return {"status": "ok", "broker": settings.broker}
+
+
+@app.get("/api/health/detail", tags=["System"])
+async def health_detail() -> dict:
+    """
+    Lightweight operational snapshot: scanner heartbeat, kill-switch state, the
+    current regime, and the in-process observability counters / recent events.
+    No external dependencies — safe to poll.
+    """
+    import time as _t
+    from app.services.observability import observability
+    from app.services.kill_switch import kill_switch_service as _ks
+
+    age = (_t.monotonic() - _scheduler_last_tick) if _scheduler_last_tick else None
+    scanner_ok = age is not None and age < 90
+    return {
+        "status": "ok",
+        "broker": settings.broker,
+        "scanner": {
+            "alive": scanner_ok,
+            "last_tick_age_seconds": round(age, 1) if age is not None else None,
+        },
+        "kill_switch": {"engaged": _ks.is_engaged, "reason": _ks.status.get("reason")},
+        "regime": getattr(getattr(_current_regime, "regime", None), "value", None),
+        "observability": observability.snapshot(),
+    }
 
 
 # ── Guardrail endpoints ─────────────────────────────────────────────────────

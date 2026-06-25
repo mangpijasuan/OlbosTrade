@@ -57,6 +57,10 @@ interface StratHealth {
   expectancy_ratio: number | null; reasons: string[];
 }
 interface StratHealthResp { strategies: StratHealth[]; suspended: string[]; total_strategies: number; }
+interface HealthDetail {
+  scanner: { alive: boolean; last_tick_age_seconds: number | null };
+  observability: { counters: Record<string, number>; uptime_seconds: number };
+}
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const money = (n: number) =>
@@ -157,6 +161,7 @@ export default function ExecutiveSummary() {
   const [perf, setPerf] = useState<Performance | null>(null);
   const [heat, setHeat] = useState<Heat | null>(null);
   const [strat, setStrat] = useState<StratHealthResp | null>(null);
+  const [detail, setDetail] = useState<HealthDetail | null>(null);
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -165,6 +170,7 @@ export default function ExecutiveSummary() {
       setPerf(await j("/api/analytics/performance"));
       setHeat(await j("/api/portfolio/heat"));
       setStrat(await j("/api/strategy/health"));
+      setDetail(await j("/api/health/detail"));
     };
     load();
     const id = setInterval(load, 15000);
@@ -286,6 +292,20 @@ export default function ExecutiveSummary() {
           </span>} />
         {s ? s.health.map(h => <HealthRow key={h.name} h={h} />)
           : <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>}
+        {detail && (
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "9px 14px",
+            fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-dim)",
+            borderTop: "1px solid var(--line-dim)" }}>
+            <span>Scanner <b style={{ color: detail.scanner.alive ? "var(--green)" : "var(--red)" }}>
+              {detail.scanner.alive ? "live" : "stalled"}</b>
+              {detail.scanner.last_tick_age_seconds !== null ? ` ${detail.scanner.last_tick_age_seconds}s ago` : ""}
+            </span>
+            <span>Attempts <b style={{ color: "var(--ink)" }}>{detail.observability.counters["execute.attempt"] || 0}</b></span>
+            <span>Submitted <b style={{ color: "var(--green)" }}>{detail.observability.counters["execute.submitted"] || 0}</b></span>
+            <span>Blocked <b style={{ color: "var(--amber)" }}>{detail.observability.counters["execute.blocked"] || 0}</b></span>
+            <span>Errors <b style={{ color: "var(--red)" }}>{detail.observability.counters["execute.error"] || 0}</b></span>
+          </div>
+        )}
       </div>
     </div>
   );

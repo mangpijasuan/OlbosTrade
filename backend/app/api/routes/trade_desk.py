@@ -18,6 +18,7 @@ from decimal import Decimal
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.kill_switch import kill_switch_service
+from app.services.observability import observability
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -302,11 +303,15 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     """
     await asyncio.sleep(0)
 
+    observability.incr("execute.attempt")
     ticker      = signal.get("ticker", "")
     asset_type  = signal.get("asset_type", "equity")
     executed_at = datetime.now(timezone.utc).isoformat()
 
     def _blocked(reason: str) -> dict:
+        observability.incr("execute.blocked")
+        observability.event("blocked", ticker=ticker, asset_type=asset_type,
+                            reason=reason.split(":")[0])
         return {
             "signal_id":  signal.get("id"),
             "ticker":     ticker,
@@ -317,6 +322,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         }
 
     def _skipped(reason: str) -> dict:
+        observability.incr("execute.skipped")
         return {
             "signal_id":  signal.get("id"),
             "ticker":     ticker,
@@ -471,6 +477,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     ticker,
                 )
 
+            observability.incr("execute.submitted")
+            observability.event("submitted", ticker=ticker, asset_type="equity",
+                                order_id=result.order_id)
             return {
                 "signal_id":    signal.get("id"),
                 "ticker":       ticker,
@@ -561,6 +570,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     strategy, ticker,
                 )
 
+            observability.incr("execute.submitted")
+            observability.event("submitted", ticker=ticker, asset_type="options",
+                                strategy=strategy, order_id=result.order_id)
             return {
                 "signal_id":    signal.get("id"),
                 "ticker":       ticker,
@@ -582,6 +594,8 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             return _blocked(f"unknown asset_type: {asset_type}")
 
     except Exception as exc:
+        observability.incr("execute.error")
+        observability.event("error", ticker=ticker, asset_type=asset_type, error=str(exc))
         return {
             "signal_id":  signal.get("id"),
             "ticker":     ticker,
