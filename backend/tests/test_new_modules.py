@@ -108,14 +108,12 @@ class TestIVSurfaceEngine:
         pct = IVSurfaceEngine._compute_iv_percentile(ivs, 0.20)
         assert pct == pytest.approx(80.0, abs=1.0)
 
-    def test_fallback_surface_always_valid(self):
+    @pytest.mark.asyncio
+    async def test_fallback_surface_always_valid(self):
         broker = MagicMock()
         broker.get_options_chain = AsyncMock(side_effect=Exception("no chain"))
         engine = IVSurfaceEngine(broker)
-        loop = asyncio.get_event_loop()
-        surface = loop.run_until_complete(
-            engine.build_surface("SPY", 455.0, 0.14)
-        )
+        surface = await engine.build_surface("SPY", 455.0, 0.14)
         assert surface.data_quality == "fallback"
         assert surface.iv_rank >= 0
         assert surface.iv_rank <= 100
