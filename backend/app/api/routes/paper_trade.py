@@ -36,12 +36,16 @@ async def get_portfolio():
 
     try:
         async with AsyncSessionLocal() as session:
+            # Only count closes with a KNOWN P&L. Trades auto-closed without a
+            # reliable broker exit price are stored with pnl=NULL — including them
+            # in the denominator would understate the win rate (a NULL is never a
+            # win) and misrepresent total trades.
             stats = (await session.execute(
                 select(
                     func.count(Trade.id).label("count"),
                     func.coalesce(func.sum(Trade.pnl), 0).label("total_pnl"),
                     func.coalesce(func.sum(case((Trade.pnl > 0, 1), else_=0)), 0).label("wins"),
-                ).where(Trade.status == "closed")
+                ).where(Trade.status == "closed", Trade.pnl.isnot(None))
             )).one()
 
             today = date.today()

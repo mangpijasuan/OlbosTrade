@@ -21,12 +21,9 @@ services:
       - backend/.env.prod
     environment:
       DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbosquant-db:5432/olbosquantdb
-      REDIS_URL: redis://olbosquant-redis:6379
     depends_on:
       olbosquant-db:
         condition: service_healthy
-      olbosquant-redis:
-        condition: service_started
     networks:
       - olbosquant_internal
       - olbos_default        # joins existing Caddy network
@@ -100,23 +97,6 @@ services:
       driver: "json-file"
       options:
         max-size: "20m"
-        max-file: "3"
-
-  olbosquant-redis:
-    image: redis:7-alpine
-    container_name: olbosquant-redis
-    restart: unless-stopped
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
-    networks:
-      - olbosquant_internal
-    deploy:
-      resources:
-        limits:
-          memory: 192M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
         max-file: "3"
 
 volumes:

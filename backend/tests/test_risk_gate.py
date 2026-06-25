@@ -21,16 +21,32 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
+
+# These tests exercise the risk gate, not market hours. Force the market-hours
+# guard open so _execute_signal reaches the guardrail/sizing stages regardless of
+# when the suite runs. (is_market_open is imported inside _execute_signal at call
+# time, so patching the module attribute is sufficient.)
+@pytest.fixture(autouse=True)
+def _market_always_open():
+    with patch("app.utils.market_hours.is_market_open", return_value=True):
+        yield
+
+
 # ── Signal fixtures ────────────────────────────────────────────────────────────
 
 def _equity_signal(ticker="AAPL", shares=10, limit_price=150.0):
+    # Realistic autopilot signal: high confidence + positive reward:risk so it
+    # clears the Trade Frequency Controller and reaches the stage under test.
     return {
         "id":         "sig-001",
         "ticker":     ticker,
         "action":     "BUY",
         "asset_type": "equity",
+        "confidence": 0.95,
         "trade_plan": {"shares": shares, "entry_price": limit_price,
-                       "stop_price": None, "target_price": None},
+                       "stop_price": None, "target_price": None,
+                       "risk_reward": 2.0},
+        "indicators": {"volume_ratio": 1.5},
         "signal_score": 0.8,
         "iv_rank": 30.0,
         "regime": "normal",
@@ -45,12 +61,14 @@ def _options_signal(ticker="SPY", quantity=1):
         "asset_type": "options",
         "strategy":   "bull_put_spread",
         "quantity":   quantity,
+        "confidence": 0.92,
         "spread": {
             "expiration":   "2025-06-20",
             "short_strike": 450,
             "long_strike":  445,
             "option_type":  "put",
             "net_credit":   1.50,
+            "max_loss":     3.50,
         },
         "signal_score": 0.75,
         "iv_rank": 45.0,
@@ -240,38 +258,6 @@ def test_calculate_position_size_returns_zero_for_tiny_budget():
         risk_pct=0.02,
     )
     assert result == 0
-
-
-@pytest.mark.asyncio
-async def test_zero_contracts_skips_trade_in_paper_trader():
-    """
-    When effective_contracts == 0 after sizing, paper_trader must record
-    'skipped_zero_size' and NOT call the dispatcher.
-    """
-    # We test the zero-size guard added to the paper_trader loop
-    # by checking the action_record written when contracts == 0.
-    from app.services.paper_trader import PaperTrader
-
-    pt = PaperTrader.__new__(PaperTrader)
-
-    # Simulate the sizing returning 0 — the guard we added logs skipped_zero_size
-    size_result = MagicMock(contracts=0)
-    regime = MagicMock(size_multiplier=1.0, strategies_allowed=["bull_put_spread"])
-
-    effective_contracts = int(size_result.contracts * regime.size_multiplier)
-    assert effective_contracts == 0
-
-    # Verify the guard logic (extracted from loop body)
-    actions = []
-    if effective_contracts <= 0:
-        actions.append({
-            "action":   "skipped_zero_size",
-            "strategy": "bull_put_spread",
-            "reason":   "sizing returned 0 contracts",
-        })
-
-    assert len(actions) == 1
-    assert actions[0]["action"] == "skipped_zero_size"
 
 
 @pytest.mark.asyncio

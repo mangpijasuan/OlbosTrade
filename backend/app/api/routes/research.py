@@ -1,10 +1,12 @@
-"""Research routes — strategy comparison and model performance."""
+"""Research routes — strategy comparison, model performance, and the Research Lab."""
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter()
 
@@ -108,3 +110,112 @@ async def get_model_performance():
         }
     except Exception as exc:
         return {"model_version": "untrained", "auc": None, "last_trained": None, "error": str(exc)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Research Lab — strategy promotion funnel (draft → backtested → paper → promoted)
+# ══════════════════════════════════════════════════════════════════════════════
+class CreateExperiment(BaseModel):
+    name:       str
+    strategy:   str
+    hypothesis: Optional[str] = None
+    spec:       Optional[dict] = None
+
+
+class TransitionRequest(BaseModel):
+    target:  str                       # backtested | paper | promoted | archived | draft
+    metrics: Optional[dict] = None     # backtest metrics (→ backtested)
+    perf:    Optional[dict] = None      # paper performance (→ promoted)
+
+
+async def _experiment_or_none(session, exp_id: str):
+    from app.models.research_experiment import ResearchExperiment
+    from sqlalchemy import select
+    return (await session.execute(
+        select(ResearchExperiment).where(ResearchExperiment.id == exp_id)
+    )).scalar_one_or_none()
+
+
+@router.get("/lab/experiments")
+async def list_experiments():
+    """All Research Lab experiments, newest first."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.research_experiment import ResearchExperiment
+    from sqlalchemy import select
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(ResearchExperiment).order_by(ResearchExperiment.created_at.desc())
+            )).scalars().all()
+        return {"experiments": [r.as_dict() for r in rows], "total": len(rows)}
+    except Exception as exc:
+        return {"experiments": [], "total": 0, "error": str(exc)}
+
+
+@router.post("/lab/experiments")
+async def create_experiment(req: CreateExperiment):
+    """Create a DRAFT experiment from a hypothesis + Symphony spec."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.research_experiment import ResearchExperiment
+    from app.services.research_lab import DRAFT
+    try:
+        exp = ResearchExperiment(
+            name=req.name, strategy=req.strategy, hypothesis=req.hypothesis,
+            stage=DRAFT, spec=req.spec,
+        )
+        async with AsyncSessionLocal() as session:
+            session.add(exp)
+            await session.commit()
+            await session.refresh(exp)
+        return exp.as_dict()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@router.post("/lab/experiments/{exp_id}/transition")
+async def transition_experiment(exp_id: str, req: TransitionRequest):
+    """
+    Advance an experiment through the funnel. Gates are enforced server-side:
+    a move to PAPER needs a passing backtest, to PROMOTED a passing paper record.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.services.research_lab import transition
+    try:
+        async with AsyncSessionLocal() as session:
+            exp = await _experiment_or_none(session, exp_id)
+            if exp is None:
+                return {"error": "experiment not found"}
+            result = transition(exp.as_dict(), req.target,
+                                metrics=req.metrics, perf=req.perf)
+            if not result.ok:
+                return {"ok": False, "reason": result.reason, "experiment": exp.as_dict()}
+            for k, v in result.patch.items():
+                setattr(exp, k, v)
+            await session.commit()
+            await session.refresh(exp)
+        return {"ok": True, "reason": result.reason, "experiment": exp.as_dict()}
+    except Exception as exc:
+        return {"ok": False, "reason": f"error: {exc}", "experiment": None}
+
+
+@router.get("/lab/baselines")
+async def lab_baselines():
+    """
+    StrategyBaseline overrides derived from PROMOTED experiments — the bridge that
+    feeds the Strategy Health Monitor real, evidence-based baselines.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.research_experiment import ResearchExperiment
+    from app.services.research_lab import baselines_from_experiments, PROMOTED
+    from sqlalchemy import select
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(ResearchExperiment).where(ResearchExperiment.stage == PROMOTED)
+            )).scalars().all()
+        baselines = baselines_from_experiments([r.as_dict() for r in rows])
+        return {"baselines": {k: {"win_rate": v.win_rate, "expectancy": v.expectancy,
+                                  "max_drawdown_pct": v.max_drawdown_pct}
+                              for k, v in baselines.items()}}
+    except Exception as exc:
+        return {"baselines": {}, "error": str(exc)}

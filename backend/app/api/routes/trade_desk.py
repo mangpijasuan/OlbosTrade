@@ -18,6 +18,7 @@ from decimal import Decimal
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.kill_switch import kill_switch_service
+from app.services.observability import observability
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -67,10 +68,11 @@ async def _fetch_portfolio_state() -> PortfolioState:
             weekly_pnl  = await _sum_pnl(week_start)
             monthly_pnl = await _sum_pnl(month_start)
 
+            # Daily trade cap counts every trade ENTERED today, regardless of
+            # status — a trade opened and closed the same day still used a slot.
             trades_today = int((await _db.execute(
                 select(func.count()).where(
-                    Trade.status == "open",
-                    Trade.entry_date >= today,
+                    func.date(Trade.entry_date) == today,
                 )
             )).scalar() or 0)
 
@@ -111,6 +113,35 @@ _kill_switch = threading.Event()
 def _is_kill_switch_active() -> bool:
     """Check both the local event and the authoritative service."""
     return _kill_switch.is_set() or kill_switch_service.is_engaged
+
+
+async def _strategy_health_for(strategy: str):
+    """
+    Live health grade for one strategy from its closed trades, or None on error
+    (the caller fails open). Kept thin and DB-scoped so the execution gate stays
+    cheap.
+    """
+    try:
+        from app.core.config import settings
+        from app.core.database import AsyncSessionLocal
+        from app.models.trade import Trade
+        from app.services.strategy_health import evaluate_strategy_health
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as session:
+            trades = (await session.execute(
+                select(Trade).where(
+                    Trade.strategy == strategy,
+                    Trade.status == "closed",
+                    Trade.pnl.isnot(None),
+                )
+            )).scalars().all()
+        rows = [{"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
+                for t in trades]
+        return evaluate_strategy_health(strategy, rows, settings.starting_capital)
+    except Exception as exc:   # pragma: no cover - defensive; gate fails open
+        logger.warning("Strategy health check failed for %s: %s", strategy, exc)
+        return None
 
 # ── In-memory pending approvals (Copilot mode) ────────────────────────────────
 # Populated by main.py background scanner when mode == copilot
@@ -272,11 +303,15 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     """
     await asyncio.sleep(0)
 
+    observability.incr("execute.attempt")
     ticker      = signal.get("ticker", "")
     asset_type  = signal.get("asset_type", "equity")
     executed_at = datetime.now(timezone.utc).isoformat()
 
     def _blocked(reason: str) -> dict:
+        observability.incr("execute.blocked")
+        observability.event("blocked", ticker=ticker, asset_type=asset_type,
+                            reason=reason.split(":")[0])
         return {
             "signal_id":  signal.get("id"),
             "ticker":     ticker,
@@ -287,6 +322,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         }
 
     def _skipped(reason: str) -> dict:
+        observability.incr("execute.skipped")
         return {
             "signal_id":  signal.get("id"),
             "ticker":     ticker,
@@ -301,12 +337,60 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         logger.warning("Order blocked for %s — kill switch is engaged", ticker)
         return _blocked("kill_switch")
 
+    # ── Stage 1b: Market hours ─────────────────────────────────────────────────
+    # Pause order submission outside US regular trading hours. The scanner keeps
+    # generating signals 24/7; execution auto-resumes at the next open. Options
+    # don't trade after hours and after-hours equity fills are poor, so this
+    # covers every path (autopilot, copilot approval, manual).
+    from app.core.config import settings as _mh_cfg
+    if getattr(_mh_cfg, "market_hours_only", True):
+        from app.utils.market_hours import is_market_open, market_status
+        if not is_market_open():
+            status = market_status()
+            logger.info(
+                "Order blocked for %s — market closed (%s, %s)",
+                ticker, status["reason"], status["now_et"],
+            )
+            return _blocked(f"market_closed: {status['reason']}")
+
     # ── Stage 2: Guardrail risk check (fail closed) ────────────────────────────
     try:
         portfolio_state = await _fetch_portfolio_state()
     except RiskGateError as exc:
         logger.error("Risk gate refused trade for %s (fail closed): %s", ticker, exc)
         return _blocked(f"risk_gate_error: {exc}")
+
+    # ── Stage 1c: Trade Frequency Controller (before the risk engine) ───────────
+    # Profitability before activity: per-mode daily cap, min confidence, max risk
+    # score, and a positive-EV quality filter. Reuses the portfolio-state read.
+    # Manual trades bypass it — the user is overriding signal generation on purpose
+    # (they still face the kill switch, market hours, guardrails, and sizing).
+    if approved_by != "manual":
+        from app.services.trade_frequency_controller import trade_frequency_controller
+        freq = trade_frequency_controller.evaluate(
+            signal, trades_today=portfolio_state.trades_today,
+        )
+        if not freq.allowed:
+            logger.info(
+                "Frequency controller blocked %s: %s (score=%.3f risk=%d ev=%.3f)",
+                ticker, freq.reason, freq.weighted_score, freq.risk_score, freq.expected_value,
+            )
+            return _blocked(f"frequency_controller: {freq.reason}")
+
+        # ── Stage 1d: Strategy Health Monitor (auto-suspend) ────────────────────
+        # A strategy whose live edge has degraded vs. its baseline accepts no new
+        # entries until it recovers. Advisory — fails OPEN on error so a transient
+        # DB issue never halts trading (kill switch + guardrails still protect).
+        strat = signal.get("strategy", "")
+        if strat:
+            health = await _strategy_health_for(strat)
+            if health is not None and health.status == "degraded":
+                logger.warning(
+                    "Strategy health blocked %s (%s): %s",
+                    ticker, strat, "; ".join(health.reasons),
+                )
+                return _blocked(
+                    f"strategy_health: {strat} degraded — {'; '.join(health.reasons)}")
 
     _guardrail = GuardrailEngine()
     guardrail_status = _guardrail.check_all(portfolio_state)
@@ -362,14 +446,19 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 order_type=signal.get("order_type", "limit"),
                 limit_price=trade_plan.get("entry_price"),
                 stop=trade_plan.get("stop_price"),
+                take_profit=trade_plan.get("target_price"),
             )
+
+            # Encode direction so exit P&L is computed with the right sign.
+            # SELL = short (profit when price falls), default BUY = long.
+            equity_direction = "equity_short" if action.upper() == "SELL" else "equity_long"
 
             # Stage 5: fill recording — CRITICAL on failure (filled but unrecorded is dangerous)
             from app.services.trade_recorder import trade_recorder
             recorded = await trade_recorder.record_fill(
                 strategy="equity",
                 underlying=ticker,
-                option_type="equity",
+                option_type=equity_direction,
                 short_strike=trade_plan.get("entry_price") or 0,
                 long_strike=trade_plan.get("stop_price") or 0,
                 expiration=date.today(),
@@ -388,6 +477,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     ticker,
                 )
 
+            observability.incr("execute.submitted")
+            observability.event("submitted", ticker=ticker, asset_type="equity",
+                                order_id=result.order_id)
             return {
                 "signal_id":    signal.get("id"),
                 "ticker":       ticker,
@@ -427,7 +519,13 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
 
             from app.core.config import settings as _cfg
             aggression = getattr(_cfg, "limit_price_aggression", 1.0)
-            limit_px   = Decimal(str(round(credit * aggression, 2)))
+            # `credit` (net_credit) is a PER-CONTRACT dollar amount (already x100,
+            # e.g. $150 for a $1.50 spread). The broker expects a PER-SHARE net
+            # price (1.50) — IB applies the x100 multiplier itself. Passing 150
+            # asked for a $150 credit per spread and the order NEVER filled, which
+            # is why no options trades were ever executed. Convert back to per-share.
+            credit_per_share = float(credit) / 100.0
+            limit_px   = Decimal(str(round(credit_per_share * aggression, 2)))
 
             order = SpreadOrder(
                 strategy=strategy,
@@ -455,7 +553,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 long_strike=float(long_str),
                 expiration=expiry_date,
                 quantity=quantity,
-                entry_credit=float(credit),
+                # Store per-share net credit (1.50, not 150) so record_exit's
+                # x100 contract multiplier yields correct dollar P&L.
+                entry_credit=credit_per_share,
                 spread_width=abs(float(short_str) - float(long_str)),
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),
@@ -470,6 +570,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     strategy, ticker,
                 )
 
+            observability.incr("execute.submitted")
+            observability.event("submitted", ticker=ticker, asset_type="options",
+                                strategy=strategy, order_id=result.order_id)
             return {
                 "signal_id":    signal.get("id"),
                 "ticker":       ticker,
@@ -491,6 +594,8 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             return _blocked(f"unknown asset_type: {asset_type}")
 
     except Exception as exc:
+        observability.incr("execute.error")
+        observability.event("error", ticker=ticker, asset_type=asset_type, error=str(exc))
         return {
             "signal_id":  signal.get("id"),
             "ticker":     ticker,

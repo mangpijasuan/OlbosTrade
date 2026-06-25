@@ -477,41 +477,9 @@ async def compute_flow_features(ticker: str = "SPY") -> dict:
         flow_large_sweep_bullish_count:
             count of large bullish sweeps in the last 2 hours
 
-    Returns neutral defaults (0.5 / 0) when no flow data exists yet, so callers
-    can pass the result straight into ``classify(...)`` unconditionally.
+    The live Options Flow (OPRA) module has been removed — it required a paid
+    market-data subscription. This returns neutral defaults (0.5 / 0), exactly how
+    the classifier ran by default, so callers can keep passing the result straight
+    into ``classify(...)`` unconditionally.
     """
-    from datetime import datetime, timedelta, timezone
-    from sqlalchemy import func, select
-
-    from app.core.database import AsyncSessionLocal
-    from app.models.options_flow import OptionsFlow
-
-    now = datetime.now(timezone.utc)
-    out = {"flow_sentiment_score": 0.5, "flow_large_sweep_bullish_count": 0}
-    try:
-        async with AsyncSessionLocal() as session:
-            since_30m = now - timedelta(minutes=30)
-            rows = (await session.execute(
-                select(OptionsFlow.sentiment, func.sum(OptionsFlow.premium))
-                .where(OptionsFlow.ticker == ticker, OptionsFlow.timestamp >= since_30m)
-                .group_by(OptionsFlow.sentiment)
-            )).all()
-            prem = {s: float(p or 0) for s, p in rows}
-            bull, bear = prem.get("bullish", 0.0), prem.get("bearish", 0.0)
-            total = bull + bear
-            if total > 0:
-                out["flow_sentiment_score"] = round(bull / total, 4)
-
-            since_2h = now - timedelta(hours=2)
-            cnt = (await session.execute(
-                select(func.count(OptionsFlow.id)).where(
-                    OptionsFlow.ticker == ticker,
-                    OptionsFlow.timestamp >= since_2h,
-                    OptionsFlow.large_sweep.is_(True),
-                    OptionsFlow.sentiment == "bullish",
-                )
-            )).scalar()
-            out["flow_large_sweep_bullish_count"] = int(cnt or 0)
-    except Exception as exc:
-        logger.debug("compute_flow_features failed (using neutral defaults): %s", exc)
-    return out
+    return {"flow_sentiment_score": 0.5, "flow_large_sweep_bullish_count": 0}

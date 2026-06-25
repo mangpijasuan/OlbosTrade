@@ -1,0 +1,131 @@
+"""Tests for the Research Lab API routes (DB mocked)."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.api.routes.research import (
+    CreateExperiment, TransitionRequest,
+    create_experiment, list_experiments, transition_experiment, lab_baselines,
+)
+from app.services.research_lab import BACKTESTED, DRAFT, PAPER, PROMOTED
+
+
+def _session(rows=None, one=None):
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    result = MagicMock()
+    result.scalars.return_value = MagicMock(all=lambda: rows or [])
+    result.scalar_one_or_none = lambda: one
+    session.execute = AsyncMock(return_value=result)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    return session
+
+
+class _Exp:
+    """Mutable stand-in for a ResearchExperiment row."""
+    def __init__(self, **kw):
+        self.stage = kw.get("stage", DRAFT)
+        self.backtest_metrics = kw.get("backtest_metrics")
+        self.paper_perf = kw.get("paper_perf")
+        self.baseline = kw.get("baseline")
+        self.strategy = kw.get("strategy", "bull_put_spread")
+        self._d = kw
+
+    def as_dict(self):
+        return {"id": "e1", "name": "exp", "strategy": self.strategy,
+                "stage": self.stage, "backtest_metrics": self.backtest_metrics,
+                "paper_perf": self.paper_perf, "baseline": self.baseline}
+
+
+@pytest.mark.asyncio
+async def test_list_experiments():
+    rows = [_Exp(stage=DRAFT), _Exp(stage=PROMOTED)]
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(rows=rows)):
+        out = await list_experiments()
+    assert out["total"] == 2 and len(out["experiments"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_experiments_db_error():
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("down")):
+        out = await list_experiments()
+    assert out["experiments"] == [] and "error" in out
+
+
+@pytest.mark.asyncio
+async def test_create_experiment():
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session()), \
+         patch("app.models.research_experiment.ResearchExperiment") as M:
+        M.return_value = _Exp(stage=DRAFT)
+        out = await create_experiment(CreateExperiment(
+            name="Mean revert SPY", strategy="iron_condor", hypothesis="range-bound"))
+    assert out["stage"] == DRAFT
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_error():
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("boom")):
+        out = await create_experiment(CreateExperiment(name="x", strategy="y"))
+    assert "error" in out
+
+
+@pytest.mark.asyncio
+async def test_transition_not_found():
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(one=None)):
+        out = await transition_experiment("missing", TransitionRequest(target=BACKTESTED))
+    assert out["error"] == "experiment not found"
+
+
+@pytest.mark.asyncio
+async def test_transition_gate_blocks():
+    exp = _Exp(stage=BACKTESTED, backtest_metrics={"sharpe": 0.1, "total_return_pct": 1, "max_drawdown_pct": 5})
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(one=exp)):
+        out = await transition_experiment("e1", TransitionRequest(target=PAPER))
+    assert out["ok"] is False and "backtest gate failed" in out["reason"]
+
+
+@pytest.mark.asyncio
+async def test_transition_success_persists_patch():
+    exp = _Exp(stage=BACKTESTED, backtest_metrics={"sharpe": 1.5, "total_return_pct": 20, "max_drawdown_pct": 8})
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(one=exp)):
+        out = await transition_experiment("e1", TransitionRequest(target=PAPER))
+    assert out["ok"] is True and exp.stage == PAPER
+
+
+@pytest.mark.asyncio
+async def test_transition_promote_sets_baseline():
+    exp = _Exp(stage=PAPER, backtest_metrics={"max_drawdown_pct": 15.0})
+    perf = {"total_trades": 40, "win_rate": 0.7, "expectancy": 35.0, "max_drawdown_trades_pct": 9.0}
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(one=exp)):
+        out = await transition_experiment("e1", TransitionRequest(target=PROMOTED, perf=perf))
+    assert out["ok"] is True and exp.stage == PROMOTED
+    assert exp.baseline["win_rate"] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_transition_handles_exception():
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("kaboom")):
+        out = await transition_experiment("e1", TransitionRequest(target=PAPER))
+    assert out["ok"] is False and "error" in out["reason"]
+
+
+@pytest.mark.asyncio
+async def test_lab_baselines():
+    rows = [_Exp(stage=PROMOTED, strategy="bull_put_spread",
+                 baseline={"win_rate": 0.8, "expectancy": 50, "max_drawdown_pct": 20})]
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(rows=rows)):
+        out = await lab_baselines()
+    assert out["baselines"]["bull_put_spread"]["expectancy"] == 50
+
+
+@pytest.mark.asyncio
+async def test_lab_baselines_db_error():
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("x")):
+        out = await lab_baselines()
+    assert out["baselines"] == {} and "error" in out

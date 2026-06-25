@@ -30,6 +30,10 @@ async def _load_trades_from_db(
 
         trades = []
         for t in db_trades:
+            # Skip closes with unknown P&L (pnl=NULL) — counting them as $0 would
+            # pollute win rate, drawdown and Sharpe with a fabricated flat trade.
+            if t.pnl is None:
+                continue
             entry = t.entry_date.date() if t.entry_date else date.today()
             exit_d = t.exit_date.date() if t.exit_date else None
 
@@ -144,6 +148,28 @@ async def get_mode_detail(mode_name: str):
             for t in sorted(mode_trades, key=lambda t: t.entry_date, reverse=True)[:20]
         ]
     }
+
+
+@router.get("/performance")
+async def get_performance():
+    """Portfolio-wide performance metrics over all closed trades with known P&L."""
+    from app.services.performance_analytics import compute_performance
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as session:
+            trades = (await session.execute(
+                select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
+            )).scalars().all()
+        rows = [{"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
+                for t in trades]
+    except Exception as exc:
+        return {"error": str(exc),
+                **compute_performance([], settings.starting_capital)}
+
+    return compute_performance(rows, settings.starting_capital)
 
 
 @router.get("/signal-score-impact")

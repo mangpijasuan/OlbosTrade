@@ -13,8 +13,8 @@ from app.core.database import Base  # noqa: F401
 from app.models import (  # noqa: F401
     backtest_result,
     journal_entry,
-    options_flow,
     position,
+    research_experiment,
     risk_state,
     trade,
 )

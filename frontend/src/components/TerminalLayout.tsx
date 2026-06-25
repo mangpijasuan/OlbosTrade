@@ -22,12 +22,15 @@ const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
 
 const ICONS: Record<string, string> = {
   dashboard:  "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
+  symphony:   "M9 18V5l12-2v13 M9 13l12-2 M6 21a3 3 0 100-6 3 3 0 000 6z M18 19a3 3 0 100-6 3 3 0 000 6z",
+  equity:     "M23 6l-9.5 9.5-5-5L1 18 M17 6h6v6",
   backtest:   "M18 20V10 M12 20V4 M6 20v-6",
-  paper:      "M22 12h-4l-3 9L9 3l-3 9H2",
+  paper:      "M3 3v18h18 M7 15l3-3 3 3 5-6",
   risk:       "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
   guardrails: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
   journal:    "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
   research:   "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+  lab:        "M9 2v6l-5 9a2 2 0 002 3h12a2 2 0 002-3l-5-9V2 M7 2h10 M8 14h8",
   flow:       "M3 12h4l3 8 4-16 3 8h4",
   strategy:   "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z",
   analytics:  "M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z",
@@ -37,7 +40,9 @@ const ICONS: Record<string, string> = {
 
 const NAV_ITEMS = [
   { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
-  { key: "equity",     label: "Equity Signals",icon: "backtest"  },
+  { key: "symphony",   label: "Symphony",     icon: "symphony"   },
+  { key: "lab",        label: "Research Lab", icon: "lab"        },
+  { key: "equity",     label: "Equity Signals",icon: "equity"    },
   { key: "backtest",   label: "Backtest",     icon: "backtest"   },
   { key: "paper",      label: "Trade Desk",   icon: "paper"      },
   { key: "risk",       label: "Risk",         icon: "risk"       },
@@ -46,7 +51,6 @@ const NAV_ITEMS = [
   { key: "journal",    label: "Journal",      icon: "journal"    },
   { key: "research",   label: "Research",     icon: "research"   },
   { key: "analytics",  label: "Analytics",    icon: "analytics"  },
-  { key: "flow",       label: "Flow",         icon: "flow"       },
 ];
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────

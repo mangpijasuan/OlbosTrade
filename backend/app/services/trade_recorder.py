@@ -175,9 +175,27 @@ class TradeRecorder:
                         logger.warning("record_exit: trade %s not found", trade_id)
                         return False
 
-                    credit = float(trade.credit_received or 0)
+                    entry  = float(trade.credit_received or 0)
                     qty    = int(getattr(trade, "quantity", None) or 1)
-                    pnl    = (credit - cost_to_close) * qty * 100
+
+                    # Equity has no x100 contract multiplier; options do.
+                    # Direction is encoded in spread_type ("equity_long"/"equity_short").
+                    spread_type = (getattr(trade, "spread_type", "") or "").lower()
+                    is_equity   = (getattr(trade, "strategy", "") == "equity") or spread_type.startswith("equity")
+
+                    if is_equity:
+                        multiplier = 1
+                        if spread_type == "equity_short":
+                            # Short: profit when exit price is below entry.
+                            pnl = (entry - cost_to_close) * qty * multiplier
+                        else:
+                            # Long (default): profit when exit price is above entry.
+                            pnl = (cost_to_close - entry) * qty * multiplier
+                    else:
+                        # Credit spread: entry credit received, pay cost_to_close to exit.
+                        multiplier = 100
+                        pnl = (entry - cost_to_close) * qty * multiplier
+
                     starting_capital = float(settings.starting_capital)
                     pnl_pct = pnl / starting_capital if starting_capital > 0 else 0.0
 
@@ -196,6 +214,52 @@ class TradeRecorder:
 
         except Exception as exc:
             logger.error("record_exit failed for %s: %s", trade_id, exc)
+            return False
+
+    async def record_close_unknown(
+        self,
+        *,
+        trade_id:    str,
+        exit_reason: str,
+    ) -> bool:
+        """
+        Close a trade whose real exit price could NOT be determined.
+
+        Marks the trade closed with pnl = NULL (unknown) rather than fabricating a
+        neutral $0 close. Analytics and guardrail P&L windows filter on
+        ``pnl IS NOT NULL``, so an unknown close is excluded instead of polluting
+        win-rate / loss-limit math with a fake zero. Emits CRITICAL so the trade
+        can be reconciled by hand against the broker.
+
+        Returns True on success.
+        """
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    trade = await session.get(Trade, uuid.UUID(trade_id))
+                    if trade is None:
+                        logger.warning("record_close_unknown: trade %s not found", trade_id)
+                        return False
+                    trade.cost_to_close = None
+                    trade.pnl           = None
+                    trade.pnl_pct       = None
+                    trade.status        = "closed"
+                    trade.exit_date     = datetime.now(timezone.utc)
+                    trade.exit_reason   = exit_reason
+
+            logger.critical(
+                "Trade %s closed with UNKNOWN P&L (reason=%s) — broker position is "
+                "gone but no execution price was available. Manual reconciliation "
+                "required to record realized P&L.",
+                trade_id, exit_reason,
+            )
+            return True
+
+        except Exception as exc:
+            logger.error("record_close_unknown failed for %s: %s", trade_id, exc)
             return False
 
 

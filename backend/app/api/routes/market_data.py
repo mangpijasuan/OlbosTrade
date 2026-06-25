@@ -39,12 +39,18 @@ async def _yfinance_snapshot(symbol: str) -> dict:
             last = float(intra["Close"].dropna().iloc[-1])
         else:
             last = float(daily_closes.iloc[-1])
-        # prev_close: last completed daily bar (yesterday's close)
-        prev_close = float(daily_closes.iloc[-1]) if intra.empty else float(daily_closes.iloc[-1])
-        # When market is open, daily[-1] is yesterday — use it as reference
-        # When market is closed, intra is empty so last == daily[-1] and prev is daily[-2]
-        if intra.empty and len(daily_closes) >= 2:
+        # prev_close = the previous COMPLETED session's close, i.e. the reference
+        # for today's % change.
+        #
+        # NOTE: yfinance's daily history includes TODAY's in-progress bar as the
+        # last row during/after market open. So `daily_closes.iloc[-1]` is today's
+        # (current) price — using it as prev_close made change_pct ~= 0 and the
+        # ticker always render green. The correct reference is iloc[-2] whenever a
+        # prior session exists, regardless of whether the market is open.
+        if len(daily_closes) >= 2:
             prev_close = float(daily_closes.iloc[-2])
+        else:
+            prev_close = float(daily_closes.iloc[-1])
         chg_pct    = round((last - prev_close) / prev_close * 100, 2) if prev_close else 0.0
         return {
             "symbol":     symbol,
@@ -186,6 +192,18 @@ async def get_iv_rank(symbol: str):
         return {"symbol": symbol, "iv_rank": None, "error": str(exc)}
 
 
+@router.get("/status")
+async def get_market_status():
+    """
+    Whether the US market is open right now (RTH, ET, holiday-aware) and whether
+    order execution is currently gated by market hours.
+    """
+    from app.utils.market_hours import market_status
+    status = market_status()
+    status["execution_gated"] = bool(getattr(settings, "market_hours_only", True))
+    return status
+
+
 @router.get("/regime")
 async def get_regime():
     """Return current regime classification and active strategies."""
@@ -237,14 +255,22 @@ async def get_broker_status():
     """Return active broker name and connection status."""
     try:
         broker = get_broker()
-        is_paper = "paper" in settings.alpaca_base_url if settings.broker == "alpaca" \
-                   else settings.ibkr_port in (7497, 4002)
+        # Live IBKR ports are 4001 (gateway) / 7496 (TWS). Anything else —
+        # including custom container ports like 4004 — is paper, and
+        # IBKR_TRADING_MODE is the authoritative override.
+        is_paper = settings.ibkr_trading_mode.lower() != "live" \
+                   and settings.ibkr_port not in (4001, 7496)
+        # Report the REAL socket state, not just "object exists" (the old
+        # hardcoded "connected" lied during the Gateway outage).
+        ib = getattr(broker, "ib", None)
+        connected = bool(getattr(broker, "_connected", False)) and \
+                    bool(ib.isConnected()) if ib is not None else False
         return {
             "broker":           settings.broker,
             "supports_options": broker.supports_options,
             "supports_equities": broker.supports_equities,
             "paper_mode":       is_paper,
-            "status":           "connected",
+            "status":           "connected" if connected else "disconnected",
         }
     except Exception as exc:
         return {
