@@ -50,6 +50,13 @@ interface Heat {
   largest_sector: string | null; largest_sector_pct: number;
   exposure_by_underlying: Record<string, number>; concentration_flags: string[];
 }
+interface StratHealth {
+  strategy: string; status: "healthy" | "watch" | "degraded" | "insufficient_data";
+  action: "none" | "reduce" | "suspend"; sample_size: number;
+  win_rate: number; expectancy: number; drawdown_pct: number;
+  expectancy_ratio: number | null; reasons: string[];
+}
+interface StratHealthResp { strategies: StratHealth[]; suspended: string[]; total_strategies: number; }
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 const money = (n: number) =>
@@ -59,6 +66,12 @@ const plain = (n: number) =>
 
 const STATUS = { ok: "var(--green)", warn: "var(--amber)", error: "var(--red)" } as const;
 const HEAT = { ok: "var(--green)", elevated: "var(--amber)", high: "var(--red)" } as const;
+const STRAT_STATUS: Record<string, { color: string; tint: string; icon: string; label: string }> = {
+  healthy:           { color: "var(--green)", tint: "rgba(34,197,94,0.05)", icon: "check", label: "HEALTHY" },
+  watch:             { color: "var(--amber)", tint: "rgba(245,158,11,0.06)", icon: "warn",  label: "WATCH" },
+  degraded:          { color: "var(--red)",   tint: "rgba(239,68,68,0.06)",  icon: "cross", label: "SUSPENDED" },
+  insufficient_data: { color: "var(--ink-dim)", tint: "transparent",         icon: "activity", label: "NO DATA" },
+};
 
 // ── KPI card ────────────────────────────────────────────────────────────────
 function Kpi({ label, value, sub, color, icon }:
@@ -115,10 +128,35 @@ function HealthRow({ h }: { h: Health }) {
   );
 }
 
+function StratRow({ h }: { h: StratHealth }) {
+  const cfg = STRAT_STATUS[h.status] || STRAT_STATUS.insufficient_data;
+  const ratio = h.expectancy_ratio !== null ? `${(h.expectancy_ratio * 100).toFixed(0)}% of base` : "—";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 14px",
+      background: cfg.tint, borderLeft: `2px solid ${cfg.color}`, borderBottom: "1px solid var(--line-dim)" }}>
+      <span style={{ color: cfg.color }}><Icon name={cfg.icon} size={13} /></span>
+      <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 150 }}>
+        {h.strategy}
+      </span>
+      <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em",
+        color: cfg.color, minWidth: 78 }}>{cfg.label}</span>
+      <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)", display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <span>n={h.sample_size}</span>
+        <span>win {(h.win_rate * 100).toFixed(0)}%</span>
+        <span style={{ color: h.expectancy >= 0 ? "var(--green)" : "var(--red)" }}>
+          exp {h.expectancy >= 0 ? "+" : ""}{h.expectancy.toFixed(0)}
+        </span>
+        <span>{ratio}</span>
+      </span>
+    </div>
+  );
+}
+
 export default function ExecutiveSummary() {
   const [s, setS] = useState<Summary | null>(null);
   const [perf, setPerf] = useState<Performance | null>(null);
   const [heat, setHeat] = useState<Heat | null>(null);
+  const [strat, setStrat] = useState<StratHealthResp | null>(null);
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -126,6 +164,7 @@ export default function ExecutiveSummary() {
       setS(await j("/api/dashboard/summary"));
       setPerf(await j("/api/analytics/performance"));
       setHeat(await j("/api/portfolio/heat"));
+      setStrat(await j("/api/strategy/health"));
     };
     load();
     const id = setInterval(load, 15000);
@@ -220,6 +259,22 @@ export default function ExecutiveSummary() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Strategy health */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="check" title="Strategy Health"
+          right={strat && <span className="mono" style={{ fontSize: 10.5,
+            color: strat.suspended.length === 0 ? "var(--green)" : "var(--red)" }}>
+            {strat.suspended.length === 0
+              ? `${strat.total_strategies} tracked · none suspended`
+              : `${strat.suspended.length} suspended`}
+          </span>} />
+        {strat && strat.strategies.length > 0
+          ? strat.strategies.map(h => <StratRow key={h.strategy} h={h} />)
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {strat ? "No closed trades yet — collecting data." : "Loading…"}
+            </div>}
       </div>
 
       {/* System health */}

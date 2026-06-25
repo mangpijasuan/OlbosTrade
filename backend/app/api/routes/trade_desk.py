@@ -113,6 +113,35 @@ def _is_kill_switch_active() -> bool:
     """Check both the local event and the authoritative service."""
     return _kill_switch.is_set() or kill_switch_service.is_engaged
 
+
+async def _strategy_health_for(strategy: str):
+    """
+    Live health grade for one strategy from its closed trades, or None on error
+    (the caller fails open). Kept thin and DB-scoped so the execution gate stays
+    cheap.
+    """
+    try:
+        from app.core.config import settings
+        from app.core.database import AsyncSessionLocal
+        from app.models.trade import Trade
+        from app.services.strategy_health import evaluate_strategy_health
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as session:
+            trades = (await session.execute(
+                select(Trade).where(
+                    Trade.strategy == strategy,
+                    Trade.status == "closed",
+                    Trade.pnl.isnot(None),
+                )
+            )).scalars().all()
+        rows = [{"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
+                for t in trades]
+        return evaluate_strategy_health(strategy, rows, settings.starting_capital)
+    except Exception as exc:   # pragma: no cover - defensive; gate fails open
+        logger.warning("Strategy health check failed for %s: %s", strategy, exc)
+        return None
+
 # ── In-memory pending approvals (Copilot mode) ────────────────────────────────
 # Populated by main.py background scanner when mode == copilot
 # { signal_id: { ...signal_data, "asset_type": "equity"|"options" } }
@@ -341,6 +370,21 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 ticker, freq.reason, freq.weighted_score, freq.risk_score, freq.expected_value,
             )
             return _blocked(f"frequency_controller: {freq.reason}")
+
+        # ── Stage 1d: Strategy Health Monitor (auto-suspend) ────────────────────
+        # A strategy whose live edge has degraded vs. its baseline accepts no new
+        # entries until it recovers. Advisory — fails OPEN on error so a transient
+        # DB issue never halts trading (kill switch + guardrails still protect).
+        strat = signal.get("strategy", "")
+        if strat:
+            health = await _strategy_health_for(strat)
+            if health is not None and health.status == "degraded":
+                logger.warning(
+                    "Strategy health blocked %s (%s): %s",
+                    ticker, strat, "; ".join(health.reasons),
+                )
+                return _blocked(
+                    f"strategy_health: {strat} degraded — {'; '.join(health.reasons)}")
 
     _guardrail = GuardrailEngine()
     guardrail_status = _guardrail.check_all(portfolio_state)

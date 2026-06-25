@@ -25,12 +25,13 @@ jobs:
         run: >
           pytest tests/test_trade_frequency_controller.py tests/test_symphony.py
           tests/test_options_intelligence.py tests/test_performance_analytics.py
-          tests/test_portfolio_engine.py
+          tests/test_portfolio_engine.py tests/test_strategy_health.py
           --cov=app.services.trade_frequency_controller
           --cov=app.services.symphony
           --cov=app.services.options_intelligence
           --cov=app.services.performance_analytics
           --cov=app.services.portfolio_engine
+          --cov=app.services.strategy_health
           --cov-report=term-missing --cov-fail-under=95
       - name: Whole-app coverage (ratchet floor; target 95%)
         run: pytest --cov=app --cov-report=term-missing
