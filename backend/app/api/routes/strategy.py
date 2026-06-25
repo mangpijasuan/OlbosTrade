@@ -144,14 +144,22 @@ async def get_strategy_health(min_sample: int = 20):
     from app.core.config import settings
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
+    from app.models.research_experiment import ResearchExperiment
+    from app.services.research_lab import baselines_from_experiments, PROMOTED
     from app.services.strategy_health import evaluate_all
     from sqlalchemy import select
 
+    overrides = {}
     try:
         async with AsyncSessionLocal() as session:
             trades = (await session.execute(
                 select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
             )).scalars().all()
+            # Real, evidence-based baselines from PROMOTED Research Lab experiments.
+            promoted = (await session.execute(
+                select(ResearchExperiment).where(ResearchExperiment.stage == PROMOTED)
+            )).scalars().all()
+            overrides = baselines_from_experiments([e.as_dict() for e in promoted])
     except Exception as exc:
         return {"strategies": [], "error": str(exc)}
 
@@ -161,7 +169,8 @@ async def get_strategy_health(min_sample: int = 20):
             {"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
         )
 
-    health = evaluate_all(by_strategy, settings.starting_capital, min_sample=min_sample)
+    health = evaluate_all(by_strategy, settings.starting_capital,
+                          overrides=overrides, min_sample=min_sample)
     suspended = [h.strategy for h in health if h.status == "degraded"]
     return {
         "strategies": [h.as_dict() for h in health],
