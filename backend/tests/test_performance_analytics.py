@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from app.services.performance_analytics import compute_performance, _curve_metrics, _to_date
+import pytest
+
+from app.services.performance_analytics import (
+    compute_performance, _curve_metrics, _to_date, _trade_drawdowns,
+)
 
 
 def _t(pnl, entry, exit_):
@@ -95,3 +99,61 @@ def test_sample_size_warning_threshold():
     assert compute_performance(trades, 10000.0, min_sample=30)["sample_size_warning"] is True
     big = [_t(10, "2024-01-01", f"2024-02-{(i % 27) + 1:02d}") for i in range(35)]
     assert compute_performance(big, 10000.0, min_sample=30)["sample_size_warning"] is False
+
+
+# ── rolling (trade-ordered) drawdowns ─────────────────────────────────────────
+def test_trade_drawdowns_empty_is_zeroed():
+    d = _trade_drawdowns([], 10000.0)
+    assert d["current_drawdown_pct"] == 0.0
+    assert d["max_drawdown_trades_pct"] == 0.0
+    assert d["rolling_max_dd_30_pct"] == 0.0 and d["rolling_max_dd_90_pct"] == 0.0
+
+
+def test_trade_drawdowns_basic_math():
+    # +100 → 10100 peak, then -200 → 9900: drawdown = 200/10100 ≈ 1.98%
+    d = _trade_drawdowns([100.0, -200.0], 10000.0)
+    assert d["max_drawdown_trades_pct"] == pytest.approx(1.98, abs=0.05)
+    assert d["current_drawdown_pct"] == pytest.approx(1.98, abs=0.05)  # still underwater
+
+
+def test_trade_drawdowns_recovers_current_below_max():
+    # dip then full recovery → current DD 0, but max DD records the dip
+    d = _trade_drawdowns([100.0, -300.0, 400.0], 10000.0)
+    assert d["max_drawdown_trades_pct"] > 0.0
+    assert d["current_drawdown_pct"] == 0.0
+
+
+def test_rolling_window_isolates_recent_losses():
+    # 50 small winners then a sharp loser: the trailing-30 window peak resets, so
+    # the rolling-30 DD reflects only the recent loser, not the whole history.
+    pnls = [10.0] * 50 + [-500.0]
+    d = _trade_drawdowns(pnls, 10000.0)
+    assert d["rolling_max_dd_30_pct"] > 0.0
+    assert d["rolling_max_dd_30_pct"] <= d["max_drawdown_trades_pct"] + 0.01
+
+
+def test_compute_performance_includes_rolling_dd():
+    trades = [_t(100, "2024-01-01", "2024-01-02"),
+              _t(-300, "2024-01-03", "2024-01-04"),
+              _t(50, "2024-01-05", "2024-01-06")]
+    r = compute_performance(trades, 10000.0, min_sample=1)
+    for k in ("current_drawdown_pct", "max_drawdown_trades_pct",
+              "rolling_max_dd_30_pct", "rolling_max_dd_90_pct"):
+        assert k in r
+    assert r["max_drawdown_trades_pct"] > 0.0
+
+
+def test_empty_performance_has_rolling_dd_keys():
+    r = compute_performance([], 10000.0)
+    assert r["rolling_max_dd_30_pct"] == 0.0
+    assert r["current_drawdown_pct"] == 0.0
+
+
+def test_rolling_dd_without_exit_dates():
+    # No exit dates → calendar curve skipped, but trade-ordered rolling DD still
+    # computes (chronological sort falls back to date.min for all).
+    trades = [{"pnl": 100.0, "entry_date": None, "exit_date": None},
+              {"pnl": -250.0, "entry_date": None, "exit_date": None}]
+    r = compute_performance(trades, 10000.0, min_sample=1)
+    assert r["max_drawdown_pct"] == 0.0          # calendar curve skipped
+    assert r["max_drawdown_trades_pct"] > 0.0    # trade-ordered DD present

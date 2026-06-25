@@ -8,12 +8,14 @@ from app.services.trading_mode import TradingModeType
 from app.services.trade_frequency_controller import (
     FrequencyRule,
     MODE_RULES,
+    STRATEGY_MIN_POP,
     TradeFrequencyController,
     expected_value,
     risk_score,
     rule_for,
     weighted_score,
     _confidence,
+    _regime_score,
     _reward_risk,
     _liquidity,
 )
@@ -170,3 +172,83 @@ def test_risk_score_only_block():
     # 20 while keeping EV>0, and the risk check runs before the EV check.
     d = ctrl.evaluate(_equity(0.90, rr=0.2), trades_today=0, mode=C)
     assert not d.allowed and "risk_score_too_high" in d.reason
+
+
+# ── regime-alignment scoring ──────────────────────────────────────────────────
+def test_regime_score_override_and_bounds():
+    assert _regime_score({"regime_score": 0.8}) == 0.8
+    assert _regime_score({"regime_score": 5}) == 1.0      # clamped
+    assert _regime_score({"regime_score": "oops"}) == 0.5  # bad → lookup → no data
+    assert _regime_score({}) == 0.5                        # no regime/strategy
+
+
+def test_regime_score_alignment_lookup():
+    # normal_mean_revert sanctions credit spreads + iron condor
+    aligned = {"regime": "normal_mean_revert", "strategy": "bull_put_spread"}
+    opposed = {"regime": "normal_mean_revert", "strategy": "bull_call_debit_spread"}
+    assert _regime_score(aligned) == 1.0
+    assert _regime_score(opposed) == 0.3
+    # crisis sanctions nothing
+    assert _regime_score({"regime": "crisis", "strategy": "bull_put_spread"}) == 0.0
+    # unknown regime string → neutral 0.5
+    assert _regime_score({"regime": "nonsense", "strategy": "bull_put_spread"}) == 0.5
+
+
+def test_weighted_score_rewards_regime_alignment():
+    base = dict(ticker="SPY", asset_type="options", signal_score=0.8,
+                spread={"net_credit": 200, "max_loss": 300})
+    aligned = {**base, "regime": "normal_mean_revert", "strategy": "bull_put_spread"}
+    opposed = {**base, "regime": "crisis", "strategy": "bull_put_spread"}
+    assert weighted_score(aligned) > weighted_score(opposed)
+
+
+# ── probability-of-profit (POP) gates ─────────────────────────────────────────
+def _opt_pop(pop, strategy="bull_put_spread", credit=200.0, max_loss=300.0):
+    return {"ticker": "SPY", "asset_type": "options", "strategy": strategy,
+            "signal_score": pop, "pop": pop,
+            "spread": {"net_credit": credit, "max_loss": max_loss}}
+
+
+def test_pop_gate_blocks_low_pop_bull_put_in_aggressive():
+    ctrl = TradeFrequencyController()
+    # Aggressive min_confidence 0.65 and mode min_pop 0.0 would pass a 0.68 signal,
+    # but the bull-put strategy floor (0.70) blocks it.
+    d = ctrl.evaluate(_opt_pop(0.68), trades_today=0, mode=A)
+    assert not d.allowed and "pop_below_floor" in d.reason and "0.70" in d.reason
+
+
+def test_pop_gate_allows_high_pop():
+    ctrl = TradeFrequencyController()
+    d = ctrl.evaluate(_opt_pop(0.80), trades_today=0, mode=A)
+    assert d.allowed and d.reason == "ok"
+
+
+def test_pop_gate_conservative_mode_floor():
+    ctrl = TradeFrequencyController()
+    # Decouple confidence from POP: confidence 0.95 clears Conservative's 0.90
+    # gate, but POP 0.72 falls under the Conservative mode floor (0.75). Debit
+    # spread carries no strategy floor, so only the mode floor applies.
+    sig = {"ticker": "SPY", "asset_type": "options", "strategy": "bull_call_debit_spread",
+           "confidence": 0.95, "pop": 0.72,
+           "spread": {"net_credit": 200, "max_loss": 300}}
+    d = ctrl.evaluate(sig, trades_today=0, mode=C)
+    assert not d.allowed and "pop_below_floor" in d.reason and "0.75" in d.reason
+
+
+def test_pop_gate_skipped_for_equity():
+    ctrl = TradeFrequencyController()
+    # Equity signals have no 'pop' → POP gate never fires.
+    assert TradeFrequencyController._pop(_equity(0.95)) is None
+    d = ctrl.evaluate(_equity(0.95, rr=2.5, vol_ratio=1.5), trades_today=0, mode=A)
+    assert d.allowed
+
+
+def test_pop_helper_handles_bad_value():
+    assert TradeFrequencyController._pop({"pop": "oops"}) is None
+    assert TradeFrequencyController._pop({"pop": 5}) == 1.0   # clamped
+
+
+def test_strategy_min_pop_map_covers_credit_spreads():
+    assert STRATEGY_MIN_POP["bull_put_spread"] == 0.70
+    assert STRATEGY_MIN_POP["bear_call_spread"] == 0.70
+    assert STRATEGY_MIN_POP["iron_condor"] == 0.70

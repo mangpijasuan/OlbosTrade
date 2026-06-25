@@ -40,7 +40,8 @@ interface Summary {
 interface Performance {
   total_trades: number; win_rate: number; profit_factor: number; expectancy: number;
   payoff_ratio: number; avg_hold_days: number; sharpe: number; sortino: number;
-  calmar: number; max_drawdown_pct: number; cagr_pct: number; sample_size_warning: boolean;
+  calmar: number; max_drawdown_pct: number; cagr_pct: number;
+  current_drawdown_pct: number; rolling_max_dd_30_pct: number; sample_size_warning: boolean;
 }
 interface Heat {
   portfolio_heat_pct: number; heat_status: "ok" | "elevated" | "high";
@@ -176,6 +177,10 @@ export default function ExecutiveSummary() {
             <Tile label="Calmar" value={perf ? perf.calmar.toFixed(2) : "—"} />
             <Tile label="Max DD" value={perf ? `${perf.max_drawdown_pct}%` : "—"}
               color={perf && perf.max_drawdown_pct > 15 ? "var(--red)" : "var(--ink)"} />
+            <Tile label="Current DD" value={perf ? `${perf.current_drawdown_pct}%` : "—"}
+              color={perf && perf.current_drawdown_pct > 8 ? "var(--red)" : "var(--ink)"} />
+            <Tile label="Rolling DD (30)" value={perf ? `${perf.rolling_max_dd_30_pct}%` : "—"}
+              color={perf && perf.rolling_max_dd_30_pct > 10 ? "var(--amber)" : "var(--ink)"} />
             <Tile label="Expectancy" value={perf ? money(perf.expectancy) : "—"}
               color={perf ? pnlColor(perf.expectancy) : undefined} />
             <Tile label="Avg Hold" value={perf ? `${perf.avg_hold_days}d` : "—"} />

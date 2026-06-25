@@ -36,22 +36,39 @@ class FrequencyRule:
     max_risk_score:        int     # 0..100 maximum acceptable risk score
     capital_deploy_min:    float   # informational deployment band (0..1)
     capital_deploy_max:    float
+    min_pop:               float = 0.0  # 0..1 minimum probability-of-profit (options)
 
 
 MODE_RULES: dict[TradingModeType, FrequencyRule] = {
     TradingModeType.CONSERVATIVE: FrequencyRule(
         target_per_day=2, hard_max_per_day=3, min_confidence=0.90,
-        max_risk_score=20, capital_deploy_min=0.20, capital_deploy_max=0.40),
+        max_risk_score=20, capital_deploy_min=0.20, capital_deploy_max=0.40,
+        min_pop=0.75),
     TradingModeType.BALANCED: FrequencyRule(
         target_per_day=6, hard_max_per_day=10, min_confidence=0.75,
-        max_risk_score=40, capital_deploy_min=0.40, capital_deploy_max=0.70),
+        max_risk_score=40, capital_deploy_min=0.40, capital_deploy_max=0.70,
+        min_pop=0.65),
     TradingModeType.AGGRESSIVE: FrequencyRule(
         target_per_day=15, hard_max_per_day=40, min_confidence=0.65,
-        max_risk_score=60, capital_deploy_min=0.70, capital_deploy_max=0.95),
+        max_risk_score=60, capital_deploy_min=0.70, capital_deploy_max=0.95,
+        min_pop=0.0),
     # Scalper inherits aggressive-style frequency but keeps the tightest cap.
     TradingModeType.SCALPER: FrequencyRule(
         target_per_day=20, hard_max_per_day=40, min_confidence=0.65,
-        max_risk_score=60, capital_deploy_min=0.50, capital_deploy_max=0.95),
+        max_risk_score=60, capital_deploy_min=0.50, capital_deploy_max=0.95,
+        min_pop=0.0),
+}
+
+
+# Strategy-level minimum probability-of-profit, applied in EVERY mode (the
+# effective floor is max(mode.min_pop, strategy floor)). Premium-selling spreads
+# only earn their edge from a high win rate, so we never let them through below
+# 70% POP — even in Aggressive mode. Debit spreads are intentionally low-POP /
+# high-payoff and carry no floor.
+STRATEGY_MIN_POP: dict[str, float] = {
+    "bull_put_spread":  0.70,
+    "bear_call_spread": 0.70,
+    "iron_condor":      0.70,
 }
 
 
@@ -111,17 +128,50 @@ def expected_value(signal: dict) -> float:
     return round(p * rr - (1.0 - p), 4)
 
 
+def _regime_score(signal: dict) -> float:
+    """
+    0..1 regime-alignment factor. 1.0 when the signal's strategy is sanctioned by
+    the current regime, 0.3 when it runs against the regime, 0.0 in a crisis
+    (nothing is sanctioned), and 0.5 when the regime is unknown/absent. An
+    explicit signal['regime_score'] (0..1) overrides the lookup.
+    """
+    override = signal.get("regime_score")
+    if override is not None:
+        try:
+            return max(0.0, min(1.0, float(override)))
+        except (TypeError, ValueError):
+            pass
+    regime = signal.get("regime")
+    strategy = signal.get("strategy") or ""
+    if not regime or not strategy:
+        return 0.5
+    try:
+        from app.services.regime_classifier import REGIME_CONFIG, RegimeType
+        cfg = REGIME_CONFIG.get(RegimeType(regime))
+    except Exception:
+        return 0.5
+    if not cfg:   # pragma: no cover - every valid RegimeType has a config entry
+        return 0.5
+    allowed = set(cfg.get("strategies_allowed", [])) | set(
+        cfg.get("equity_strategies_allowed", []))
+    if not allowed:            # crisis → nothing sanctioned
+        return 0.0
+    return 1.0 if strategy in allowed else 0.3
+
+
 def weighted_score(signal: dict) -> float:
     """
-    Ranking score (0..1-ish): 0.40 confidence + 0.25 EV + 0.20 reward:risk
-    + 0.15 liquidity. Higher ranks execute first.
+    Ranking score (0..1-ish): 0.35 confidence + 0.25 EV + 0.15 reward:risk
+    + 0.15 liquidity + 0.10 regime alignment. Higher ranks execute first.
     """
     conf = _confidence(signal)
     ev = expected_value(signal)
     ev_score = max(0.0, min(1.0, (ev + 1.0) / 2.0))   # map EV∈[-1,1] → [0,1]
     rr_score = max(0.0, min(1.0, _reward_risk(signal) / 3.0))  # 3:1 ⇒ 1.0
     liq = _liquidity(signal)
-    return round(0.40 * conf + 0.25 * ev_score + 0.20 * rr_score + 0.15 * liq, 4)
+    reg = _regime_score(signal)
+    return round(0.35 * conf + 0.25 * ev_score + 0.15 * rr_score
+                 + 0.15 * liq + 0.10 * reg, 4)
 
 
 def risk_score(signal: dict) -> int:
@@ -147,6 +197,17 @@ class GateDecision:
 
 class TradeFrequencyController:
     """Stateless gate + ranker. Daily count is supplied by the caller (DB-backed)."""
+
+    @staticmethod
+    def _pop(signal: dict) -> Optional[float]:
+        """Probability-of-profit if present (options), else None (equities)."""
+        p = signal.get("pop")
+        if p is None:
+            return None
+        try:
+            return max(0.0, min(1.0, float(p)))
+        except (TypeError, ValueError):
+            return None
 
     def rank(self, signals: list[dict]) -> list[dict]:
         """Highest-quality first."""
@@ -178,6 +239,18 @@ class TradeFrequencyController:
             return GateDecision(False,
                 f"below_min_confidence: {conf:.2f} < {rule.min_confidence:.2f} ({mode.value})",
                 ws, rs, ev)
+
+        # 2b. Probability-of-profit floor (options only; equities carry no POP).
+        # Effective floor = max(mode floor, strategy floor). Skipped when the
+        # signal has no POP, so equity signals are unaffected.
+        pop = self._pop(signal)
+        if pop is not None:
+            pop_floor = max(rule.min_pop,
+                            STRATEGY_MIN_POP.get(signal.get("strategy", ""), 0.0))
+            if pop < pop_floor:
+                return GateDecision(False,
+                    f"pop_below_floor: {pop:.2f} < {pop_floor:.2f} ({mode.value})",
+                    ws, rs, ev)
 
         # 3. Maximum risk score for the mode.
         if rs > rule.max_risk_score:

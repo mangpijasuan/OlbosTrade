@@ -58,6 +58,41 @@ def _curve_metrics(daily_values: list[float]) -> dict:
     }
 
 
+def _trade_drawdowns(pnls: list[float], starting_capital: float,
+                     windows: tuple[int, ...] = (30, 90)) -> dict:
+    """
+    Rolling drawdowns on the *trade-ordered* equity curve (NOT calendar days).
+
+    Calendar drawdowns understate risk for a strategy that trades sporadically —
+    a flat week between two losers reads as "no drawdown" on a daily curve. We
+    instead walk equity trade-by-trade and report:
+      • current_drawdown_pct      — peak-to-latest, the live underwater amount
+      • max_drawdown_trades_pct   — worst peak-to-trough across all trades
+      • rolling_max_dd_{w}_pct    — worst drawdown within the trailing w trades
+    """
+    out = {"current_drawdown_pct": 0.0, "max_drawdown_trades_pct": 0.0}
+    for w in windows:
+        out[f"rolling_max_dd_{w}_pct"] = 0.0
+    if not pnls:
+        return out
+
+    equity = np.concatenate(([float(starting_capital)],
+                             float(starting_capital) + np.cumsum(pnls)))
+    peak = np.maximum.accumulate(equity)
+    dd = equity / peak - 1.0
+    out["current_drawdown_pct"] = round(abs(float(dd[-1])) * 100, 2)
+    out["max_drawdown_trades_pct"] = round(abs(float(np.min(dd))) * 100, 2)
+
+    for w in windows:
+        # Trailing window of w trades (w+1 equity points); peak resets at the
+        # window start so the figure is a genuine rolling-window drawdown.
+        recent = equity[-(w + 1):] if len(equity) > w + 1 else equity
+        rpeak = np.maximum.accumulate(recent)
+        rdd = recent / rpeak - 1.0
+        out[f"rolling_max_dd_{w}_pct"] = round(abs(float(np.min(rdd))) * 100, 2)
+    return out
+
+
 def _empty() -> dict:
     return {
         "total_trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0,
@@ -65,6 +100,8 @@ def _empty() -> dict:
         "profit_factor": 0.0, "payoff_ratio": 0.0, "avg_hold_days": 0.0,
         "cagr_pct": 0.0, "max_drawdown_pct": 0.0, "sharpe": 0.0,
         "sortino": 0.0, "calmar": 0.0, "volatility_pct": 0.0,
+        "current_drawdown_pct": 0.0, "max_drawdown_trades_pct": 0.0,
+        "rolling_max_dd_30_pct": 0.0, "rolling_max_dd_90_pct": 0.0,
         "sample_size_warning": True,
     }
 
@@ -110,6 +147,13 @@ def compute_performance(trades: list[dict], starting_capital: float,
         equity = float(starting_capital) + daily_pnl.cumsum()
         curve_metrics = _curve_metrics([float(starting_capital)] + list(equity.values))
 
+    # Rolling (trade-ordered) drawdowns — chronological by exit then entry date.
+    chron = sorted(
+        rows,
+        key=lambda t: (_to_date(t.get("exit_date")) or _to_date(t.get("entry_date")) or date.min),
+    )
+    trade_dd = _trade_drawdowns([float(t["pnl"]) for t in chron], starting_capital)
+
     return {
         "total_trades": n,
         "wins": len(wins),
@@ -123,6 +167,7 @@ def compute_performance(trades: list[dict], starting_capital: float,
         "payoff_ratio": round(avg_win / abs(avg_loss), 2) if avg_loss < 0 else 0.0,
         "avg_hold_days": round(avg_hold, 1),
         **curve_metrics,
+        **trade_dd,
         "sample_size_warning": n < min_sample,
     }
 
