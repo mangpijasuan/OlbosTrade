@@ -2,6 +2,10 @@
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_mode = "auto"
+# Make the `app` package importable no matter how pytest is launched. Locally we
+# run `python -m pytest` (cwd on sys.path); CI runs `pytest` directly (cwd NOT on
+# sys.path), which broke `import app`. pythonpath makes it explicit either way.
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["app"]
