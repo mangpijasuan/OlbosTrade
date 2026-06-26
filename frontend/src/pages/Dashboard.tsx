@@ -13,6 +13,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk }       from "../hooks/useRisk";
 import ExecutiveSummary  from "../components/ExecutiveSummary";
+import ErrorBoundary     from "../components/ErrorBoundary";
 import { useIsMobile }   from "../hooks/useIsMobile";
 
 const API = "";
@@ -290,7 +291,9 @@ export default function Dashboard() {
     <div style={{ display: "grid", gridTemplateRows: "auto auto 1fr auto", height: "100%", overflow: "auto", gap: 0 }}>
 
       {/* Executive summary header */}
-      <ExecutiveSummary />
+      <ErrorBoundary label="Executive Summary">
+        <ExecutiveSummary />
+      </ErrorBoundary>
 
       {/* Top stat bar */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
