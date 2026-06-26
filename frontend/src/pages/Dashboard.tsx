@@ -149,22 +149,27 @@ function StatCell({ label, value, sub, color }: {
 
 function PositionRow({ pos }: { pos: any }) {
   const pnl = pos.unrealized_pnl ?? 0;
+  // Untracked = a broker holding OlbosQuant never opened (no DB record). Render
+  // it muted and badged "UNTRACKED" so it is never mistaken for a managed trade.
+  const untracked = pos.tracked === false;
+  const pnlKnown = pos.unrealized_pnl != null;
   return (
-    <tr>
+    <tr style={untracked ? { opacity: 0.55 } : undefined}>
       <td className="mono" style={{ color: "var(--cyan)" }}>{pos.symbol || "—"}</td>
       <td className="mono">{pos.option_type?.toUpperCase() || pos.strategy || "EQUITY"}</td>
       <td className="mono">{pos.strike || pos.avg_cost?.toFixed(2) || "—"}</td>
       <td className="mono">{pos.expiration || pos.entry_date || "—"}</td>
       <td className="mono">{pos.quantity ?? 1}</td>
-      <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
-        {pnl !== 0 ? `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(0)}` : "—"}
+      <td className="mono" style={{ color: !pnlKnown ? "var(--ink-faint)" : pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+        {pnlKnown ? `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(0)}` : "—"}
       </td>
       <td>
         <span style={{
           fontFamily: "var(--mono)", fontSize: 10, padding: "2px 6px",
-          background: "rgba(34,197,94,0.1)", color: "var(--green)",
+          background: untracked ? "rgba(245,158,11,0.1)" : "rgba(34,197,94,0.1)",
+          color: untracked ? "var(--amber)" : "var(--green)",
           letterSpacing: "0.08em",
-        }}>OPEN</span>
+        }}>{untracked ? "UNTRACKED" : "OPEN"}</span>
       </td>
     </tr>
   );
@@ -210,6 +215,11 @@ export default function Dashboard() {
   const isMobile = useIsMobile();
   const { positions, portfolio, greeks } = usePaperTrade();
   const { guardrailStatus, portfolioState } = useRisk();
+
+  // Managed = OlbosQuant-opened positions (tracked). Untracked = pre-existing
+  // broker holdings in the (shared paper) account that we did not open.
+  const managedPositions   = positions.filter((p: any) => p.tracked !== false);
+  const untrackedPositions = positions.filter((p: any) => p.tracked === false);
 
   const pv      = portfolio?.account_value ?? portfolio?.net_liquidation ?? 25000;
   const daily   = guardrailStatus?.daily_pnl   ?? portfolioState?.state?.daily_pnl   ?? portfolio?.total_pnl ?? 0;
@@ -322,7 +332,11 @@ export default function Dashboard() {
         <StatCell label="Buying Power"     value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
         <StatCell label="Net Delta"        value={(greeks?.net_delta || 0).toFixed(3)} />
         <StatCell label="Net Theta / day"  value={(greeks?.net_theta || 0).toFixed(3)} color="var(--cyan)" />
-        <StatCell label="Open Positions"   value={String(portfolio?.open_positions ?? positions.length)} />
+        <StatCell
+          label="Open Positions"
+          value={String(portfolio?.open_positions ?? managedPositions.length)}
+          sub={untrackedPositions.length > 0 ? `+${untrackedPositions.length} untracked` : undefined}
+        />
       </div>
 
       {/* Main panels */}
@@ -373,9 +387,21 @@ export default function Dashboard() {
             <div className="panel-head">
               <span className="panel-title">Open Positions</span>
               <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                {positions.length} active
+                {managedPositions.length} managed
+                {untrackedPositions.length > 0 && (
+                  <span style={{ color: "var(--amber)" }}> · {untrackedPositions.length} untracked</span>
+                )}
               </span>
             </div>
+            {untrackedPositions.length > 0 && (
+              <div style={{
+                padding: "7px 14px", fontFamily: "var(--mono)", fontSize: 10,
+                color: "var(--amber)", background: "rgba(245,158,11,0.06)",
+                borderBottom: "1px solid var(--line-dim)",
+              }}>
+                ⚠ {untrackedPositions.length} broker holding{untrackedPositions.length > 1 ? "s" : ""} not opened by OlbosQuant — review/reconcile in the paper account.
+              </div>
+            )}
             <table className="t-table">
               <thead>
                 <tr>
@@ -392,7 +418,7 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ) : (
-                  positions.map((p: any, i: number) => <PositionRow key={i} pos={p} />)
+                  [...managedPositions, ...untrackedPositions].map((p: any, i: number) => <PositionRow key={i} pos={p} />)
                 )}
               </tbody>
             </table>
