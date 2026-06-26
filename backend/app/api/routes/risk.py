@@ -214,3 +214,70 @@ async def reset_kill_switch(body: KillSwitchResetRequest):
     if not result.get("reset"):
         raise HTTPException(status_code=403, detail=result)
     return result
+
+
+# ── Scenario / stress analysis + parametric VaR (Phase 2 Batch 4) ──────────────────
+def _trade_to_scenario_position(t, spot_iv: float = 0.25) -> dict:
+    """
+    Approximate a stored options trade as a scenario position. Uses the short
+    strike as the spot proxy and a flat IV when live marks aren't available;
+    refined automatically once market data is wired in.
+    """
+    qty = int(t.quantity or 1)
+    # Credit spreads are net short the near leg → negative quantity.
+    short = str(t.spread_type or "").startswith(("bull_put", "bear_call", "iron"))
+    signed = -qty if short else qty
+    strike = float(t.short_strike or 0) or 100.0
+    from datetime import date as _date
+    dte = max(0, (t.expiration - _date.today()).days) if t.expiration else 0
+    return {
+        "symbol": t.underlying, "kind": "option",
+        "option_type": t.option_type or "put",
+        "spot": strike, "strike": strike, "dte_days": dte,
+        "iv": spot_iv, "r": 0.04, "quantity": signed, "multiplier": 100,
+    }
+
+
+@router.get("/scenarios")
+async def get_scenarios():
+    """Stress the open book under the standard shock set (crash, vol spike, …)."""
+    from app.services.scenario_engine import run_all
+    try:
+        async with AsyncSessionLocal() as session:
+            open_trades = (await session.execute(
+                select(Trade).where(Trade.status == "open")
+            )).scalars().all()
+        positions = [_trade_to_scenario_position(t) for t in open_trades]
+    except Exception as exc:
+        return {"error": str(exc), "scenarios": [], "worst_scenario": None, "worst_pnl": 0.0}
+    return run_all(positions, capital=settings.starting_capital)
+
+
+@router.get("/var")
+async def get_var(confidence: float = 0.95, horizon_days: int = 1):
+    """Parametric (delta-vega-normal) portfolio VaR / Expected Shortfall."""
+    from app.services.portfolio_risk_sim import portfolio_var
+
+    net_delta = net_vega = 0.0
+    vol = 0.18
+    spot = 450.0
+    try:
+        from app.main import _greeks_tracker, _current_regime
+        if _greeks_tracker:
+            net_delta = _greeks_tracker.net_delta() * 100.0   # contract → share-delta
+            net_vega = _greeks_tracker.net_vega() * 100.0
+        feat = getattr(_current_regime, "features_used", None)
+        if feat:
+            vol = max(0.05, float(getattr(feat, "vix", 18.0)) / 100.0)
+    except Exception:
+        pass
+
+    try:
+        from app.broker.broker_factory import get_broker
+        acct = await get_broker().get_account_summary()
+        pv = float(acct.net_liquidation)
+    except Exception:
+        pv = settings.starting_capital
+
+    return portfolio_var(net_delta, net_vega, spot, vol, pv,
+                         confidence=confidence, horizon_days=horizon_days)

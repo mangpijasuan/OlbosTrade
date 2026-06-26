@@ -63,6 +63,9 @@ interface MetaDecision {
 }
 interface MetaResp { regime: string | null; decisions: MetaDecision[]; active_strategies: string[]; }
 interface AllocResp { method: string; weights: Record<string, number>; cash_weight: number; regime?: string; }
+interface ScenarioRow { scenario: string; portfolio_pnl: number; portfolio_pnl_pct: number | null; }
+interface ScenariosResp { scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number; }
+interface VarResp { var: number; expected_shortfall: number; var_pct: number | null; es_pct: number | null; confidence: number; }
 interface HealthDetail {
   scanner: { alive: boolean; last_tick_age_seconds: number | null };
   observability: { counters: Record<string, number>; uptime_seconds: number };
@@ -174,6 +177,8 @@ export default function ExecutiveSummary() {
   const [detail, setDetail] = useState<HealthDetail | null>(null);
   const [meta, setMeta] = useState<MetaResp | null>(null);
   const [alloc, setAlloc] = useState<AllocResp | null>(null);
+  const [scen, setScen] = useState<ScenariosResp | null>(null);
+  const [varRep, setVarRep] = useState<VarResp | null>(null);
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -185,6 +190,8 @@ export default function ExecutiveSummary() {
       setDetail(await j("/api/health/detail"));
       setMeta(await j("/api/strategy/meta"));
       setAlloc(await j("/api/portfolio/allocation"));
+      setScen(await j("/api/risk/scenarios"));
+      setVarRep(await j("/api/risk/var"));
     };
     load();
     const id = setInterval(load, 15000);
@@ -344,6 +351,30 @@ export default function ExecutiveSummary() {
           ))
           : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               {alloc ? "All capital in cash — no eligible strategies." : "Loading…"}
+            </div>}
+      </div>
+
+      {/* Stress scenarios + parametric VaR */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="risk" title="Stress & VaR"
+          right={varRep && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            VaR {Math.round(varRep.confidence * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var).toLocaleString()}</b>
+            {varRep.var_pct !== null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall).toLocaleString()}
+          </span>} />
+        {scen && scen.scenarios.length > 0
+          ? scen.scenarios.map(r => (
+            <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 14px",
+              borderBottom: "1px solid var(--line-dim)" }}>
+              <span className="mono" style={{ fontSize: 11.5, color: "var(--ink)", minWidth: 150 }}>{r.scenario}</span>
+              <span className="mono" style={{ flex: 1, fontSize: 12, fontWeight: 600,
+                color: r.portfolio_pnl < 0 ? "var(--red)" : "var(--green)" }}>
+                {r.portfolio_pnl < 0 ? "-" : "+"}${Math.abs(r.portfolio_pnl).toLocaleString()}
+                {r.portfolio_pnl_pct !== null ? `  (${r.portfolio_pnl_pct}%)` : ""}
+              </span>
+            </div>
+          ))
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {scen ? "No open positions to stress." : "Loading…"}
             </div>}
       </div>
 
