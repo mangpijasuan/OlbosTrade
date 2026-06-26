@@ -55,6 +55,11 @@ services:
     restart: unless-stopped
     environment:
       - BACKEND_URL=http://olbosquant-backend:8000
+      # Set DASH_USER/DASH_PASS in backend/.env.prod to password-protect the whole
+      # dashboard + API (HTTP Basic Auth). Leave unset to serve open (NOT advised
+      # when exposed by public IP).
+      - DASH_USER=${DASH_USER:-}
+      - DASH_PASS=${DASH_PASS:-}
     # Publish a host port for direct IP access (http://<server-ip>:8080) when no
     # domain is set up. Caddy (when used) still reaches it over the internal
     # network; this just additionally exposes it on the host.
