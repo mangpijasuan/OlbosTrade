@@ -280,7 +280,7 @@ export default function ExecutiveSummary() {
               <span>Top name: <b style={{ color: "var(--ink)" }}>{heat?.largest_underlying || "—"}</b> {heat ? `${heat.largest_underlying_pct}%` : ""}</span>
               <span>Sector: <b style={{ color: "var(--ink)" }}>{heat?.largest_sector || "—"}</b></span>
             </div>
-            {heat && heat.concentration_flags.length > 0 && (
+            {heat && (heat.concentration_flags?.length ?? 0) > 0 && (
               <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {heat.concentration_flags.map((f, i) => (
                   <span key={i} className="mono" style={{ fontSize: 9, padding: "2px 8px", borderRadius: 10,
@@ -298,12 +298,12 @@ export default function ExecutiveSummary() {
       <div className="exec-card" style={{ marginBottom: 14 }}>
         <PanelHead icon="check" title="Strategy Health"
           right={strat && <span className="mono" style={{ fontSize: 10.5,
-            color: strat.suspended.length === 0 ? "var(--green)" : "var(--red)" }}>
-            {strat.suspended.length === 0
-              ? `${strat.total_strategies} tracked · none suspended`
+            color: (strat.suspended?.length ?? 0) === 0 ? "var(--green)" : "var(--red)" }}>
+            {(strat.suspended?.length ?? 0) === 0
+              ? `${strat.total_strategies ?? 0} tracked · none suspended`
               : `${strat.suspended.length} suspended`}
           </span>} />
-        {strat && strat.strategies.length > 0
+        {strat && (strat.strategies?.length ?? 0) > 0
           ? strat.strategies.map(h => <StratRow key={h.strategy} h={h} />)
           : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               {strat ? "No closed trades yet — collecting data." : "Loading…"}
@@ -314,9 +314,9 @@ export default function ExecutiveSummary() {
       <div className="exec-card" style={{ marginBottom: 14 }}>
         <PanelHead icon="strategy" title="Meta-Strategy"
           right={meta && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
-            regime: <b style={{ color: "var(--cyan)" }}>{meta.regime || "—"}</b> · {meta.active_strategies.length} active
+            regime: <b style={{ color: "var(--cyan)" }}>{meta.regime || "—"}</b> · {meta.active_strategies?.length ?? 0} active
           </span>} />
-        {meta && meta.decisions.length > 0
+        {meta && (meta.decisions?.length ?? 0) > 0
           ? meta.decisions.map(d => (
             <div key={d.strategy} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px",
               borderBottom: "1px solid var(--line-dim)",
@@ -339,9 +339,9 @@ export default function ExecutiveSummary() {
       <div className="exec-card" style={{ marginBottom: 14 }}>
         <PanelHead icon="gauge" title="Capital Allocation"
           right={alloc && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
-            {alloc.method} · cash <b style={{ color: "var(--ink)" }}>{(alloc.cash_weight * 100).toFixed(0)}%</b>
+            {alloc.method} · cash <b style={{ color: "var(--ink)" }}>{((alloc.cash_weight ?? 0) * 100).toFixed(0)}%</b>
           </span>} />
-        {alloc && Object.keys(alloc.weights).length > 0
+        {alloc && Object.keys(alloc.weights || {}).length > 0
           ? Object.entries(alloc.weights).sort((a, b) => b[1] - a[1]).map(([k, w]) => (
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px",
               borderBottom: "1px solid var(--line-dim)" }}>
@@ -364,10 +364,10 @@ export default function ExecutiveSummary() {
       <div className="exec-card" style={{ marginBottom: 14 }}>
         <PanelHead icon="risk" title="Stress & VaR"
           right={varRep && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
-            VaR {Math.round(varRep.confidence * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var).toLocaleString()}</b>
-            {varRep.var_pct !== null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall).toLocaleString()}
+            VaR {Math.round((varRep.confidence ?? 0) * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var ?? 0).toLocaleString()}</b>
+            {varRep.var_pct != null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall ?? 0).toLocaleString()}
           </span>} />
-        {scen && scen.scenarios.length > 0
+        {scen && (scen.scenarios?.length ?? 0) > 0
           ? scen.scenarios.map(r => (
             <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 14px",
               borderBottom: "1px solid var(--line-dim)" }}>
@@ -391,20 +391,20 @@ export default function ExecutiveSummary() {
             color: s.issues === 0 ? "var(--green)" : "var(--amber)" }}>
             {s.issues === 0 ? "All systems nominal" : `${s.issues} issue${s.issues > 1 ? "s" : ""} detected`}
           </span>} />
-        {s ? s.health.map(h => <HealthRow key={h.name} h={h} />)
+        {s?.health ? s.health.map(h => <HealthRow key={h.name} h={h} />)
           : <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>}
         {detail && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "9px 14px",
             fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-dim)",
             borderTop: "1px solid var(--line-dim)" }}>
-            <span>Scanner <b style={{ color: detail.scanner.alive ? "var(--green)" : "var(--red)" }}>
-              {detail.scanner.alive ? "live" : "stalled"}</b>
-              {detail.scanner.last_tick_age_seconds !== null ? ` ${detail.scanner.last_tick_age_seconds}s ago` : ""}
+            <span>Scanner <b style={{ color: detail.scanner?.alive ? "var(--green)" : "var(--red)" }}>
+              {detail.scanner?.alive ? "live" : "stalled"}</b>
+              {detail.scanner?.last_tick_age_seconds != null ? ` ${detail.scanner.last_tick_age_seconds}s ago` : ""}
             </span>
-            <span>Attempts <b style={{ color: "var(--ink)" }}>{detail.observability.counters["execute.attempt"] || 0}</b></span>
-            <span>Submitted <b style={{ color: "var(--green)" }}>{detail.observability.counters["execute.submitted"] || 0}</b></span>
-            <span>Blocked <b style={{ color: "var(--amber)" }}>{detail.observability.counters["execute.blocked"] || 0}</b></span>
-            <span>Errors <b style={{ color: "var(--red)" }}>{detail.observability.counters["execute.error"] || 0}</b></span>
+            <span>Attempts <b style={{ color: "var(--ink)" }}>{detail.observability?.counters?.["execute.attempt"] || 0}</b></span>
+            <span>Submitted <b style={{ color: "var(--green)" }}>{detail.observability?.counters?.["execute.submitted"] || 0}</b></span>
+            <span>Blocked <b style={{ color: "var(--amber)" }}>{detail.observability?.counters?.["execute.blocked"] || 0}</b></span>
+            <span>Errors <b style={{ color: "var(--red)" }}>{detail.observability?.counters?.["execute.error"] || 0}</b></span>
           </div>
         )}
       </div>
