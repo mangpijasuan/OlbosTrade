@@ -55,6 +55,11 @@ services:
     restart: unless-stopped
     environment:
       - BACKEND_URL=http://olbosquant-backend:8000
+    # Publish a host port for direct IP access (http://<server-ip>:8080) when no
+    # domain is set up. Caddy (when used) still reaches it over the internal
+    # network; this just additionally exposes it on the host.
+    ports:
+      - "8080:3000"
     depends_on:
       backend:
         condition: service_healthy
