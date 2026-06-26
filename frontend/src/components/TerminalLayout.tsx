@@ -43,7 +43,6 @@ const NAV_ITEMS = [
   { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
   { key: "paper",      label: "Trade Desk",   icon: "paper"      },
   { key: "equity",     label: "Signals",      icon: "equity"     },
-  { key: "symphony",   label: "Symphony",     icon: "symphony"   },
   { key: "backtest",   label: "Backtest",     icon: "backtest"   },
   { key: "lab",        label: "Research Lab", icon: "lab"        },
   { key: "risk",       label: "Risk",         icon: "risk"       },
