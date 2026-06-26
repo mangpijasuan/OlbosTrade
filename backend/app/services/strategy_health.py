@@ -86,6 +86,7 @@ class StrategyHealth:
     expectancy_ratio:  float | None   # live / baseline (None if baseline ≤ 0)
     reasons:           list[str] = field(default_factory=list)
     score:             float = 0.0    # composite 0–100 health score
+    volatility:        float = 0.0    # annualized return volatility (fraction)
 
     def as_dict(self) -> dict:
         return {
@@ -93,6 +94,7 @@ class StrategyHealth:
             "status": self.status,
             "action": self.action,
             "score": round(self.score, 1),
+            "volatility": round(self.volatility, 4),
             "sample_size": self.sample_size,
             "win_rate": round(self.win_rate, 4),
             "expectancy": round(self.expectancy, 2),
@@ -192,6 +194,7 @@ def evaluate_strategy_health(
     expectancy = perf["expectancy"]
     profit_factor = perf["profit_factor"]
     dd = perf["rolling_max_dd_30_pct"]
+    vol = float(perf.get("volatility_pct", 0.0)) / 100.0
     ratio = (expectancy / base.expectancy) if base.expectancy > 0 else None
     score = health_score(perf, base, ratio, streak)
 
@@ -202,7 +205,7 @@ def evaluate_strategy_health(
         reasons.append(f"only {n}/{min_sample} closed trades — collecting data")
         return StrategyHealth(strategy, INSUFFICIENT, ACTION_NONE, n, win_rate,
                               expectancy, profit_factor, dd, streak, ratio, reasons,
-                              score=score)
+                              score=score, volatility=vol)
 
     # ── Degraded (suspend) checks ────────────────────────────────────────────
     if expectancy <= 0:
@@ -216,7 +219,7 @@ def evaluate_strategy_health(
     if reasons:
         return StrategyHealth(strategy, DEGRADED, ACTION_SUSPEND, n, win_rate,
                               expectancy, profit_factor, dd, streak, ratio, reasons,
-                              score=score)
+                              score=score, volatility=vol)
 
     # ── Watch (reduce) checks ────────────────────────────────────────────────
     if ratio is not None and ratio < _WATCH_RATIO:
@@ -226,12 +229,12 @@ def evaluate_strategy_health(
     if reasons:
         return StrategyHealth(strategy, WATCH, ACTION_REDUCE, n, win_rate,
                               expectancy, profit_factor, dd, streak, ratio, reasons,
-                              score=score)
+                              score=score, volatility=vol)
 
     reasons.append("performing at or above baseline")
     return StrategyHealth(strategy, HEALTHY, ACTION_NONE, n, win_rate,
                           expectancy, profit_factor, dd, streak, ratio, reasons,
-                          score=score)
+                          score=score, volatility=vol)
 
 
 def evaluate_all(

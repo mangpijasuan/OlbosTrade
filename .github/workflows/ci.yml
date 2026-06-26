@@ -29,8 +29,10 @@ jobs:
           tests/test_volatility_sizing.py tests/test_observability.py
           tests/test_research_lab.py tests/test_feature_store.py
           tests/test_strategy_registry.py tests/test_meta_strategy.py
+          tests/test_allocation_engine.py
           --cov=app.services.trade_frequency_controller
           --cov=app.services.meta_strategy
+          --cov=app.services.allocation_engine
           --cov=app.services.symphony
           --cov=app.services.options_intelligence
           --cov=app.services.performance_analytics

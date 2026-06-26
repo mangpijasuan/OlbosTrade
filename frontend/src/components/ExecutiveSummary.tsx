@@ -62,6 +62,7 @@ interface MetaDecision {
   health_score: number; regime_sanctioned: boolean; reason: string;
 }
 interface MetaResp { regime: string | null; decisions: MetaDecision[]; active_strategies: string[]; }
+interface AllocResp { method: string; weights: Record<string, number>; cash_weight: number; regime?: string; }
 interface HealthDetail {
   scanner: { alive: boolean; last_tick_age_seconds: number | null };
   observability: { counters: Record<string, number>; uptime_seconds: number };
@@ -172,6 +173,7 @@ export default function ExecutiveSummary() {
   const [strat, setStrat] = useState<StratHealthResp | null>(null);
   const [detail, setDetail] = useState<HealthDetail | null>(null);
   const [meta, setMeta] = useState<MetaResp | null>(null);
+  const [alloc, setAlloc] = useState<AllocResp | null>(null);
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -182,6 +184,7 @@ export default function ExecutiveSummary() {
       setStrat(await j("/api/strategy/health"));
       setDetail(await j("/api/health/detail"));
       setMeta(await j("/api/strategy/meta"));
+      setAlloc(await j("/api/portfolio/allocation"));
     };
     load();
     const id = setInterval(load, 15000);
@@ -316,6 +319,31 @@ export default function ExecutiveSummary() {
           ))
           : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               {meta ? "No strategies tracked yet." : "Loading…"}
+            </div>}
+      </div>
+
+      {/* Capital allocation — target weights per strategy */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="gauge" title="Capital Allocation"
+          right={alloc && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            {alloc.method} · cash <b style={{ color: "var(--ink)" }}>{(alloc.cash_weight * 100).toFixed(0)}%</b>
+          </span>} />
+        {alloc && Object.keys(alloc.weights).length > 0
+          ? Object.entries(alloc.weights).sort((a, b) => b[1] - a[1]).map(([k, w]) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px",
+              borderBottom: "1px solid var(--line-dim)" }}>
+              <span className="mono" style={{ fontSize: 12, color: "var(--ink)", minWidth: 150 }}>{k}</span>
+              <div style={{ flex: 1, height: 7, background: "var(--bg-4)", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, w * 100)}%`,
+                  background: "var(--cyan)", borderRadius: 4 }} />
+              </div>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--cyan)", minWidth: 44, textAlign: "right" }}>
+                {(w * 100).toFixed(0)}%
+              </span>
+            </div>
+          ))
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {alloc ? "All capital in cash — no eligible strategies." : "Loading…"}
             </div>}
       </div>
 
