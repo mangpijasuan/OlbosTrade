@@ -29,7 +29,7 @@ skip_covered = false
 # modules are held to 95% directly in CI (see .github/workflows/ci.yml). Setting a
 # hard 95 here today would keep CI permanently red on the large untested legacy
 # surface, which hides real regressions — so we ratchet honestly instead.
-fail_under = 60
+fail_under = 65
 exclude_lines = [
     "pragma: no cover",
     "raise NotImplementedError",
