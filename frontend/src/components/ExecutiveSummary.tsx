@@ -10,6 +10,7 @@
  * (polled every 15s).
  */
 import React, { useEffect, useState } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 // ── Inline icon set ─────────────────────────────────────────────────────────
 const ICON: Record<string, string> = {
@@ -170,6 +171,7 @@ function StratRow({ h }: { h: StratHealth }) {
 }
 
 export default function ExecutiveSummary() {
+  const isMobile = useIsMobile();
   const [s, setS] = useState<Summary | null>(null);
   const [perf, setPerf] = useState<Performance | null>(null);
   const [heat, setHeat] = useState<Heat | null>(null);
@@ -222,7 +224,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Performance + Portfolio Heat */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
         {/* Performance */}
         <div className="exec-card">
           <PanelHead icon="perf" title="Performance"
@@ -231,7 +233,7 @@ export default function ExecutiveSummary() {
                   {perf.total_trades} trades · low sample
                 </span>
               : perf && <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-dim)" }}>{perf.total_trades} trades</span>} />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "var(--line-dim)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 1, background: "var(--line-dim)" }}>
             <Tile label="Win Rate" value={perf ? `${(perf.win_rate * 100).toFixed(0)}%` : "—"}
               color={perf && perf.win_rate >= 0.5 ? "var(--green)" : "var(--ink)"} />
             <Tile label="Profit Factor" value={perf ? perf.profit_factor.toFixed(2) : "—"}
