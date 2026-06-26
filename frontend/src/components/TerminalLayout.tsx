@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -306,30 +307,39 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
 }
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
-function Sidebar({ active, onNav, expanded }: {
+function Sidebar({ active, onNav, expanded, isMobile = false }: {
   active: string;
   onNav: (k: string) => void;
   expanded: boolean;
+  isMobile?: boolean;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
-  const W = expanded ? 200 : 48;
+  // On mobile, labels always show (it's a full overlay panel); on desktop they
+  // appear only when expanded (icon rail otherwise).
+  const showLabels = expanded || isMobile;
+  const W = isMobile ? 220 : (expanded ? 200 : 48);
+
+  const containerStyle: React.CSSProperties = isMobile
+    ? {
+        position: "absolute", top: 0, bottom: 0, left: 0, zIndex: 50,
+        width: W, minWidth: W,
+        transform: expanded ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform 0.2s ease",
+        background: "var(--bg-2)", borderRight: "1px solid var(--line-dim)",
+        display: "flex", flexDirection: "column", alignItems: "stretch",
+        paddingTop: 0, paddingBottom: 8, overflow: "hidden",
+        boxShadow: expanded ? "4px 0 24px rgba(0,0,0,0.5)" : "none",
+      }
+    : {
+        width: W, minWidth: W,
+        background: "var(--bg-2)", borderRight: "1px solid var(--line-dim)",
+        display: "flex", flexDirection: "column", alignItems: "stretch",
+        paddingTop: 0, paddingBottom: 8, flexShrink: 0, position: "relative",
+        transition: "width 0.18s ease, min-width 0.18s ease", overflow: "hidden",
+      };
 
   return (
-    <div style={{
-      width: W,
-      minWidth: W,
-      background: "var(--bg-2)",
-      borderRight: "1px solid var(--line-dim)",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "stretch",
-      paddingTop: 0,
-      paddingBottom: 8,
-      flexShrink: 0,
-      position: "relative",
-      transition: "width 0.18s ease, min-width 0.18s ease",
-      overflow: "hidden",
-    }}>
+    <div style={containerStyle}>
 
       {/* Nav items */}
       {NAV_ITEMS.map(item => {
@@ -349,9 +359,9 @@ function Sidebar({ active, onNav, expanded }: {
                 height: 38,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: expanded ? "flex-start" : "center",
-                paddingLeft: expanded ? 14 : 0,
-                gap: expanded ? 10 : 0,
+                justifyContent: showLabels ? "flex-start" : "center",
+                paddingLeft: showLabels ? 14 : 0,
+                gap: showLabels ? 10 : 0,
                 background: isActive ? "var(--cyan-dim)" : isHovered ? "var(--bg-3)" : "transparent",
                 border: "none",
                 borderLeft: isActive ? "2px solid var(--cyan)" : "2px solid transparent",
@@ -365,7 +375,7 @@ function Sidebar({ active, onNav, expanded }: {
               <span style={{ flexShrink: 0 }}>
                 <Icon d={ICONS[item.icon]} size={15} />
               </span>
-              {expanded && (
+              {showLabels && (
                 <span style={{
                   fontFamily: "var(--mono)",
                   fontSize: 11,
@@ -377,8 +387,8 @@ function Sidebar({ active, onNav, expanded }: {
               )}
             </button>
 
-            {/* Tooltip — only when collapsed */}
-            {!expanded && isHovered && (
+            {/* Tooltip — only on the collapsed desktop icon rail */}
+            {!showLabels && isHovered && (
               <div style={{
                 position: "absolute",
                 left: 52,
@@ -500,21 +510,39 @@ export default function TerminalLayout({ children, activePage, onNav }: {
   activePage: string;
   onNav: (key: string) => void;
 }) {
+  const isMobile = useIsMobile();
+  // On desktop the sidebar starts collapsed (icon rail); on mobile it starts
+  // hidden and slides in as an overlay.
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+
+  // On mobile, navigating closes the overlay.
+  const handleNav = (key: string) => {
+    onNav(key);
+    if (isMobile) setSidebarExpanded(false);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} />
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <Sidebar
           active={activePage}
-          onNav={onNav}
+          onNav={handleNav}
           expanded={sidebarExpanded}
+          isMobile={isMobile}
         />
+        {/* Tap-away backdrop when the overlay sidebar is open on mobile */}
+        {isMobile && sidebarExpanded && (
+          <div
+            onClick={() => setSidebarExpanded(false)}
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 45 }}
+          />
+        )}
         <main style={{
           flex: 1,
           overflow: "auto",
           background: "var(--bg)",
+          minWidth: 0,   // allow children to shrink instead of forcing overflow
         }}>
           {children}
         </main>

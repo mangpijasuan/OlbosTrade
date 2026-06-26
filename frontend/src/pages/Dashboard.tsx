@@ -13,6 +13,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk }       from "../hooks/useRisk";
 import ExecutiveSummary  from "../components/ExecutiveSummary";
+import { useIsMobile }   from "../hooks/useIsMobile";
 
 const API = "";
 
@@ -205,6 +206,7 @@ function filterByRange(points: ChartPoint[], range: string): ChartPoint[] {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const isMobile = useIsMobile();
   const { positions, portfolio, greeks } = usePaperTrade();
   const { guardrailStatus, portfolioState } = useRisk();
 
@@ -291,7 +293,7 @@ export default function Dashboard() {
       <ExecutiveSummary />
 
       {/* Top stat bar */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
         <StatCell
           label="Portfolio Value"
           value={`$${(pv / 1000).toFixed(2)}k`}
@@ -321,10 +323,10 @@ export default function Dashboard() {
       </div>
 
       {/* Main panels */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", overflow: "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 320px", overflow: isMobile ? "visible" : "hidden" }}>
 
         {/* Left: equity + positions */}
-        <div style={{ display: "flex", flexDirection: "column", borderRight: "1px solid var(--line-dim)", overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: "column", borderRight: isMobile ? "none" : "1px solid var(--line-dim)", overflow: "hidden" }}>
 
           {/* Equity curve */}
           <div style={{ flex: "0 0 220px", borderBottom: "1px solid var(--line-dim)" }}>

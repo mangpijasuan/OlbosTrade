@@ -10,6 +10,7 @@
  * (polled every 15s).
  */
 import React, { useEffect, useState } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 // ── Inline icon set ─────────────────────────────────────────────────────────
 const ICON: Record<string, string> = {
@@ -22,12 +23,16 @@ const ICON: Record<string, string> = {
   check:    "M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
   warn:     "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
   cross:    "M12 22a10 10 0 100-20 10 10 0 000 20z M15 9l-6 6 M9 9l6 6",
+  strategy: "M12 2L2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5",
+  risk:     "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
 };
 
 const Icon = ({ name, size = 14, color = "currentColor" }: { name: string; size?: number; color?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
     strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-    {ICON[name].split(" M").map((seg, i) => <path key={i} d={(i ? "M" : "") + seg} />)}
+    {/* Defensive: an unknown icon name must never crash the dashboard (falls back
+        to the activity glyph instead of throwing on undefined.split). */}
+    {(ICON[name] || ICON.activity).split(" M").map((seg, i) => <path key={i} d={(i ? "M" : "") + seg} />)}
   </svg>
 );
 
@@ -170,6 +175,7 @@ function StratRow({ h }: { h: StratHealth }) {
 }
 
 export default function ExecutiveSummary() {
+  const isMobile = useIsMobile();
   const [s, setS] = useState<Summary | null>(null);
   const [perf, setPerf] = useState<Performance | null>(null);
   const [heat, setHeat] = useState<Heat | null>(null);
@@ -222,7 +228,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Performance + Portfolio Heat */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
         {/* Performance */}
         <div className="exec-card">
           <PanelHead icon="perf" title="Performance"
@@ -231,7 +237,7 @@ export default function ExecutiveSummary() {
                   {perf.total_trades} trades · low sample
                 </span>
               : perf && <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-dim)" }}>{perf.total_trades} trades</span>} />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "var(--line-dim)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 1, background: "var(--line-dim)" }}>
             <Tile label="Win Rate" value={perf ? `${(perf.win_rate * 100).toFixed(0)}%` : "—"}
               color={perf && perf.win_rate >= 0.5 ? "var(--green)" : "var(--ink)"} />
             <Tile label="Profit Factor" value={perf ? perf.profit_factor.toFixed(2) : "—"}
