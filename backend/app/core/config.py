@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     # ── Security ─────────────────────────────────────────────────────────
     secret_key: str = Field(default="", description="API secret key for admin endpoints")
 
+    # ── AI Research Assistant (provider-agnostic; Gemini default, free tier) ──
+    llm_provider: str = Field(default="gemini", description="gemini | anthropic | auto")
+    gemini_api_key: str = Field(default="")
+    anthropic_api_key: str = Field(default="")
+    llm_model: str = Field(default="", description="Override model id; blank = provider default")
+
     # ── Alerts ────────────────────────────────────────────────────────────
     sendgrid_api_key: str = Field(default="")
     alert_email: str = Field(default="")

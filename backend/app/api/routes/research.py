@@ -265,3 +265,70 @@ async def get_features():
     """Feature Store catalog — the single registry of indicator/feature formulas."""
     from app.services.feature_store import catalog
     return {"features": catalog(), "total": len(catalog())}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI Research Assistant — read-only Q&A grounded in live system data
+# ══════════════════════════════════════════════════════════════════════════════
+class AssistantRequest(BaseModel):
+    question: str
+
+
+async def _assistant_context() -> str:
+    """Compact, grounded snapshot the LLM may reason over (no raw PII)."""
+    import json
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.journal_intelligence import analyze
+    from sqlalchemy import select
+
+    parts: list[str] = []
+    try:
+        async with AsyncSessionLocal() as session:
+            trades = (await session.execute(
+                select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
+            )).scalars().all()
+        rows = [{"pnl": float(t.pnl), "strategy": t.strategy, "regime": t.regime
+                 if hasattr(t, "regime") else None,
+                 "signal_score": float(t.signal_score) if t.signal_score is not None else None,
+                 "entry_date": t.entry_date, "exit_date": t.exit_date} for t in trades]
+        parts.append("JOURNAL_INTELLIGENCE:\n" + json.dumps(analyze(rows), default=str))
+    except Exception as exc:
+        parts.append(f"JOURNAL_INTELLIGENCE: unavailable ({exc})")
+
+    try:
+        from app.main import _current_regime
+        regime = getattr(getattr(_current_regime, "regime", None), "value", None)
+        parts.append(f"CURRENT_REGIME: {regime}")
+    except Exception:
+        pass
+    return "\n\n".join(parts)
+
+
+@router.post("/assistant")
+async def research_assistant(req: AssistantRequest):
+    """
+    Conversational research over the platform's own data. Provider-agnostic
+    (Gemini by default; Claude optional). Degrades gracefully when no key is set.
+    """
+    from app.core.config import settings
+    from app.services.llm_provider import generate, LLMUnavailable
+
+    if not req.question.strip():
+        return {"error": "empty question"}
+
+    context = await _assistant_context()
+    try:
+        result = generate(
+            req.question, context,
+            provider=settings.llm_provider,
+            anthropic_key=settings.anthropic_api_key or None,
+            gemini_key=settings.gemini_api_key or None,
+            model=settings.llm_model or None,
+        )
+        return result
+    except LLMUnavailable as exc:
+        return {"error": f"assistant unavailable: {exc}",
+                "hint": "Set GEMINI_API_KEY (free tier) or ANTHROPIC_API_KEY in .env.prod"}
+    except Exception as exc:
+        return {"error": f"assistant error: {exc}"}
