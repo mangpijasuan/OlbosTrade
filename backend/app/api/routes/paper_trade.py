@@ -145,6 +145,11 @@ async def get_positions():
             "unrealized_pnl": unrealized_pnl,
             "strategy":       db.strategy if db else "unknown",
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
+            # A broker position with no matching DB open trade is "untracked" —
+            # OlbosQuant did not open it (e.g. pre-existing holdings in a shared
+            # paper account). The reconciler flags these as ghost positions; the
+            # UI must not present them as OlbosQuant's managed trades or P&L.
+            "tracked":        db is not None,
         })
 
     # Add any DB-open trades not in broker positions (may be paper-only)
@@ -156,9 +161,16 @@ async def get_positions():
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
                 "credit_received": float(t.credit_received or 0),
                 "source":          "db_only",
+                "tracked":         True,
             })
 
-    return {"positions": positions, **({"broker_error": broker_err} if broker_err else {})}
+    tracked_count = sum(1 for p in positions if p.get("tracked"))
+    return {
+        "positions": positions,
+        "tracked_count": tracked_count,
+        "untracked_count": len(positions) - tracked_count,
+        **({"broker_error": broker_err} if broker_err else {}),
+    }
 
 
 # ── Trade history ──────────────────────────────────────────────────────────────
