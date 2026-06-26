@@ -11,19 +11,20 @@ import React, { useEffect, useState } from "react";
 
 interface Experiment {
   id: string; name: string; strategy: string; hypothesis: string | null;
-  stage: "draft" | "backtested" | "paper" | "promoted" | "archived";
+  stage: "draft" | "backtested" | "walk_forward" | "paper" | "promoted" | "archived";
   backtest_metrics: Record<string, number> | null;
   paper_perf: Record<string, number> | null;
   baseline: Record<string, number> | null;
 }
 
-const STAGES = ["draft", "backtested", "paper", "promoted"] as const;
+const STAGES = ["draft", "backtested", "walk_forward", "paper", "promoted"] as const;
 const STAGE_COLOR: Record<string, string> = {
-  draft: "var(--ink-dim)", backtested: "var(--cyan)",
+  draft: "var(--ink-dim)", backtested: "var(--cyan)", walk_forward: "var(--cyan)",
   paper: "var(--amber)", promoted: "var(--green)", archived: "var(--ink-faint)",
 };
 const NEXT: Record<string, string | null> = {
-  draft: "backtested", backtested: "paper", paper: "promoted", promoted: null, archived: "draft",
+  draft: "backtested", backtested: "walk_forward", walk_forward: "paper",
+  paper: "promoted", promoted: null, archived: "draft",
 };
 
 const STRATEGIES = ["bull_put_spread", "bear_call_spread", "iron_condor", "bull_call_debit_spread"];
@@ -35,6 +36,21 @@ export default function ResearchLab() {
   const [hypothesis, setHypothesis] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  // AI Research Assistant
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<{ answer?: string; provider?: string; error?: string; hint?: string } | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const ask = async () => {
+    if (!question.trim()) return;
+    setAsking(true); setAnswer(null);
+    const r = await fetch("/api/research/assistant", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    }).then(r => r.json()).catch(() => ({ error: "request failed" }));
+    setAsking(false); setAnswer(r);
+  };
 
   const load = async () => {
     const r = await fetch("/api/research/lab/experiments").then(r => r.json()).catch(() => null);
@@ -62,6 +78,9 @@ export default function ResearchLab() {
     const body: any = { target };
     if (target === "backtested" && !e.backtest_metrics)
       body.metrics = { sharpe: 1.0, total_return_pct: 12.0, max_drawdown_pct: 10.0 };
+    // Walk-forward (out-of-sample) demo metrics for the WALK_FORWARD → PAPER gate.
+    if (target === "paper")
+      body.wf_metrics = { oos_sharpe: 0.9, oos_return_pct: 9.0, max_drawdown_pct: 11.0, is_sharpe: 1.1 };
     const r = await fetch(`/api/research/lab/experiments/${e.id}/transition`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -79,6 +98,30 @@ export default function ResearchLab() {
           RESEARCH LAB
         </span>
         <span className="kicker" style={{ marginLeft: 8 }}>hypothesis → backtest → paper → promoted</span>
+      </div>
+
+      {/* AI Research Assistant */}
+      <div className="exec-card" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="panel-title" style={{ marginBottom: 12 }}>AI Research Assistant</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <input value={question} onChange={e => setQuestion(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") ask(); }}
+            placeholder="e.g. Which strategy performs best in high IV? Why is bull put declining?"
+            className="mono" style={inp} />
+          <button onClick={ask} disabled={asking} className="mono" style={btn}>
+            {asking ? "…" : "Ask"}
+          </button>
+        </div>
+        {answer && (
+          <div className="mono" style={{ marginTop: 12, fontSize: 12, lineHeight: 1.6,
+            color: answer.error ? "var(--amber)" : "var(--ink)", whiteSpace: "pre-wrap" }}>
+            {answer.error
+              ? <>{answer.error}{answer.hint ? <div style={{ color: "var(--ink-dim)", marginTop: 6 }}>{answer.hint}</div> : null}</>
+              : <>{answer.answer}
+                  <div style={{ color: "var(--ink-faint)", fontSize: 9.5, marginTop: 8 }}>via {answer.provider}</div>
+                </>}
+          </div>
+        )}
       </div>
 
       {/* New experiment */}

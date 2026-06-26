@@ -34,8 +34,16 @@ class ResearchExperiment(Base):
     )
     spec: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     backtest_metrics: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    walk_forward_metrics: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     paper_perf: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     baseline: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # ── Registry metadata (Phase 2) ───────────────────────────────────────────
+    version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    asset_class: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    market_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    supported_regimes: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    risk_profile: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -53,8 +61,15 @@ class ResearchExperiment(Base):
             "stage": self.stage,
             "spec": self.spec,
             "backtest_metrics": self.backtest_metrics,
+            "walk_forward_metrics": self.walk_forward_metrics,
             "paper_perf": self.paper_perf,
             "baseline": self.baseline,
+            "version": self.version,
+            "author": self.author,
+            "asset_class": self.asset_class,
+            "market_type": self.market_type,
+            "supported_regimes": self.supported_regimes,
+            "risk_profile": self.risk_profile,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

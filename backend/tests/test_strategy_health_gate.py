@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -152,3 +153,26 @@ async def test_route_handles_db_error():
     with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("boom")):
         out = await get_strategy_health()
     assert out["strategies"] == [] and "error" in out
+
+
+# ── /api/strategy/meta route ─────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_meta_route_returns_decisions():
+    from app.api.routes import strategy as strat_mod
+    health = [_healthy()]
+    import app.main as m
+    m._current_regime = NS(regime=NS(value="normal_mean_revert"))
+    with patch.object(strat_mod, "_evaluate_health", new=AsyncMock(return_value=health)):
+        out = await strat_mod.get_meta_strategy(min_sample=20)
+    assert out["regime"] == "normal_mean_revert"
+    assert "bull_put_spread" in out["active_strategies"]
+    assert out["decisions"][0]["strategy"] == "bull_put_spread"
+
+
+@pytest.mark.asyncio
+async def test_meta_route_handles_error():
+    from app.api.routes import strategy as strat_mod
+    with patch.object(strat_mod, "_evaluate_health",
+                      new=AsyncMock(side_effect=Exception("down"))):
+        out = await strat_mod.get_meta_strategy()
+    assert out["decisions"] == [] and "error" in out

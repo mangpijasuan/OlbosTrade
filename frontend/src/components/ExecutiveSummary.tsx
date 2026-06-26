@@ -52,11 +52,20 @@ interface Heat {
 }
 interface StratHealth {
   strategy: string; status: "healthy" | "watch" | "degraded" | "insufficient_data";
-  action: "none" | "reduce" | "suspend"; sample_size: number;
+  action: "none" | "reduce" | "suspend"; score: number; sample_size: number;
   win_rate: number; expectancy: number; drawdown_pct: number;
   expectancy_ratio: number | null; reasons: string[];
 }
 interface StratHealthResp { strategies: StratHealth[]; suspended: string[]; total_strategies: number; }
+interface MetaDecision {
+  strategy: string; active: boolean; tilt: number; health_status: string;
+  health_score: number; regime_sanctioned: boolean; reason: string;
+}
+interface MetaResp { regime: string | null; decisions: MetaDecision[]; active_strategies: string[]; }
+interface AllocResp { method: string; weights: Record<string, number>; cash_weight: number; regime?: string; }
+interface ScenarioRow { scenario: string; portfolio_pnl: number; portfolio_pnl_pct: number | null; }
+interface ScenariosResp { scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number; }
+interface VarResp { var: number; expected_shortfall: number; var_pct: number | null; es_pct: number | null; confidence: number; }
 interface HealthDetail {
   scanner: { alive: boolean; last_tick_age_seconds: number | null };
   observability: { counters: Record<string, number>; uptime_seconds: number };
@@ -144,6 +153,10 @@ function StratRow({ h }: { h: StratHealth }) {
       </span>
       <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em",
         color: cfg.color, minWidth: 78 }}>{cfg.label}</span>
+      <span className="mono" style={{ fontSize: 13, fontWeight: 700, minWidth: 44,
+        color: h.score >= 70 ? "var(--green)" : h.score >= 45 ? "var(--amber)" : "var(--red)" }}>
+        {h.score.toFixed(0)}
+      </span>
       <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)", display: "flex", gap: 14, flexWrap: "wrap" }}>
         <span>n={h.sample_size}</span>
         <span>win {(h.win_rate * 100).toFixed(0)}%</span>
@@ -162,6 +175,10 @@ export default function ExecutiveSummary() {
   const [heat, setHeat] = useState<Heat | null>(null);
   const [strat, setStrat] = useState<StratHealthResp | null>(null);
   const [detail, setDetail] = useState<HealthDetail | null>(null);
+  const [meta, setMeta] = useState<MetaResp | null>(null);
+  const [alloc, setAlloc] = useState<AllocResp | null>(null);
+  const [scen, setScen] = useState<ScenariosResp | null>(null);
+  const [varRep, setVarRep] = useState<VarResp | null>(null);
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -171,6 +188,10 @@ export default function ExecutiveSummary() {
       setHeat(await j("/api/portfolio/heat"));
       setStrat(await j("/api/strategy/health"));
       setDetail(await j("/api/health/detail"));
+      setMeta(await j("/api/strategy/meta"));
+      setAlloc(await j("/api/portfolio/allocation"));
+      setScen(await j("/api/risk/scenarios"));
+      setVarRep(await j("/api/risk/var"));
     };
     load();
     const id = setInterval(load, 15000);
@@ -280,6 +301,80 @@ export default function ExecutiveSummary() {
           ? strat.strategies.map(h => <StratRow key={h.strategy} h={h} />)
           : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               {strat ? "No closed trades yet — collecting data." : "Loading…"}
+            </div>}
+      </div>
+
+      {/* Meta-strategy — which strategies are active given regime + health */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="strategy" title="Meta-Strategy"
+          right={meta && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            regime: <b style={{ color: "var(--cyan)" }}>{meta.regime || "—"}</b> · {meta.active_strategies.length} active
+          </span>} />
+        {meta && meta.decisions.length > 0
+          ? meta.decisions.map(d => (
+            <div key={d.strategy} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px",
+              borderBottom: "1px solid var(--line-dim)",
+              borderLeft: `2px solid ${d.active ? "var(--green)" : "var(--ink-faint)"}`,
+              opacity: d.active ? 1 : 0.6 }}>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 150 }}>{d.strategy}</span>
+              <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, minWidth: 60,
+                color: d.active ? "var(--green)" : "var(--red)" }}>{d.active ? "ACTIVE" : "OFF"}</span>
+              <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)", flex: 1 }}>
+                tilt <b style={{ color: "var(--ink)" }}>{(d.tilt * 100).toFixed(0)}%</b> · {d.reason}
+              </span>
+            </div>
+          ))
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {meta ? "No strategies tracked yet." : "Loading…"}
+            </div>}
+      </div>
+
+      {/* Capital allocation — target weights per strategy */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="gauge" title="Capital Allocation"
+          right={alloc && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            {alloc.method} · cash <b style={{ color: "var(--ink)" }}>{(alloc.cash_weight * 100).toFixed(0)}%</b>
+          </span>} />
+        {alloc && Object.keys(alloc.weights).length > 0
+          ? Object.entries(alloc.weights).sort((a, b) => b[1] - a[1]).map(([k, w]) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px",
+              borderBottom: "1px solid var(--line-dim)" }}>
+              <span className="mono" style={{ fontSize: 12, color: "var(--ink)", minWidth: 150 }}>{k}</span>
+              <div style={{ flex: 1, height: 7, background: "var(--bg-4)", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, w * 100)}%`,
+                  background: "var(--cyan)", borderRadius: 4 }} />
+              </div>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--cyan)", minWidth: 44, textAlign: "right" }}>
+                {(w * 100).toFixed(0)}%
+              </span>
+            </div>
+          ))
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {alloc ? "All capital in cash — no eligible strategies." : "Loading…"}
+            </div>}
+      </div>
+
+      {/* Stress scenarios + parametric VaR */}
+      <div className="exec-card" style={{ marginBottom: 14 }}>
+        <PanelHead icon="risk" title="Stress & VaR"
+          right={varRep && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            VaR {Math.round(varRep.confidence * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var).toLocaleString()}</b>
+            {varRep.var_pct !== null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall).toLocaleString()}
+          </span>} />
+        {scen && scen.scenarios.length > 0
+          ? scen.scenarios.map(r => (
+            <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 14px",
+              borderBottom: "1px solid var(--line-dim)" }}>
+              <span className="mono" style={{ fontSize: 11.5, color: "var(--ink)", minWidth: 150 }}>{r.scenario}</span>
+              <span className="mono" style={{ flex: 1, fontSize: 12, fontWeight: 600,
+                color: r.portfolio_pnl < 0 ? "var(--red)" : "var(--green)" }}>
+                {r.portfolio_pnl < 0 ? "-" : "+"}${Math.abs(r.portfolio_pnl).toLocaleString()}
+                {r.portfolio_pnl_pct !== null ? `  (${r.portfolio_pnl_pct}%)` : ""}
+              </span>
+            </div>
+          ))
+          : <div style={{ padding: 14, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {scen ? "No open positions to stress." : "Loading…"}
             </div>}
       </div>
 

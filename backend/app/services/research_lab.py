@@ -31,28 +31,37 @@ from app.services.strategy_health import StrategyBaseline
 # ── Stages ──────────────────────────────────────────────────────────────────────
 DRAFT = "draft"
 BACKTESTED = "backtested"
+WALK_FORWARD = "walk_forward"
 PAPER = "paper"
 PROMOTED = "promoted"
 ARCHIVED = "archived"
 
-STAGES = (DRAFT, BACKTESTED, PAPER, PROMOTED, ARCHIVED)
+STAGES = (DRAFT, BACKTESTED, WALK_FORWARD, PAPER, PROMOTED, ARCHIVED)
 
+# Mandatory funnel — no strategy may skip walk-forward validation between an
+# in-sample backtest and paper trading. (Reopen/demote/archive are escapes.)
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    DRAFT:      {BACKTESTED, ARCHIVED},
-    BACKTESTED: {PAPER, DRAFT, ARCHIVED},
-    PAPER:      {PROMOTED, BACKTESTED, ARCHIVED},
-    PROMOTED:   {PAPER, ARCHIVED},          # demote back to paper or retire
-    ARCHIVED:   {DRAFT},                     # reopen
+    DRAFT:        {BACKTESTED, ARCHIVED},
+    BACKTESTED:   {WALK_FORWARD, DRAFT, ARCHIVED},
+    WALK_FORWARD: {PAPER, BACKTESTED, ARCHIVED},
+    PAPER:        {PROMOTED, WALK_FORWARD, ARCHIVED},
+    PROMOTED:     {PAPER, ARCHIVED},        # demote back to paper or retire
+    ARCHIVED:     {DRAFT},                   # reopen
 }
 
 
 # ── Promotion gates ─────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class PromotionGates:
-    # Backtest gate (BACKTESTED → PAPER)
+    # Backtest gate (BACKTESTED → WALK_FORWARD)
     min_backtest_sharpe:        float = 0.50
     min_backtest_return_pct:    float = 0.0
     max_backtest_drawdown_pct:  float = 30.0
+    # Walk-forward gate (WALK_FORWARD → PAPER): out-of-sample must hold up and not
+    # degrade too far from in-sample (overfitting guard).
+    min_wf_oos_sharpe:          float = 0.40
+    max_wf_degradation_pct:     float = 50.0   # (is_sharpe - oos_sharpe)/is_sharpe
+    max_wf_drawdown_pct:        float = 35.0
     # Paper gate (PAPER → PROMOTED)
     min_paper_trades:           int = 20
     min_paper_win_rate:         float = 0.50
@@ -78,6 +87,35 @@ def evaluate_backtest_gate(metrics: dict,
     if dd > gates.max_backtest_drawdown_pct:
         reasons.append(f"drawdown {dd:.1f}% > {gates.max_backtest_drawdown_pct:.1f}%")
     return (not reasons), (reasons or ["backtest gate cleared"])
+
+
+def evaluate_walkforward_gate(wf: dict,
+                              gates: PromotionGates = DEFAULT_GATES) -> tuple[bool, list[str]]:
+    """
+    Check walk-forward (out-of-sample) metrics. Expects:
+      oos_sharpe, oos_return_pct, max_drawdown_pct, and optionally is_sharpe
+      (in-sample) to measure degradation. Guards against overfit strategies that
+      look great in-sample but collapse out-of-sample.
+    """
+    reasons: list[str] = []
+    if not wf:
+        return False, ["no walk-forward metrics"]
+    oos_sharpe = float(wf.get("oos_sharpe", 0.0))
+    oos_ret = float(wf.get("oos_return_pct", 0.0))
+    dd = float(wf.get("max_drawdown_pct", 999.0))
+    is_sharpe = float(wf.get("is_sharpe", 0.0))
+    if oos_sharpe < gates.min_wf_oos_sharpe:
+        reasons.append(f"OOS sharpe {oos_sharpe:.2f} < {gates.min_wf_oos_sharpe:.2f}")
+    if oos_ret < 0:
+        reasons.append(f"OOS return {oos_ret:.1f}% < 0%")
+    if dd > gates.max_wf_drawdown_pct:
+        reasons.append(f"OOS drawdown {dd:.1f}% > {gates.max_wf_drawdown_pct:.1f}%")
+    if is_sharpe > 1e-9:
+        degradation = (is_sharpe - oos_sharpe) / is_sharpe * 100.0
+        if degradation > gates.max_wf_degradation_pct:
+            reasons.append(
+                f"degradation {degradation:.0f}% > {gates.max_wf_degradation_pct:.0f}%")
+    return (not reasons), (reasons or ["walk-forward gate cleared"])
 
 
 def evaluate_paper_gate(perf: dict,
@@ -140,15 +178,18 @@ def transition(
     *,
     gates: PromotionGates = DEFAULT_GATES,
     metrics: dict | None = None,
+    wf_metrics: dict | None = None,
     perf: dict | None = None,
 ) -> TransitionResult:
     """
     Validate and compute a stage transition for an experiment dict.
 
-      • → BACKTESTED : requires `metrics`; stores them.
-      • → PAPER      : requires stored backtest metrics that clear the gate.
-      • → PROMOTED   : requires `perf` that clears the paper gate; derives a
-                       StrategyBaseline.
+      • → BACKTESTED   : requires `metrics`; stores them.
+      • → WALK_FORWARD : requires stored backtest metrics that clear the backtest
+                         gate; stores `wf_metrics` if supplied.
+      • → PAPER        : requires walk-forward metrics that clear the WF gate.
+      • → PROMOTED     : requires `perf` that clears the paper gate; derives a
+                         StrategyBaseline.
       • → ARCHIVED / DRAFT / demotions : structural only.
 
     Returns a TransitionResult; on failure `patch` is empty and nothing changes.
@@ -166,11 +207,22 @@ def transition(
         patch["backtest_metrics"] = metrics
         return TransitionResult(True, "recorded backtest", patch)
 
-    if target == PAPER and current == BACKTESTED:
+    if target == WALK_FORWARD and current == BACKTESTED:
         bt = metrics or experiment.get("backtest_metrics")
         passed, reasons = evaluate_backtest_gate(bt, gates)
         if not passed:
             return TransitionResult(False, "backtest gate failed: " + "; ".join(reasons), {})
+        if wf_metrics:
+            patch["walk_forward_metrics"] = wf_metrics
+        return TransitionResult(True, "advanced to walk-forward", patch)
+
+    if target == PAPER and current == WALK_FORWARD:
+        wf = wf_metrics or experiment.get("walk_forward_metrics")
+        passed, reasons = evaluate_walkforward_gate(wf, gates)
+        if not passed:
+            return TransitionResult(False, "walk-forward gate failed: " + "; ".join(reasons), {})
+        if wf_metrics:
+            patch["walk_forward_metrics"] = wf_metrics
         return TransitionResult(True, "promoted to paper", patch)
 
     if target == PROMOTED:
