@@ -23,12 +23,16 @@ const ICON: Record<string, string> = {
   check:    "M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
   warn:     "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
   cross:    "M12 22a10 10 0 100-20 10 10 0 000 20z M15 9l-6 6 M9 9l6 6",
+  strategy: "M12 2L2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5",
+  risk:     "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
 };
 
 const Icon = ({ name, size = 14, color = "currentColor" }: { name: string; size?: number; color?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
     strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-    {ICON[name].split(" M").map((seg, i) => <path key={i} d={(i ? "M" : "") + seg} />)}
+    {/* Defensive: an unknown icon name must never crash the dashboard (falls back
+        to the activity glyph instead of throwing on undefined.split). */}
+    {(ICON[name] || ICON.activity).split(" M").map((seg, i) => <path key={i} d={(i ? "M" : "") + seg} />)}
   </svg>
 );
 
