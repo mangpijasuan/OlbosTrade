@@ -41,17 +41,14 @@ const ICONS: Record<string, string> = {
 
 const NAV_ITEMS = [
   { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
-  { key: "symphony",   label: "Symphony",     icon: "symphony"   },
-  { key: "lab",        label: "Research Lab", icon: "lab"        },
-  { key: "equity",     label: "Equity Signals",icon: "equity"    },
-  { key: "backtest",   label: "Backtest",     icon: "backtest"   },
   { key: "paper",      label: "Trade Desk",   icon: "paper"      },
+  { key: "equity",     label: "Signals",      icon: "equity"     },
+  { key: "symphony",   label: "Symphony",     icon: "symphony"   },
+  { key: "backtest",   label: "Backtest",     icon: "backtest"   },
+  { key: "lab",        label: "Research Lab", icon: "lab"        },
   { key: "risk",       label: "Risk",         icon: "risk"       },
-  { key: "guardrails", label: "Guardrails",   icon: "guardrails" },
-  { key: "strategy",   label: "Strategy",     icon: "strategy"   },
   { key: "journal",    label: "Journal",      icon: "journal"    },
-  { key: "research",   label: "Research",     icon: "research"   },
-  { key: "analytics",  label: "Analytics",    icon: "analytics"  },
+  { key: "analytics",  label: "Performance",  icon: "analytics"  },
 ];
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────
