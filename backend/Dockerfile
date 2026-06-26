@@ -44,10 +44,17 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Production: no --reload, 2 workers
+# Production: no --reload. MUST be a single worker — the app is inherently
+# single-instance. It holds ONE stateful IBKR socket (IBKR permits one
+# connection per client id) and runs ONE in-process trading scheduler
+# (asyncio.create_task in the lifespan). With >1 worker each process opens a
+# competing IBKR connection (so connection status flaps "connected" on one
+# worker / "disconnected" on another across requests) and the trading agent
+# ticks once per worker, risking double-executed orders. Concurrency is handled
+# via asyncio within this single process, which is ample for this workload.
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
-     "--workers", "2", \
+     "--workers", "1", \
      "--loop", "uvloop", \
      "--access-log"]

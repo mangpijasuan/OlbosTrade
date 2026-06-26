@@ -80,7 +80,9 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
   const [tlt,  setTlt]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
   const [gld,  setGld]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
   const [uso,  setUso]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
-  const [uup,  setUup]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
+  // DXY = ICE US Dollar Index (~98–105). Previously this fed the UUP ETF (~$28),
+  // which made the "DXY" ticker read a wrong ~28 value.
+  const [dxy,  setDxy]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
   const [vix,  setVix]  = useState<number | null>(null);
   const [ivr,  setIvr]  = useState<number | null>(null);
   const [mode, setMode] = useState("balanced");
@@ -102,7 +104,7 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
     fetchSnapshot("TLT",  setTlt);
     fetchSnapshot("GLD",  setGld);
     fetchSnapshot("USO",  setUso);
-    fetchSnapshot("UUP",  setUup);
+    fetchSnapshot("DX-Y.NYB", setDxy);
 
     fetch("/api/market/regime")
       .then(r => r.json())
@@ -129,7 +131,7 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
       fetchSnapshot("TLT",  setTlt);
       fetchSnapshot("GLD",  setGld);
       fetchSnapshot("USO",  setUso);
-      fetchSnapshot("UUP",  setUup);
+      fetchSnapshot("DX-Y.NYB", setDxy);
     }, 5 * 60 * 1000);
 
     const ri = setInterval(() => {
@@ -186,7 +188,7 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
       <TickerCell label="OIL"  snap={uso}  />
       {sep}
       {/* Dollar */}
-      <TickerCell label="DXY"  snap={uup}  />
+      <TickerCell label="DXY"  snap={dxy}  />
       {sep}
       {vix !== null && <>
         <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>VIX</span>
