@@ -940,6 +940,14 @@ async def _poll_fills() -> None:
             for p in live_positions
         }
 
+        # Sum live unrealized P&L per underlying (for MFE/MAE excursion tracking).
+        live_upnl: dict[str, float] = {}
+        for p in live_positions:
+            sym = getattr(p, "symbol", getattr(p, "underlying", "")).upper()
+            upnl = getattr(p, "unrealized_pnl", None)
+            if sym and upnl is not None:
+                live_upnl[sym] = live_upnl.get(sym, 0.0) + float(upnl)
+
         # Load all open + pending trades from DB
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -1020,6 +1028,11 @@ async def _poll_fills() -> None:
             tid = str(trade.id)
             if not underlying or underlying in live_symbols:
                 _close_pending.pop(tid, None)
+                # Still open at broker — advance MFE/MAE from live unrealized P&L.
+                if underlying in live_upnl:
+                    await trade_recorder.update_excursion(
+                        trade_id=tid, unrealized_pnl=live_upnl[underlying],
+                    )
                 continue  # still open at broker
 
             still_missing.add(tid)

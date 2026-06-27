@@ -52,6 +52,8 @@ class JournalEntryOut:
     loss_category: Optional[str]
     mistake_tags: list[str]
     pnl: Optional[float]
+    mfe: Optional[float]
+    mae: Optional[float]
     signal_score: Optional[float]
     entry_date: Optional[date]
     exit_date: Optional[date]

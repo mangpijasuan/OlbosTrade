@@ -220,3 +220,49 @@ async def test_cancel_pending_handles_exception():
     with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("boom")):
         ok = await rec.cancel_pending(trade_id=str(uuid.uuid4()), reason="x")
     assert ok is False
+
+
+# ── update_excursion (MFE/MAE) ─────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_update_excursion_initialises_both():
+    t = _Trade(status="open", mfe=None, mae=None)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.update_excursion(trade_id=str(uuid.uuid4()), unrealized_pnl=50.0)
+    assert ok and float(t.mfe) == 50.0 and float(t.mae) == 50.0
+
+
+@pytest.mark.asyncio
+async def test_update_excursion_advances_high_water():
+    t = _Trade(status="open", mfe=Decimal("50"), mae=Decimal("50"))
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.update_excursion(trade_id=str(uuid.uuid4()), unrealized_pnl=80.0)
+    assert ok and float(t.mfe) == 80.0 and float(t.mae) == 50.0
+
+
+@pytest.mark.asyncio
+async def test_update_excursion_advances_low_water():
+    t = _Trade(status="open", mfe=Decimal("80"), mae=Decimal("50"))
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.update_excursion(trade_id=str(uuid.uuid4()), unrealized_pnl=-30.0)
+    assert ok and float(t.mae) == -30.0 and float(t.mfe) == 80.0
+
+
+@pytest.mark.asyncio
+async def test_update_excursion_no_change_within_band():
+    t = _Trade(status="open", mfe=Decimal("80"), mae=Decimal("-30"))
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.update_excursion(trade_id=str(uuid.uuid4()), unrealized_pnl=10.0)
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_update_excursion_ignores_non_open():
+    t = _Trade(status="closed", mfe=None, mae=None)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.update_excursion(trade_id=str(uuid.uuid4()), unrealized_pnl=10.0)
+    assert ok is False

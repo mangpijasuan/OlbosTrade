@@ -16,6 +16,8 @@ interface Entry {
   loss_category: string | null;
   mistake_tags: string[];
   pnl: number | null;
+  mfe: number | null;
+  mae: number | null;
   signal_score: number | null;
   entry_date: string | null;
   exit_date: string | null;
@@ -89,6 +91,8 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
           { label: "HOLD",  val: days != null ? `${days}d` : "—" },
           { label: "SCORE", val: e.signal_score != null ? e.signal_score.toFixed(3) : "—" },
           { label: "CONF",  val: e.confidence_level != null ? `${e.confidence_level}/5` : "—" },
+          { label: "MFE",   val: e.mfe != null ? fmt(e.mfe) : "—" },
+          { label: "MAE",   val: e.mae != null ? fmt(e.mae) : "—" },
         ].map(item => (
           <div key={item.label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>

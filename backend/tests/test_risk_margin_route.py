@@ -55,3 +55,24 @@ async def test_margin_route_broker_error():
     with patch("app.broker.broker_factory.get_broker", return_value=b):
         res = await get_margin()
     assert res["available"] is False and "disconnected" in res["reason"]
+
+
+# ── /api/risk/reconciliation ───────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_reconciliation_route_reports_status():
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+    from app.api.routes.risk import get_reconciliation
+
+    fake = SimpleNamespace(
+        clean=False, broker_position_count=1, db_open_trade_count=0,
+        untracked_at_broker=["SPY"], phantom_in_db=[], warnings=[],
+        checked_at=datetime.now(timezone.utc),
+    )
+    recon = MagicMock()
+    recon.check = AsyncMock(return_value=fake)
+    with patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
+         patch("app.services.position_reconciler.PositionReconciler", return_value=recon):
+        res = await get_reconciliation()
+    assert res["clean"] is False and res["untracked_at_broker"] == ["SPY"]
+    assert res["broker_position_count"] == 1 and "checked_at" in res

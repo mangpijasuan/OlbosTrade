@@ -218,6 +218,38 @@ class TradeRecorder:
             logger.warning("cancel_pending failed for %s: %s", trade_id, exc)
             return False
 
+    async def update_excursion(self, *, trade_id: str, unrealized_pnl: float) -> bool:
+        """
+        Update a trade's running MFE (max favorable) / MAE (max adverse) from the
+        latest unrealized P&L. MFE tracks the highest value seen, MAE the lowest.
+        Called periodically by the position poller while the trade is open.
+        Returns True if a high/low-water mark was advanced.
+        """
+        try:
+            from sqlalchemy import select
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+
+            changed = False
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    trade = (await session.execute(
+                        select(Trade).where(Trade.id == trade_id)
+                    )).scalar_one_or_none()
+                    if trade is None or trade.status != "open":
+                        return False
+                    pnl = Decimal(str(round(unrealized_pnl, 4)))
+                    if trade.mfe is None or pnl > trade.mfe:
+                        trade.mfe = pnl
+                        changed = True
+                    if trade.mae is None or pnl < trade.mae:
+                        trade.mae = pnl
+                        changed = True
+            return changed
+        except Exception as exc:
+            logger.debug("update_excursion failed for %s: %s", trade_id, exc)
+            return False
+
     async def record_exit(
         self,
         *,

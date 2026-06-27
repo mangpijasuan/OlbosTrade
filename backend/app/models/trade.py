@@ -46,6 +46,12 @@ class Trade(Base):
     pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4), nullable=True)
     pnl_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6), nullable=True)
 
+    # Excursions — best/worst unrealized P&L ($) seen while the trade was open.
+    # Used to refine take-profit / stop-loss (how much was left on the table vs
+    # how much heat the trade took before resolving).
+    mfe: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4), nullable=True)
+    mae: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4), nullable=True)
+
     # Status
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="open",

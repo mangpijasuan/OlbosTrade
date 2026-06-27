@@ -212,6 +212,8 @@ async def get_trade_history(
                     "cost_to_close":   float(t.cost_to_close or 0),
                     "pnl":             float(t.pnl or 0),
                     "pnl_pct":         float(t.pnl_pct or 0),
+                    "mfe":             float(t.mfe) if t.mfe is not None else None,
+                    "mae":             float(t.mae) if t.mae is not None else None,
                     "exit_reason":     t.exit_reason,
                     "signal_score":    float(t.signal_score or 0),
                 }
