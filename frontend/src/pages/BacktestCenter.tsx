@@ -7,6 +7,7 @@
  */
 import React, { useState } from "react";
 import TabBar from "../components/TabBar";
+import ErrorBoundary from "../components/ErrorBoundary";
 import Backtest from "./Backtest";
 import Symphony from "./Symphony";
 
@@ -20,7 +21,9 @@ export default function BacktestCenter() {
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} />
-      {tab === "backtest" ? <Backtest /> : <Symphony />}
+      <ErrorBoundary label={tab === "backtest" ? "Backtest" : "Symphony"}>
+        {tab === "backtest" ? <Backtest /> : <Symphony />}
+      </ErrorBoundary>
     </div>
   );
 }
