@@ -15,9 +15,12 @@ export default function RiskMonitor() {
   const { guardrailStatus, riskState } = useRisk();
 
   const [margin, setMargin] = useState<MarginInfo | null>(null);
+  const [recon, setRecon] = useState<any>(null);
   useEffect(() => {
-    const load = () =>
+    const load = () => {
       fetch("/api/risk/margin").then(r => r.json()).then(setMargin).catch(() => {});
+      fetch("/api/risk/reconciliation").then(r => r.json()).then(setRecon).catch(() => {});
+    };
     load();
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
@@ -141,6 +144,41 @@ export default function RiskMonitor() {
                 <span style={{ fontFamily: "var(--mono)", fontSize: 14, color: "var(--ink)" }}>{g.val}</span>
               </div>
             ))}
+          </Section>
+          <Section title="Reconciliation">
+            {recon ? (
+              <div style={{ padding: "12px 16px", fontFamily: "var(--mono)", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span className="kicker">Status</span>
+                  <span style={{ color: recon.clean ? "var(--green)" : "var(--amber)", fontWeight: 600 }}>
+                    {recon.clean ? "✓ IN SYNC" : "⚠ NEEDS REVIEW"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--ink-dim)", marginBottom: 4 }}>
+                  <span>Broker positions</span><span>{recon.broker_position_count ?? 0}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--ink-dim)", marginBottom: 4 }}>
+                  <span>DB open trades</span><span>{recon.db_open_trade_count ?? 0}</span>
+                </div>
+                {recon.untracked_at_broker?.length > 0 && (
+                  <div style={{ color: "var(--amber)", marginTop: 6 }}>
+                    Untracked at broker: {recon.untracked_at_broker.join(", ")}
+                  </div>
+                )}
+                {recon.phantom_in_db?.length > 0 && (
+                  <div style={{ color: "var(--red)", marginTop: 6 }}>
+                    Phantom in DB: {recon.phantom_in_db.join(", ")}
+                  </div>
+                )}
+                {recon.warnings?.map((w: string, i: number) => (
+                  <div key={i} style={{ color: "var(--red)", marginTop: 6 }}>{w}</div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+                Loading…
+              </div>
+            )}
           </Section>
           <Section title="Kill Switch">
             <div style={{ padding: 16, display: "flex", gap: 12, flexDirection: "column" }}>

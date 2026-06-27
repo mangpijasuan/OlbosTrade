@@ -312,3 +312,27 @@ async def get_margin():
         critical_pct=settings.margin_critical_pct,
     )
     return {"available": True, **status.to_dict()}
+
+
+@router.get("/reconciliation")
+async def get_reconciliation():
+    """
+    Broker-vs-DB position reconciliation status (non-raising).
+
+    Surfaces untracked broker positions (held at broker, no OlbosQuant record),
+    DB phantoms (open in DB, not at broker), and quantity mismatches so the UI
+    can flag a "needs reconcile" state without halting trading.
+    """
+    from app.broker.broker_factory import get_broker
+    from app.services.position_reconciler import PositionReconciler
+
+    res = await PositionReconciler(get_broker()).check()
+    return {
+        "clean":                 res.clean,
+        "broker_position_count": res.broker_position_count,
+        "db_open_trade_count":   res.db_open_trade_count,
+        "untracked_at_broker":   res.untracked_at_broker,
+        "phantom_in_db":         res.phantom_in_db,
+        "warnings":              res.warnings,
+        "checked_at":            res.checked_at.isoformat(),
+    }

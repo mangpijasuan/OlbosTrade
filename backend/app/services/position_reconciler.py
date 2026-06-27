@@ -49,6 +49,66 @@ class PositionReconciler:
     def __init__(self, broker: BrokerInterface) -> None:
         self.broker = broker
 
+    async def check(self) -> ReconciliationResult:
+        """
+        Non-raising reconciliation status for dashboards/monitoring.
+
+        Same comparison as :meth:`reconcile` but never raises — untracked broker
+        positions and DB phantoms are returned in the result for the UI to
+        surface, rather than halting. ``clean`` is False when either side
+        disagrees. On broker/DB error, returns a non-clean result with the error
+        captured in ``warnings`` (fail-loud, but non-fatal).
+        """
+        from collections import defaultdict
+
+        try:
+            broker_positions = await self.broker.get_positions()
+        except Exception as exc:
+            return ReconciliationResult(
+                clean=False, broker_position_count=0, db_open_trade_count=0,
+                untracked_at_broker=[], phantom_in_db=[],
+                warnings=[f"broker_unavailable: {exc}"],
+            )
+
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Trade).where(Trade.status == "open")
+                )
+                db_open_trades = result.scalars().all()
+        except Exception as exc:
+            return ReconciliationResult(
+                clean=False, broker_position_count=len(broker_positions),
+                db_open_trade_count=0, untracked_at_broker=[], phantom_in_db=[],
+                warnings=[f"db_unavailable: {exc}"],
+            )
+
+        broker_qty: dict[str, int] = defaultdict(int)
+        for p in broker_positions:
+            broker_qty[p.underlying] += abs(p.quantity)
+        db_qty: dict[str, int] = defaultdict(int)
+        for t in db_open_trades:
+            db_qty[str(t.underlying)] += int(t.quantity or 1)
+
+        untracked = sorted(set(broker_qty) - set(db_qty))
+        phantom   = sorted(set(db_qty) - set(broker_qty))
+
+        warnings = []
+        for sym in set(broker_qty) & set(db_qty):
+            if broker_qty[sym] != db_qty[sym]:
+                warnings.append(
+                    f"QUANTITY MISMATCH {sym}: broker={broker_qty[sym]} db={db_qty[sym]}"
+                )
+
+        return ReconciliationResult(
+            clean=not untracked and not phantom and not warnings,
+            broker_position_count=len(broker_positions),
+            db_open_trade_count=len(db_open_trades),
+            untracked_at_broker=untracked,
+            phantom_in_db=phantom,
+            warnings=warnings,
+        )
+
     async def reconcile(self) -> ReconciliationResult:
         """
         Compare broker positions against DB open trades.

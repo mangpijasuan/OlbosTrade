@@ -62,6 +62,76 @@ async def test_reconcile_untracked_broker_position_raises(mock_broker):
             await reconciler.reconcile()
 
 
+def _db_with_trades(*trades):
+    """Patch context returning a session whose query yields the given trades."""
+    mock_db = patch("app.services.position_reconciler.AsyncSessionLocal")
+    return mock_db, list(trades)
+
+
+def _wire_db(mock_db_ctx, trades):
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock(return_value=MagicMock(
+        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=trades)))
+    ))
+    mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+
+# ── check() — non-raising status for dashboards ────────────────────────────────
+@pytest.mark.asyncio
+async def test_check_clean_no_positions(mock_broker):
+    reconciler = PositionReconciler(mock_broker)
+    with patch("app.services.position_reconciler.AsyncSessionLocal") as mock_db:
+        _wire_db(mock_db, [])
+        res = await reconciler.check()
+    assert res.clean is True and not res.untracked_at_broker and not res.phantom_in_db
+
+
+@pytest.mark.asyncio
+async def test_check_untracked_does_not_raise(mock_broker):
+    """The dangerous case that reconcile() raises on — check() just reports it."""
+    mock_broker.get_positions = AsyncMock(
+        return_value=[make_position("SPY240119P00450000", "SPY")]
+    )
+    reconciler = PositionReconciler(mock_broker)
+    with patch("app.services.position_reconciler.AsyncSessionLocal") as mock_db:
+        _wire_db(mock_db, [])
+        res = await reconciler.check()
+    assert res.clean is False and res.untracked_at_broker == ["SPY"]
+
+
+@pytest.mark.asyncio
+async def test_check_phantom_reported(mock_broker):
+    mock_broker.get_positions = AsyncMock(return_value=[])
+    t = MagicMock(); t.underlying = "QQQ"; t.quantity = 1
+    reconciler = PositionReconciler(mock_broker)
+    with patch("app.services.position_reconciler.AsyncSessionLocal") as mock_db:
+        _wire_db(mock_db, [t])
+        res = await reconciler.check()
+    assert res.clean is False and res.phantom_in_db == ["QQQ"]
+
+
+@pytest.mark.asyncio
+async def test_check_quantity_mismatch_warns(mock_broker):
+    mock_broker.get_positions = AsyncMock(
+        return_value=[make_position("SPY240119P00450000", "SPY", qty=-2)]
+    )
+    t = MagicMock(); t.underlying = "SPY"; t.quantity = 1
+    reconciler = PositionReconciler(mock_broker)
+    with patch("app.services.position_reconciler.AsyncSessionLocal") as mock_db:
+        _wire_db(mock_db, [t])
+        res = await reconciler.check()
+    assert res.clean is False and any("QUANTITY MISMATCH" in w for w in res.warnings)
+
+
+@pytest.mark.asyncio
+async def test_check_broker_error_fails_loud_not_raise():
+    b = MagicMock()
+    b.get_positions = AsyncMock(side_effect=Exception("disconnected"))
+    res = await PositionReconciler(b).check()
+    assert res.clean is False and any("broker_unavailable" in w for w in res.warnings)
+
+
 @pytest.mark.asyncio
 async def test_reconcile_phantom_db_trade_warns_not_raises(mock_broker):
     """DB has open trade but broker has no position — warn, don't halt."""
