@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     max_consecutive_losses: int = Field(default=3)
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
+    # Margin utilization thresholds (maintenance_margin / net_liquidation).
+    # >= warn → amber on the Risk dashboard; >= critical → new trades blocked.
+    margin_warn_pct: float = Field(default=0.50)
+    margin_critical_pct: float = Field(default=0.80)
 
     # ── Equity signal settings ────────────────────────────────────────────
     equity_watchlist: str = Field(

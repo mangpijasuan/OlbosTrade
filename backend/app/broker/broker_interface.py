@@ -124,6 +124,11 @@ class AccountSummary(BaseModel):
     buying_power: Decimal
     day_trades_remaining: int | None = None
     trading_mode: Literal["live", "paper", "sandbox"] = "paper"
+    # Margin figures (None when the broker doesn't report them). Used by the
+    # margin monitor for buying-power-reduction / utilization tracking.
+    maintenance_margin: Decimal | None = None
+    excess_liquidity: Decimal | None = None
+    init_margin: Decimal | None = None
 
 
 class Bar(BaseModel):

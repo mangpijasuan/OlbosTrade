@@ -1,8 +1,27 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
+
+interface MarginInfo {
+  available: boolean;
+  status?: "ok" | "warn" | "critical";
+  utilization_pct?: number;
+  maintenance_margin?: number;
+  excess_liquidity?: number;
+  buying_power?: number;
+  detail?: string;
+}
 
 export default function RiskMonitor() {
   const { guardrailStatus, riskState } = useRisk();
+
+  const [margin, setMargin] = useState<MarginInfo | null>(null);
+  useEffect(() => {
+    const load = () =>
+      fetch("/api/risk/margin").then(r => r.json()).then(setMargin).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
 
   const Section = ({ title, children }: any) => (
     <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", marginBottom: 16 }}>
@@ -75,6 +94,34 @@ export default function RiskMonitor() {
             <Meter label="Trades Today" val={guardrailStatus?.trades_today||0} max={3} unit="" warn={0.5} crit={0.85} />
             <Meter label="Consecutive Losses" val={guardrailStatus?.consecutive_losses||0} max={3} unit="" warn={0.4} crit={0.7} />
             <Meter label="Open Positions" val={riskState?.state?.open_positions||0} max={5} unit="" />
+          </Section>
+          <Section title="Margin & Buying Power">
+            {margin?.available ? (
+              <>
+                <Meter label="Margin Utilization" val={margin.utilization_pct ?? 0} max={100} unit="%" warn={0.5} crit={0.8} />
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid var(--line-dim)" }}>
+                  <span className="kicker">Excess Liquidity</span>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 12,
+                    color: (margin.excess_liquidity ?? 0) <= 0 ? "var(--red)" : "var(--ink)" }}>
+                    ${Math.round(margin.excess_liquidity ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid var(--line-dim)" }}>
+                  <span className="kicker">Maint. Margin</span>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink)" }}>
+                    ${Math.round(margin.maintenance_margin ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ padding: "10px 16px", fontFamily: "var(--mono)", fontSize: 10,
+                  color: margin.status === "critical" ? "var(--red)" : margin.status === "warn" ? "var(--amber)" : "var(--ink-faint)" }}>
+                  {margin.detail}
+                </div>
+              </>
+            ) : (
+              <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+                Margin figures unavailable {margin ? "(broker not reporting)" : "…"}
+              </div>
+            )}
           </Section>
         </div>
         <div>
