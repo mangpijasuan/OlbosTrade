@@ -9,10 +9,12 @@ import ErrorBoundary from "../components/ErrorBoundary";
 import EquitySignals from "./EquitySignals";
 import Strategy from "./Strategy";
 import OptionsFlow from "./OptionsFlow";
+import IncomeMatrix from "./IncomeMatrix";
 
 const TABS = [
   { key: "signals", label: "Live Signals" },
   { key: "flow", label: "Options Flow" },
+  { key: "income", label: "Income Matrix" },
   { key: "strategies", label: "Strategies" },
 ];
 
@@ -24,6 +26,7 @@ export default function SignalsCenter() {
       <ErrorBoundary label="Signals">
         {tab === "signals" ? <EquitySignals />
           : tab === "flow" ? <OptionsFlow />
+          : tab === "income" ? <IncomeMatrix />
           : <Strategy />}
       </ErrorBoundary>
     </div>
