@@ -163,6 +163,8 @@ async def test_execute_signal_allows_credit_spread_in_preservation():
         new=AsyncMock(return_value=_preservation_portfolio()),
     ), patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
        patch("app.broker.broker_factory.get_broker", return_value=broker), \
+       patch("app.services.account_guard.verify_account_mode",
+             new=AsyncMock(return_value=(True, "account DU-test (paper)"))), \
        patch("app.services.trade_recorder.trade_recorder", recorder), \
        patch("app.core.database.AsyncSessionLocal", return_value=mock_session):
 

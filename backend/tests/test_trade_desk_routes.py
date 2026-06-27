@@ -26,6 +26,15 @@ def _market_open():
 
 
 @pytest.fixture(autouse=True)
+def _account_guard_ok():
+    # The account-mode guard is exercised in test_account_guard.py; here it passes
+    # by default so execution-path tests reach the broker submission stage.
+    with patch("app.services.account_guard.verify_account_mode",
+               new=AsyncMock(return_value=(True, "account DU-test (paper)"))):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_state():
     td._pending_approvals.clear()
     td._execution_log.clear()
