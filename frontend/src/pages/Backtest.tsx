@@ -2,11 +2,17 @@ import React, { useState } from "react";
 import { useBacktest } from "../hooks/useBacktest";
 
 export default function Backtest() {
-  const { results, loading, runBacktest } = useBacktest();
+  const { results, loading, error, runBacktest } = useBacktest();
   const [form, setForm] = useState({
     strategy: "bull_put_spread", start_date: "2022-01-01",
     end_date: "2024-12-31", mode: "balanced",
   });
+
+  // Only treat results as displayable metrics once the async run completes.
+  const done = results?.status === "completed";
+  const status: string | undefined = results?.status;
+  const pct = (v: any) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—");
+  const num = (v: any, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
 
   const Panel = ({ title, children }: any) => (
     <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
@@ -32,13 +38,14 @@ export default function Backtest() {
 
   const selectStyle = { ...inputStyle };
 
+  // Backend returns fractions named *_pct (e.g. total_return_pct = 0.12 = 12%).
   const metrics = [
-    { label: "Total Return",   val: results ? `${(results.total_return * 100).toFixed(1)}%` : "—",   color: results?.total_return >= 0 ? "var(--green)" : "var(--red)" },
-    { label: "Sharpe Ratio",   val: results ? results.sharpe_ratio.toFixed(2) : "—",                 color: results?.sharpe_ratio >= 1 ? "var(--cyan)" : "var(--ink)" },
-    { label: "Win Rate",       val: results ? `${(results.win_rate * 100).toFixed(1)}%` : "—",        color: "var(--ink)" },
-    { label: "Max Drawdown",   val: results ? `${(results.max_drawdown * 100).toFixed(1)}%` : "—",    color: "var(--red)" },
-    { label: "Profit Factor",  val: results ? results.profit_factor?.toFixed(2) : "—",               color: "var(--ink)" },
-    { label: "Total Trades",   val: results ? results.total_trades : "—",                            color: "var(--ink)" },
+    { label: "Total Return",   val: done ? pct(results.total_return_pct) : "—",  color: (results?.total_return_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" },
+    { label: "Sharpe Ratio",   val: done ? num(results.sharpe_ratio) : "—",      color: (results?.sharpe_ratio ?? 0) >= 1 ? "var(--cyan)" : "var(--ink)" },
+    { label: "Win Rate",       val: done ? pct(results.win_rate) : "—",          color: "var(--ink)" },
+    { label: "Max Drawdown",   val: done ? pct(results.max_drawdown_pct) : "—",  color: "var(--red)" },
+    { label: "Profit Factor",  val: done ? num(results.profit_factor) : "—",     color: "var(--ink)" },
+    { label: "Total Trades",   val: done ? (results.total_trades ?? 0) : "—",    color: "var(--ink)" },
   ];
 
   return (
@@ -94,15 +101,27 @@ export default function Backtest() {
           ))}
         </div>
 
-        {/* Equity curve placeholder */}
+        {/* Status / equity curve placeholder */}
         <Panel title="Equity Curve">
           <div style={{
             height: 200, background: "var(--bg-3)",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {results
+            {error
+              ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+                  ⚠ {error}
+                </span>
+              : loading || status === "queued" || status === "running"
+              ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)" }}>
+                  RUNNING BACKTEST… ({status || "starting"})
+                </span>
+              : status === "failed"
+              ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+                  ⚠ BACKTEST FAILED — {results?.error || "see server logs"}
+                </span>
+              : done
               ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--cyan)" }}>
-                  BACKTEST COMPLETE — {results.total_trades} TRADES
+                  BACKTEST COMPLETE — {results.total_trades ?? 0} TRADES
                 </span>
               : <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
                   CONFIGURE AND RUN BACKTEST
@@ -112,7 +131,7 @@ export default function Backtest() {
         </Panel>
 
         {/* Trade log */}
-        {results?.trades && (
+        {done && results?.trades?.length > 0 && (
           <Panel title="Trade Log">
             <table className="t-table">
               <thead><tr>
