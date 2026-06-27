@@ -431,6 +431,17 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         from app.broker.broker_factory import get_broker
         broker = get_broker()
 
+        # ── Account mode guard (fail closed) — last gate before submission ──────
+        # Never place a real-money order when the operator believes they're on
+        # paper. Verifies the broker's actual account (DU…=paper, U…=live) matches
+        # IBKR_TRADING_MODE; blocks on any mismatch or if it can't be verified.
+        # Manual orders are NOT exempt — this is a safety floor.
+        from app.services.account_guard import verify_account_mode
+        _ok, _detail = await verify_account_mode(broker)
+        if not _ok:
+            logger.critical("Order blocked for %s — account guard: %s", ticker, _detail)
+            return _blocked(f"account_guard: {_detail}")
+
         if asset_type == "equity":
             trade_plan = signal.get("trade_plan", {})
             shares     = trade_plan.get("shares", 1)

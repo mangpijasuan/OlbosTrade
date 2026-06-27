@@ -160,6 +160,20 @@ async def on_startup() -> None:
         # trading after the kill switch was engaged.
         await kill_switch_service.rehydrate()
         logger.info("Kill switch wired to broker (engaged=%s)", kill_switch_service.is_engaged)
+
+        # Account mode guard — log loudly at startup if the gateway's real account
+        # doesn't match IBKR_TRADING_MODE (e.g. configured paper but logged into a
+        # live account). Execution is independently fail-closed per order; this is
+        # the early-warning surface.
+        try:
+            from app.services.account_guard import verify_account_mode
+            ok, detail = await verify_account_mode(broker)
+            if ok:
+                logger.info("Account mode verified — %s", detail)
+            else:
+                logger.critical("ACCOUNT MODE GUARD: %s — execution will be blocked", detail)
+        except Exception as ag_exc:
+            logger.warning("Account mode verification skipped: %s", ag_exc)
     except Exception as exc:
         logger.warning("Broker initialization failed (non-fatal): %s", exc)
 
