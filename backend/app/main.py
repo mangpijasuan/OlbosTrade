@@ -66,6 +66,7 @@ from app.api.routes import trade_desk
 from app.api.routes import symphony
 from app.api.routes import options
 from app.api.routes import options_flow
+from app.api.routes import income_matrix
 from app.api.routes import portfolio
 from app.core.config import settings
 
@@ -121,6 +122,7 @@ app.include_router(paper_trade.router, prefix="/api/paper-trade", tags=["Paper T
 app.include_router(market_data.router, prefix="/api/market",      tags=["Market Data"])
 app.include_router(risk.router,        prefix="/api/risk",         tags=["Risk"])
 app.include_router(options_flow.router, prefix="/api/options-flow", tags=["Options Flow"])
+app.include_router(income_matrix.router, prefix="/api/income-matrix", tags=["Income Matrix"])
 app.include_router(research.router,    prefix="/api/research",     tags=["Research"])
 app.include_router(journal.router,     prefix="/api/journal",      tags=["Journal"])
 app.include_router(analytics.router,   prefix="/api/analytics",    tags=["Analytics"])
