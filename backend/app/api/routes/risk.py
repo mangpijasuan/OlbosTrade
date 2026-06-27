@@ -204,6 +204,35 @@ async def trigger_kill_switch(
     }
 
 
+@router.post("/kill-switch/engage")
+async def engage_kill_switch_ui(reason: str = "manual_ui"):
+    """
+    Operator-facing kill switch for the dashboard (emergency stop button).
+
+    Unlike /kill-switch/trigger (API-key protected, for external/programmatic
+    callers), this path is protected by the app's own auth layer (nginx Basic
+    Auth in front of the whole dashboard) so the authenticated operator can hit
+    the button in an emergency without embedding the secret key in the browser.
+    The UI requires hold-to-confirm friction to prevent accidental clicks.
+    Same effect: cancel all orders, flatten positions, pause the scheduler.
+    """
+    if kill_switch_service.is_engaged:
+        return {"status": "already_engaged", "detail": kill_switch_service.status}
+
+    result = await kill_switch_service.engage(reason=reason)
+    if result.get("errors"):
+        raise HTTPException(
+            status_code=207,
+            detail={"message": "Kill switch engaged with errors — manual review required",
+                    "result": result},
+        )
+    return {
+        "status": "engaged",
+        "message": "Kill switch engaged. All orders cancelled and positions flattened.",
+        "result": result,
+    }
+
+
 @router.post("/kill-switch/reset")
 async def reset_kill_switch(body: KillSwitchResetRequest):
     """

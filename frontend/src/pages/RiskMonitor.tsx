@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
+import { api } from "../api/client";
+import HoldToConfirmButton from "../components/HoldToConfirmButton";
 
 interface MarginInfo {
   available: boolean;
@@ -16,15 +18,39 @@ export default function RiskMonitor() {
 
   const [margin, setMargin] = useState<MarginInfo | null>(null);
   const [recon, setRecon] = useState<any>(null);
+  const [ks, setKs] = useState<any>(null);
+  const [ksBusy, setKsBusy] = useState(false);
+  const [ksError, setKsError] = useState<string | null>(null);
+
+  const loadKs = () =>
+    api.getKillSwitchStatus().then(setKs).catch(() => {});
+
   useEffect(() => {
     const load = () => {
       fetch("/api/risk/margin").then(r => r.json()).then(setMargin).catch(() => {});
       fetch("/api/risk/reconciliation").then(r => r.json()).then(setRecon).catch(() => {});
+      loadKs();
     };
     load();
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, []);
+
+  const engageKs = async () => {
+    setKsBusy(true); setKsError(null);
+    try { await api.engageKillSwitch(); await loadKs(); }
+    catch (e: any) { setKsError(e?.message || "Failed to engage kill switch"); }
+    finally { setKsBusy(false); }
+  };
+
+  const resetKs = async () => {
+    setKsBusy(true); setKsError(null);
+    try { await api.resetKillSwitch("OLBOSQUANT_MANUAL_RESET"); await loadKs(); }
+    catch (e: any) { setKsError(e?.message || "Failed to reset kill switch"); }
+    finally { setKsBusy(false); }
+  };
+
+  const ksEngaged = !!(ks?.engaged ?? ks?.is_engaged);
 
   const Section = ({ title, children }: any) => (
     <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", marginBottom: 16 }}>
@@ -182,13 +208,42 @@ export default function RiskMonitor() {
           </Section>
           <Section title="Kill Switch">
             <div style={{ padding: 16, display: "flex", gap: 12, flexDirection: "column" }}>
-              <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
-                Immediately cancel all open orders, flatten all positions,
-                and halt the signal cycle. Cannot be undone without manual reset.
-              </p>
-              <button className="btn-t danger" style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}>
-                ⚡ ENGAGE KILL SWITCH
-              </button>
+              {ksEngaged ? (
+                <>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)", fontWeight: 700, letterSpacing: "0.08em" }}>
+                    ⚡ KILL SWITCH ENGAGED — TRADING HALTED
+                  </div>
+                  <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
+                    All orders were cancelled and positions flattened. Reset only
+                    after manual review.
+                  </p>
+                  <button
+                    className="btn-t"
+                    disabled={ksBusy}
+                    onClick={resetKs}
+                    style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}
+                  >
+                    {ksBusy ? "RESETTING…" : "RESET KILL SWITCH"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
+                    Immediately cancel all open orders, flatten all positions,
+                    and halt the signal cycle. Cannot be undone without manual reset.
+                    <br /><b style={{ color: "var(--amber)" }}>Press and hold to engage.</b>
+                  </p>
+                  <HoldToConfirmButton
+                    label="⚡ ENGAGE KILL SWITCH"
+                    confirmingLabel="HOLD TO ENGAGE"
+                    onConfirm={engageKs}
+                    disabled={ksBusy}
+                  />
+                </>
+              )}
+              {ksError && (
+                <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)" }}>{ksError}</div>
+              )}
             </div>
           </Section>
         </div>
