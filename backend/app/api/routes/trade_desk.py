@@ -415,11 +415,11 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             existing = (await _db.execute(
                 select(Trade.id).where(
                     Trade.underlying == ticker,
-                    Trade.status == "open",
+                    Trade.status.in_(["open", "pending"]),
                 )
             )).first()
         if existing:
-            logger.info("Skipping %s — open trade already exists in DB", ticker)
+            logger.info("Skipping %s — open/pending trade already exists in DB", ticker)
             return _skipped("already_open")
     except Exception as _dup_exc:
         logger.warning("Duplicate check failed for %s: %s", ticker, _dup_exc)
@@ -449,6 +449,16 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 take_profit=trade_plan.get("target_price"),
             )
 
+            # A terminated-unfilled order is NOT recorded — recording it would
+            # create a phantom position the broker never opened.
+            if result.status in ("cancelled", "rejected"):
+                logger.info("Equity order for %s %s — not recorded", ticker, result.status)
+                return _blocked(f"order_{result.status}")
+
+            # Record as a live position only on a confirmed fill; otherwise record
+            # as pending so the fill reconciler promotes/cancels it later.
+            entry_status = "open" if result.status == "filled" else "pending"
+
             # Encode direction so exit P&L is computed with the right sign.
             # SELL = short (profit when price falls), default BUY = long.
             equity_direction = "equity_short" if action.upper() == "SELL" else "equity_long"
@@ -469,6 +479,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 regime=signal.get("regime", "unknown"),
                 trading_mode=approved_by,
                 dispatch_id=result.order_id or signal.get("id", ""),
+                status=entry_status,
             )
             if recorded is None:
                 logger.critical(
@@ -543,6 +554,16 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             )
             result = await broker.place_order(order)
 
+            # A terminated-unfilled order is NOT recorded (no phantom position).
+            if result.status in ("cancelled", "rejected"):
+                logger.info("Options order for %s %s %s — not recorded",
+                            strategy, ticker, result.status)
+                return _blocked(f"order_{result.status}")
+
+            # "filled"/"partial" → a real position exists now → open.
+            # "submitted"/"pending" → still working → pending (reconciler resolves).
+            entry_status = "open" if result.status in ("filled", "partial") else "pending"
+
             # Stage 5: fill recording — CRITICAL on failure
             from app.services.trade_recorder import trade_recorder
             recorded = await trade_recorder.record_fill(
@@ -562,6 +583,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 regime=signal.get("regime", "unknown"),
                 trading_mode=approved_by,
                 dispatch_id=result.order_id or signal.get("id", ""),
+                status=entry_status,
             )
             if recorded is None:
                 logger.critical(

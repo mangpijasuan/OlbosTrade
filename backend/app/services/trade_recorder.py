@@ -55,9 +55,20 @@ class TradeRecorder:
         dispatch_id:           str,
         net_fill_price:        Optional[float] = None,
         spread_width:          Optional[float] = None,
+        status:                str = "open",
     ) -> Optional[str]:
         """
         Write Trade + JournalEntry to DB in one transaction.
+
+        ``status`` is the entry state to persist:
+          - ``"open"``    — the broker confirmed a fill; this is a live position.
+          - ``"pending"`` — the order was accepted but is still working (no fill
+                            yet). A pending row is NOT a live position and NOT a
+                            closed trade — the fill reconciler (_poll_fills)
+                            promotes it to ``open`` once the broker reports a fill,
+                            or cancels it if the order terminates unfilled. This
+                            prevents unfilled/ProgramCancelled limit orders from
+                            ever becoming phantom positions or fabricated P&L.
 
         Returns the trade_id string on success, None on failure.
 
@@ -103,7 +114,7 @@ class TradeRecorder:
                         cost_to_close=None,
                         pnl=None,
                         pnl_pct=None,
-                        status="open",
+                        status=status,
                         entry_date=datetime.now(timezone.utc),
                         exit_date=None,
                         exit_reason=None,
@@ -128,9 +139,9 @@ class TradeRecorder:
                     session.add(journal)
 
             logger.info(
-                "Trade recorded: %s %s %s strike=%.0f/%.0f "
+                "Trade recorded (%s): %s %s %s strike=%.0f/%.0f "
                 "credit=%.2f mode=%s score=%.3f dispatch_id=%s trade_id=%s",
-                strategy, underlying, option_type,
+                status, strategy, underlying, option_type,
                 short_strike, long_strike,
                 entry_credit, trading_mode, signal_score, dispatch_id, trade_id,
             )
@@ -145,6 +156,67 @@ class TradeRecorder:
                 dispatch_id, exc, exc_info=True,
             )
             return None
+
+    async def confirm_fill(self, *, trade_id: str,
+                           net_fill_price: Optional[float] = None) -> bool:
+        """
+        Promote a ``pending`` trade to ``open`` once the broker confirms a fill.
+
+        Called by the fill reconciler when a pending order's position appears at
+        the broker (or an execution fill is found). Optionally corrects the
+        recorded entry credit to the real net fill price. Returns True on
+        success, False if the trade is missing or not pending.
+        """
+        try:
+            from sqlalchemy import select
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    trade = (await session.execute(
+                        select(Trade).where(Trade.id == trade_id)
+                    )).scalar_one_or_none()
+                    if trade is None or trade.status != "pending":
+                        return False
+                    trade.status = "open"
+                    if net_fill_price is not None:
+                        trade.credit_received = Decimal(str(round(net_fill_price, 4)))
+            logger.info("Pending trade %s confirmed filled → open (fill=%s)",
+                        trade_id, net_fill_price)
+            return True
+        except Exception as exc:
+            logger.warning("confirm_fill failed for %s: %s", trade_id, exc)
+            return False
+
+    async def cancel_pending(self, *, trade_id: str, reason: str) -> bool:
+        """
+        Mark a ``pending`` trade as ``cancelled`` when its order terminated
+        unfilled (DAY order expired, ProgramCancel, rejection). This is what
+        stops an unfilled limit order from ever becoming a phantom position or
+        a fabricated round-trip. Returns True on success.
+        """
+        try:
+            from datetime import timezone as _tz
+            from sqlalchemy import select
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    trade = (await session.execute(
+                        select(Trade).where(Trade.id == trade_id)
+                    )).scalar_one_or_none()
+                    if trade is None or trade.status != "pending":
+                        return False
+                    trade.status = "cancelled"
+                    trade.exit_reason = reason
+                    trade.exit_date = datetime.now(_tz.utc)
+            logger.info("Pending trade %s cancelled (%s)", trade_id, reason)
+            return True
+        except Exception as exc:
+            logger.warning("cancel_pending failed for %s: %s", trade_id, exc)
+            return False
 
     async def record_exit(
         self,

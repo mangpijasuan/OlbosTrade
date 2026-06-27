@@ -101,6 +101,14 @@ _signal_scorer: Optional[object] = None    # SignalScorer (lazy — loads model 
 _close_pending: dict[str, datetime] = {}
 CLOSE_GRACE_SECONDS = 300   # wait up to 5 min for a real exit price, then book unknown
 
+# Entry-side reconciliation: when a `pending` trade's order is still working we
+# wait this long for it to fill. After the window, an order with no broker
+# position and no fill execution is treated as terminated-unfilled and the
+# pending trade is cancelled (so unfilled/ProgramCancelled limit orders never
+# become phantom positions). Generous because DAY limit orders can sit unfilled.
+_fill_pending: dict[str, datetime] = {}
+FILL_GRACE_SECONDS = 1800   # 30 min for a working order to fill before cancelling
+
 # Heartbeat: monotonic timestamp of the last background-scheduler loop, used by the
 # Executive Summary's "Trading Agent — Running" health check.
 _scheduler_last_tick: float = 0.0
@@ -918,15 +926,19 @@ async def _poll_fills() -> None:
             for p in live_positions
         }
 
-        # Load all open trades from DB
+        # Load all open + pending trades from DB
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Trade).where(Trade.status == "open")
+                select(Trade).where(Trade.status.in_(["open", "pending"]))
             )
-            open_trades = result.scalars().all()
+            all_trades = result.scalars().all()
 
-        if not open_trades:
+        open_trades    = [t for t in all_trades if t.status == "open"]
+        pending_trades = [t for t in all_trades if t.status == "pending"]
+
+        if not open_trades and not pending_trades:
             _close_pending.clear()
+            _fill_pending.clear()
             return
 
         # Fetch recent IBKR executions once — detailed per-fill records so we can
@@ -959,6 +971,34 @@ async def _poll_fills() -> None:
             logger.debug("Could not fetch IBKR executions: %s", _exec_exc)
 
         now = datetime.now(timezone.utc)
+
+        # ── Entry-side reconciliation: resolve pending (working) orders ─────────
+        # A pending trade is promoted to `open` once its position shows at the
+        # broker (or a fill execution is found). If, after the grace window, there
+        # is still no position and no fill, the order terminated unfilled (DAY
+        # expiry / ProgramCancel) → cancel it so it never becomes a phantom.
+        for trade in pending_trades:
+            underlying = (trade.underlying or "").upper()
+            tid = str(trade.id)
+            if not underlying:
+                continue
+            filled = underlying in live_symbols or bool(fills_by_symbol.get(underlying))
+            if filled:
+                await trade_recorder.confirm_fill(trade_id=tid)
+                _fill_pending.pop(tid, None)
+                continue
+            first_seen = _fill_pending.setdefault(tid, now)
+            if (now - first_seen).total_seconds() >= FILL_GRACE_SECONDS:
+                await trade_recorder.cancel_pending(
+                    trade_id=tid, reason="order_unfilled_timeout",
+                )
+                _fill_pending.pop(tid, None)
+        # Drop fill markers for trades no longer pending
+        _pending_ids = {str(t.id) for t in pending_trades}
+        for tid in list(_fill_pending.keys()):
+            if tid not in _pending_ids:
+                _fill_pending.pop(tid, None)
+
         still_missing: set[str] = set()
 
         for trade in open_trades:

@@ -140,3 +140,83 @@ async def test_record_close_unknown_handles_exception():
     with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("boom")):
         ok = await rec.record_close_unknown(trade_id=str(uuid.uuid4()), exit_reason="x")
     assert ok is False
+
+
+# ── pending entry status + reconciliation (confirm_fill / cancel_pending) ──────
+@pytest.mark.asyncio
+async def test_record_fill_pending_status_persisted():
+    """A working (unfilled) order is recorded as pending, not open."""
+    session = _session(trade=None)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        tid = await rec.record_fill(
+            strategy="bull_put_spread", underlying="QQQ", option_type="put",
+            short_strike=400, long_strike=395, expiration=date(2025, 6, 20),
+            entry_credit=2.98, quantity=4, signal_score=0.8, iv_rank=40,
+            regime="neutral", trading_mode="balanced", dispatch_id="D-P1",
+            status="pending",
+        )
+    assert tid
+    trade_arg = session.add.call_args_list[0].args[0]   # first add() = Trade row
+    assert trade_arg.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_promotes_pending_to_open():
+    t = _Trade(status="pending", credit_received=Decimal("2.98"))
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()))
+    assert ok is True and t.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_overwrites_credit_with_real_fill():
+    t = _Trade(status="pending", credit_received=Decimal("2.98"))
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()), net_fill_price=3.10)
+    assert ok and t.status == "open" and float(t.credit_received) == 3.10
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_ignores_non_pending():
+    t = _Trade(status="open")
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()))
+    assert ok is False and t.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_not_found_returns_false():
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=None)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()))
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_marks_cancelled():
+    t = _Trade(status="pending")
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.cancel_pending(trade_id=str(uuid.uuid4()), reason="order_unfilled_timeout")
+    assert ok and t.status == "cancelled" and t.exit_reason == "order_unfilled_timeout"
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_ignores_non_pending():
+    t = _Trade(status="open")
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.cancel_pending(trade_id=str(uuid.uuid4()), reason="x")
+    assert ok is False and t.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_handles_exception():
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("boom")):
+        ok = await rec.cancel_pending(trade_id=str(uuid.uuid4()), reason="x")
+    assert ok is False
