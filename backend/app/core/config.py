@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     # Maximum number of cancel-and-retry attempts per order.
     max_order_retries: int = Field(default=2)
 
+    # ── Execution test mode (PAPER validation) ────────────────────────────
+    # When True, the quality/frequency guards are bypassed so the system will
+    # actually place trades — used to verify the execution→recording→UI pipeline
+    # end-to-end. The HARD safety rails still apply (kill switch, account/paper
+    # guard, market hours, margin-critical, sizing, duplicate guard). NEVER leave
+    # this on for a real run — it disables the profitability filters.
+    execution_test_mode: bool = Field(default=False)
+
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)
     signal_score_preservation_mode: float = Field(default=0.80)
