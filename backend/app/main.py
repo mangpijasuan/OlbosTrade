@@ -190,6 +190,12 @@ async def on_startup() -> None:
         await _run_equity_scan()
     asyncio.create_task(_startup_market_init())
 
+    if settings.execution_test_mode:
+        logger.warning(
+            "⚠ EXECUTION_TEST_MODE is ON — quality/frequency guards bypassed; the "
+            "system will trade freely (PAPER validation). Disable for real runs."
+        )
+
     # 4. Start background scheduler
     asyncio.create_task(_background_scheduler())
 
@@ -425,8 +431,15 @@ async def _run_equity_scan() -> None:
                 orderflow = await get_orderflow_score(ticker, broker)
                 action, confidence, reasons = score_equity_signal(ind, orderflow_score=orderflow)
 
+                # Test mode routes any BUY/SELL regardless of confidence so the
+                # pipeline actually trades for validation.
+                routable_signal = action in ("BUY", "SELL") and (
+                    settings.execution_test_mode
+                    or confidence >= settings.effective_equity_min_confidence
+                )
+
                 trade_plan = {}
-                if action in ("BUY", "SELL") and confidence >= settings.effective_equity_min_confidence:
+                if routable_signal:
                     trade_plan = compute_equity_trade_plan(
                         ind, action, portfolio_value=settings.starting_capital,
                     )
@@ -456,7 +469,7 @@ async def _run_equity_scan() -> None:
 
                 # Collect actionable signals; rank + route after the loop so the
                 # highest-quality opportunities reach the frequency controller first.
-                if action in ("BUY", "SELL") and confidence >= settings.effective_equity_min_confidence:
+                if routable_signal:
                     routable.append(signal)
 
             except Exception as exc:
@@ -747,12 +760,17 @@ async def _run_options_scan() -> None:
         )
         score_result = await _signal_scorer.score_async(features)
         signal_score = float(score_result.score)
-        if not score_result.approved:
+        if not score_result.approved and not settings.execution_test_mode:
             logger.info(
                 "Options signal rejected by AI scorer: SPY %s score=%.3f — %s",
                 strategy, signal_score, score_result.rejection_reason,
             )
             return
+        if not score_result.approved:
+            logger.warning(
+                "EXECUTION_TEST_MODE: routing options signal SPY %s despite AI score=%.3f",
+                strategy, signal_score,
+            )
 
         # ── Position sizing via RiskManager ─────────────────────────────────
         # Previously every spread was quantity=1. Size off portfolio value, the
@@ -1328,9 +1346,11 @@ async def dashboard_summary():
         {"name": "Kill Switch",
          "status": "error" if ks_engaged else "ok",
          "detail": "ENGAGED — trading halted" if ks_engaged else "Disarmed"},
-        {"name": "Config", "status": "ok",
-         "detail": f"Mode {exec_mode} · market-hours gate {'on' if gate_on else 'off'} "
-                   f"· RoR threshold {settings.signal_score_threshold}"},
+        {"name": "Config",
+         "status": "warn" if settings.execution_test_mode else "ok",
+         "detail": (("⚠ TEST MODE (guards bypassed) · " if settings.execution_test_mode else "")
+                    + f"Mode {exec_mode} · market-hours gate {'on' if gate_on else 'off'} "
+                    + f"· RoR threshold {settings.signal_score_threshold}")},
     ]
     issues = sum(1 for h in health if h["status"] != "ok")
 

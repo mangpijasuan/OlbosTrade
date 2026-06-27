@@ -365,7 +365,8 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # score, and a positive-EV quality filter. Reuses the portfolio-state read.
     # Manual trades bypass it — the user is overriding signal generation on purpose
     # (they still face the kill switch, market hours, guardrails, and sizing).
-    if approved_by != "manual":
+    from app.core.config import settings as _tm_cfg
+    if approved_by != "manual" and not getattr(_tm_cfg, "execution_test_mode", False):
         from app.services.trade_frequency_controller import trade_frequency_controller
         freq = trade_frequency_controller.evaluate(
             signal, trades_today=portfolio_state.trades_today,

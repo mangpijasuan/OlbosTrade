@@ -228,6 +228,13 @@ class TradeFrequencyController:
         ev = expected_value(signal)
         conf = _confidence(signal)
 
+        # PAPER validation: bypass the quality/frequency filters so the pipeline
+        # actually trades. Hard safety rails (kill switch, paper guard, market
+        # hours, margin, sizing) still apply downstream in handle_signal.
+        from app.core.config import settings as _cfg
+        if getattr(_cfg, "execution_test_mode", False):
+            return GateDecision(True, "execution_test_mode", ws, rs, ev)
+
         # 1. Hard daily cap — never exceeded (profitability before activity).
         if trades_today >= rule.hard_max_per_day:
             return GateDecision(False,

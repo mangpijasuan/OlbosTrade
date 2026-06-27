@@ -252,3 +252,15 @@ def test_strategy_min_pop_map_covers_credit_spreads():
     assert STRATEGY_MIN_POP["bull_put_spread"] == 0.70
     assert STRATEGY_MIN_POP["bear_call_spread"] == 0.70
     assert STRATEGY_MIN_POP["iron_condor"] == 0.70
+
+
+def test_execution_test_mode_bypasses_all_gates(monkeypatch):
+    """With execution_test_mode on, even a junk low-confidence signal is allowed."""
+    import app.core.config as cfg
+    ctrl = TradeFrequencyController()
+    junk = _equity(0.01)   # far below any mode's min_confidence
+    # Normally blocked in Conservative (min_confidence 0.90)
+    assert ctrl.evaluate(junk, trades_today=0, mode=C).allowed is False
+    monkeypatch.setattr(cfg.settings, "execution_test_mode", True)
+    d = ctrl.evaluate(junk, trades_today=999, mode=C)   # also over daily cap
+    assert d.allowed is True and d.reason == "execution_test_mode"
