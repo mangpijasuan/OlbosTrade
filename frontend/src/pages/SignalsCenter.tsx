@@ -5,11 +5,14 @@
  */
 import React, { useState } from "react";
 import TabBar from "../components/TabBar";
+import ErrorBoundary from "../components/ErrorBoundary";
 import EquitySignals from "./EquitySignals";
 import Strategy from "./Strategy";
+import OptionsFlow from "./OptionsFlow";
 
 const TABS = [
   { key: "signals", label: "Live Signals" },
+  { key: "flow", label: "Options Flow" },
   { key: "strategies", label: "Strategies" },
 ];
 
@@ -18,7 +21,11 @@ export default function SignalsCenter() {
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} />
-      {tab === "signals" ? <EquitySignals /> : <Strategy />}
+      <ErrorBoundary label="Signals">
+        {tab === "signals" ? <EquitySignals />
+          : tab === "flow" ? <OptionsFlow />
+          : <Strategy />}
+      </ErrorBoundary>
     </div>
   );
 }
