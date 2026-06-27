@@ -36,6 +36,7 @@ export default function ResearchLab() {
   const [hypothesis, setHypothesis] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   // AI Research Assistant
   const [question, setQuestion] = useState("");
@@ -53,8 +54,10 @@ export default function ResearchLab() {
   };
 
   const load = async () => {
+    setLoadErr(null);
     const r = await fetch("/api/research/lab/experiments").then(r => r.json()).catch(() => null);
     if (r?.experiments) setExps(r.experiments);
+    else setLoadErr("Could not load experiments — check the connection and retry.");
   };
   useEffect(() => { load(); }, []);
 
@@ -66,7 +69,8 @@ export default function ResearchLab() {
       body: JSON.stringify({ name, strategy, hypothesis }),
     }).then(r => r.json()).catch(() => null);
     setBusy(false);
-    if (r?.error) { setMsg(r.error); return; }
+    if (!r) { setMsg("Request failed — the server didn't respond. Try again."); return; }
+    if (r.error) { setMsg(r.error); return; }
     setName(""); setHypothesis(""); load();
   };
 
@@ -86,7 +90,11 @@ export default function ResearchLab() {
       body: JSON.stringify(body),
     }).then(r => r.json()).catch(() => null);
     setBusy(false);
-    if (r && r.ok === false) setMsg(`${e.name}: ${r.reason}`);
+    // Surface every failure mode rather than hanging silently: network error,
+    // an error payload, or a gate rejection (ok === false).
+    if (!r) { setMsg(`${e.name}: request failed — the server didn't respond.`); return; }
+    if (r.error) { setMsg(`${e.name}: ${r.error}`); return; }
+    if (r.ok === false) { setMsg(`${e.name}: ${r.reason || "transition rejected by gate"}`); }
     load();
   };
 
@@ -153,6 +161,17 @@ export default function ResearchLab() {
       </div>
 
       {/* Experiments */}
+      {loadErr && (
+        <div className="mono" style={{ fontSize: 11, color: "var(--red)", marginBottom: 12,
+          padding: "8px 12px", border: "1px solid var(--red)", background: "rgba(239,68,68,0.06)" }}>
+          ⚠ {loadErr}{" "}
+          <button onClick={load} className="mono"
+            style={{ marginLeft: 8, background: "none", border: "1px solid var(--red)",
+              color: "var(--red)", cursor: "pointer", padding: "1px 8px", fontSize: 10 }}>
+            Retry
+          </button>
+        </div>
+      )}
       {exps.length === 0
         ? <div className="mono" style={{ color: "var(--ink-faint)", fontSize: 12 }}>No experiments yet.</div>
         : exps.map(e => (

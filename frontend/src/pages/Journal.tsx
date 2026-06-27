@@ -31,7 +31,7 @@ interface EditState {
 }
 
 const fmt = (n: number | null) =>
-  n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(0);
+  n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 const holdDays = (entry: string | null, exit: string | null) => {
   if (!entry) return null;

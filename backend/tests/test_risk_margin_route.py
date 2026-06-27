@@ -76,3 +76,29 @@ async def test_reconciliation_route_reports_status():
         res = await get_reconciliation()
     assert res["clean"] is False and res["untracked_at_broker"] == ["SPY"]
     assert res["broker_position_count"] == 1 and "checked_at" in res
+
+
+# ── /api/risk/kill-switch/engage (operator-facing) ─────────────────────────────
+@pytest.mark.asyncio
+async def test_engage_ui_engages_when_idle():
+    from app.api.routes import risk as risk_mod
+    ks = MagicMock()
+    ks.is_engaged = False
+    ks.engage = AsyncMock(return_value={"errors": []})
+    with patch.object(risk_mod, "kill_switch_service", ks):
+        res = await risk_mod.engage_kill_switch_ui()
+    assert res["status"] == "engaged"
+    ks.engage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_engage_ui_idempotent_when_already_engaged():
+    from app.api.routes import risk as risk_mod
+    ks = MagicMock()
+    ks.is_engaged = True
+    ks.status = {"engaged": True}
+    ks.engage = AsyncMock()
+    with patch.object(risk_mod, "kill_switch_service", ks):
+        res = await risk_mod.engage_kill_switch_ui()
+    assert res["status"] == "already_engaged"
+    ks.engage.assert_not_awaited()

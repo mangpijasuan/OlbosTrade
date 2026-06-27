@@ -45,6 +45,13 @@ export const api = {
   getDailyPnl: () => request("/api/risk/daily-pnl"),
   getKillSwitchStatus: () => request("/api/risk/kill-switch/status"),
   triggerKillSwitch: () => request("/api/risk/kill-switch/trigger", { method: "POST" }),
+  // Operator-facing engage (dashboard button) — protected by the app auth layer.
+  engageKillSwitch: () => request("/api/risk/kill-switch/engage", { method: "POST" }),
+  resetKillSwitch: (code: string) =>
+    request("/api/risk/kill-switch/reset", {
+      method: "POST",
+      body: JSON.stringify({ authorization_code: code }),
+    }),
 
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),

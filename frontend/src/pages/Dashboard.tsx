@@ -161,7 +161,7 @@ function PositionRow({ pos }: { pos: any }) {
       <td className="mono">{pos.expiration || pos.entry_date || "—"}</td>
       <td className="mono">{pos.quantity ?? 1}</td>
       <td className="mono" style={{ color: !pnlKnown ? "var(--ink-faint)" : pnl >= 0 ? "var(--green)" : "var(--red)" }}>
-        {pnlKnown ? `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(0)}` : "—"}
+        {pnlKnown ? `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—"}
       </td>
       <td>
         <span style={{
@@ -315,18 +315,18 @@ export default function Dashboard() {
         />
         <StatCell
           label="Day P&L"
-          value={`${daily >= 0 ? "+" : ""}$${Math.abs(daily).toFixed(0)}`}
+          value={`${daily >= 0 ? "+" : ""}$${Math.abs(daily).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
           sub={portfolio?.win_rate != null ? `Win rate: ${(portfolio.win_rate * 100).toFixed(1)}%` : undefined}
           color={daily >= 0 ? "var(--green)" : "var(--red)"}
         />
         <StatCell
           label="Week P&L"
-          value={`${weekly >= 0 ? "+" : ""}$${Math.abs(weekly).toFixed(0)}`}
+          value={`${weekly >= 0 ? "+" : ""}$${Math.abs(weekly).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
           color={weekly >= 0 ? "var(--green)" : "var(--red)"}
         />
         <StatCell
           label="Month P&L"
-          value={`${monthly >= 0 ? "+" : ""}$${Math.abs(monthly).toFixed(0)}`}
+          value={`${monthly >= 0 ? "+" : ""}$${Math.abs(monthly).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
           color={monthly >= 0 ? "var(--green)" : "var(--red)"}
         />
         <StatCell label="Buying Power"     value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
