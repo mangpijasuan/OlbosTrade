@@ -281,3 +281,34 @@ async def get_var(confidence: float = 0.95, horizon_days: int = 1):
 
     return portfolio_var(net_delta, net_vega, spot, vol, pv,
                          confidence=confidence, horizon_days=horizon_days)
+
+
+@router.get("/margin")
+async def get_margin():
+    """
+    Margin utilization / buying-power-reduction status from broker figures.
+
+    Returns the margin monitor's status (ok/warn/critical) plus the raw figures.
+    `available: false` when the broker doesn't report margin (e.g. disconnected).
+    """
+    from app.services.margin_monitor import evaluate_margin
+
+    try:
+        from app.broker.broker_factory import get_broker
+        acct = await get_broker().get_account_summary()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+    if acct.maintenance_margin is None:
+        return {"available": False, "reason": "broker did not report margin figures"}
+
+    status = evaluate_margin(
+        net_liquidation=float(acct.net_liquidation or 0),
+        maintenance_margin=float(acct.maintenance_margin or 0),
+        excess_liquidity=float(acct.excess_liquidity or 0),
+        buying_power=float(acct.buying_power or 0),
+        init_margin=float(acct.init_margin or 0),
+        warn_pct=settings.margin_warn_pct,
+        critical_pct=settings.margin_critical_pct,
+    )
+    return {"available": True, **status.to_dict()}

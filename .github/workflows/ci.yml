@@ -32,7 +32,9 @@ jobs:
           tests/test_allocation_engine.py tests/test_scenario_engine.py
           tests/test_portfolio_risk_sim.py tests/test_journal_intelligence.py
           tests/test_llm_provider.py tests/test_account_guard.py
+          tests/test_margin_monitor.py
           --cov=app.services.account_guard
+          --cov=app.services.margin_monitor
           --cov=app.services.trade_frequency_controller
           --cov=app.services.meta_strategy
           --cov=app.services.allocation_engine

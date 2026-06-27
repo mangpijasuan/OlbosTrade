@@ -822,10 +822,20 @@ class IBKRClient(BrokerInterface):
             if v.currency in ("USD", "BASE", ""):
                 values[v.tag] = v.value
 
+        def _dec(*tags: str) -> Decimal | None:
+            for t in tags:
+                v = values.get(t)
+                if v not in (None, ""):
+                    return Decimal(v)
+            return None
+
         return AccountSummary(
             account_id=account_id,
             net_liquidation=Decimal(values.get("NetLiquidation", "0") or "0"),
             cash_balance=Decimal(values.get("TotalCashValue", "0") or "0"),
             buying_power=Decimal(values.get("BuyingPower", values.get("OptionBuyingPower", "0")) or "0"),
             trading_mode="paper" if settings.ibkr_port in (7497, 4002) else "live",
+            maintenance_margin=_dec("MaintMarginReq", "FullMaintMarginReq"),
+            excess_liquidity=_dec("ExcessLiquidity", "FullExcessLiquidity"),
+            init_margin=_dec("InitMarginReq", "FullInitMarginReq"),
         )

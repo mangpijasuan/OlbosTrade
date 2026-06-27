@@ -442,6 +442,29 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             logger.critical("Order blocked for %s — account guard: %s", ticker, _detail)
             return _blocked(f"account_guard: {_detail}")
 
+        # ── Margin guard — block new entries when margin is critical ────────────
+        # Fail-OPEN: margin figures are advisory and may be absent (paper); we only
+        # block on a positively-detected critical state, never on missing data.
+        try:
+            from app.services.margin_monitor import evaluate_margin
+            from app.core.config import settings as _mg_cfg
+            _acct = await broker.get_account_summary()
+            if _acct.maintenance_margin is not None:
+                _m = evaluate_margin(
+                    net_liquidation=float(_acct.net_liquidation or 0),
+                    maintenance_margin=float(_acct.maintenance_margin or 0),
+                    excess_liquidity=float(_acct.excess_liquidity or 0),
+                    buying_power=float(_acct.buying_power or 0),
+                    init_margin=float(_acct.init_margin or 0),
+                    warn_pct=_mg_cfg.margin_warn_pct,
+                    critical_pct=_mg_cfg.margin_critical_pct,
+                )
+                if _m.status == "critical":
+                    logger.warning("Order blocked for %s — margin: %s", ticker, _m.detail)
+                    return _blocked(f"margin_critical: {_m.detail}")
+        except Exception as _mg_exc:
+            logger.debug("Margin guard skipped for %s: %s", ticker, _mg_exc)
+
         if asset_type == "equity":
             trade_plan = signal.get("trade_plan", {})
             shares     = trade_plan.get("shares", 1)
