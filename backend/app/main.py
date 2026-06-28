@@ -34,15 +34,30 @@ async def _yf_bars(ticker: str, limit: int = 60) -> list:
             return []
         hist = hist.tail(limit)
         bars = []
+        import math as _math
         for ts, row in hist.iterrows():
-            bars.append(Bar(
-                timestamp=ts.to_pydatetime(),
-                open=Decimal(str(round(float(row["Open"]), 4))),
-                high=Decimal(str(round(float(row["High"]), 4))),
-                low=Decimal(str(round(float(row["Low"]), 4))),
-                close=Decimal(str(round(float(row["Close"]), 4))),
-                volume=int(row.get("Volume", 0) or 0),
-            ))
+            # Skip rows with missing/invalid OHLC. yfinance often returns the
+            # current in-progress (or after-hours/weekend) bar with NaN prices;
+            # building a Bar from it raised 4 validation errors and — unhandled —
+            # killed the entire scan. Skip bad rows so the scan stays resilient.
+            try:
+                o = float(row["Open"]); h = float(row["High"])
+                lo = float(row["Low"]); c = float(row["Close"])
+            except (TypeError, ValueError):
+                continue
+            if any(_math.isnan(x) or x <= 0 for x in (o, h, lo, c)):
+                continue
+            try:
+                bars.append(Bar(
+                    timestamp=ts.to_pydatetime(),
+                    open=Decimal(str(round(o, 4))),
+                    high=Decimal(str(round(h, 4))),
+                    low=Decimal(str(round(lo, 4))),
+                    close=Decimal(str(round(c, 4))),
+                    volume=int(row.get("Volume", 0) or 0),
+                ))
+            except Exception:
+                continue
         return bars
 
     return await loop.run_in_executor(None, _fetch)
