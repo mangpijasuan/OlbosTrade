@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import TradingModeSelector from "../components/TradingModeSelector";
 
 const STRATEGIES = [
   { key: "bull_put_spread",       label: "Bull Put Spread",     type: "CREDIT", bias: "BULLISH", max_profit: "Net credit",   max_loss: "Width − credit",  legs: 2 },
@@ -46,25 +45,16 @@ export default function Strategy() {
         ))}
       </div>
 
-      {/* Detail */}
-      <div style={{ overflowY: "auto", padding: 20 }}>
+      {/* Detail — Strategy Details promoted to the top; fills the freed space */}
+      <div style={{ overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 20 }}>
 
-        {/* Trading Mode Selector — controls DTE, sizing, signal threshold */}
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ padding: "9px 0", marginBottom: 12, borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span className="panel-title">Trading Mode</span>
-            <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>
-              AFFECTS DTE · SIZING · SIGNAL THRESHOLD · ALLOWED STRATEGIES
-            </span>
-          </div>
-          <TradingModeSelector />
-        </div>
-        <div style={{ marginBottom: 20 }}>
+        {/* Strategy Details (now the primary block at the top) */}
+        <div>
           <div className="kicker" style={{ marginBottom: 8 }}>Strategy Details</div>
-          <h2 style={{ fontFamily: "var(--mono)", fontSize: 22, fontWeight: 600, color: "var(--cyan)", marginBottom: 4 }}>
+          <h2 style={{ fontFamily: "var(--mono)", fontSize: 24, fontWeight: 600, color: "var(--cyan)", marginBottom: 6 }}>
             {strat.label}
           </h2>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {[strat.type, strat.bias, `${strat.legs} LEGS`].map(tag => (
               <span key={tag} style={{
                 fontFamily: "var(--mono)", fontSize: 10, padding: "2px 8px",
@@ -74,22 +64,24 @@ export default function Strategy() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 1, border: "1px solid var(--line-dim)", marginBottom: 20 }}>
+        {/* Key metrics — responsive grid (wraps cleanly, no fixed columns) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 1, border: "1px solid var(--line-dim)" }}>
           {[
             { label: "Max Profit", val: strat.max_profit, color: "var(--green)" },
             { label: "Max Loss",   val: strat.max_loss,   color: "var(--red)" },
             { label: "Bias",       val: strat.bias,        color: "var(--amber)" },
           ].map(m => (
-            <div key={m.label} style={{ padding: "16px 18px", background: "var(--bg-2)", borderRight: "1px solid var(--line-dim)" }}>
+            <div key={m.label} style={{ padding: "18px 20px", background: "var(--bg-2)" }}>
               <div className="kicker" style={{ marginBottom: 6 }}>{m.label}</div>
               <div className="data-val sm" style={{ color: m.color }}>{m.val}</div>
             </div>
           ))}
         </div>
 
-        <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16 }}>
+        {/* Current Signals — grows to fill the reclaimed vertical space */}
+        <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16, flex: 1, display: "flex", flexDirection: "column", minHeight: 200 }}>
           <div className="panel-title" style={{ marginBottom: 12 }}>Current Signals</div>
-          <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)", padding: 24, textAlign: "center" }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
             NO SIGNALS — WAITING FOR 09:35 ET
           </div>
         </div>
