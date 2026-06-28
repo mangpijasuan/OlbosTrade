@@ -33,11 +33,12 @@ jobs:
           tests/test_portfolio_risk_sim.py tests/test_journal_intelligence.py
           tests/test_llm_provider.py tests/test_account_guard.py
           tests/test_margin_monitor.py tests/test_unusual_activity.py
-          tests/test_income_screener.py
+          tests/test_income_screener.py tests/test_flow_recommender.py
           --cov=app.services.account_guard
           --cov=app.services.margin_monitor
           --cov=app.services.unusual_activity
           --cov=app.services.income_screener
+          --cov=app.services.flow_recommender
           --cov=app.services.trade_frequency_controller
           --cov=app.services.meta_strategy
           --cov=app.services.allocation_engine
