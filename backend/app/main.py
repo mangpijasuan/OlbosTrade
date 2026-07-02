@@ -217,6 +217,27 @@ async def on_startup() -> None:
     asyncio.create_task(_background_scheduler())
 
 
+async def _guarded(coro, name: str, timeout: float) -> None:
+    """
+    Run a scheduler sub-task with a hard timeout. A hung broker/IO call (e.g. an
+    IBKR request that never returns) must never freeze the whole scheduler — that
+    stops the heartbeat and the Trading Agent shows "Not ticking". On timeout or
+    error we log and move on; the loop keeps ticking.
+    """
+    global _scheduler_last_tick
+    import time as _t
+    try:
+        await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error("Scheduler task '%s' timed out after %.0fs — skipped", name, timeout)
+    except Exception as exc:
+        logger.error("Scheduler task '%s' failed: %s", name, exc)
+    finally:
+        # Refresh the heartbeat after each sub-task so a legitimately slow scan
+        # can't make the agent look stalled.
+        _scheduler_last_tick = _t.monotonic()
+
+
 async def _background_scheduler() -> None:
     """Background task that runs periodic scans and updates."""
     global _current_regime, _scheduler_last_tick
@@ -260,7 +281,7 @@ async def _background_scheduler() -> None:
                         is_connected = is_connected and _broker.ib.isConnected()
                     if not is_connected and hasattr(_broker, "connect"):
                         logger.warning("Broker disconnected — attempting reconnect")
-                        await _broker.connect()
+                        await asyncio.wait_for(_broker.connect(), timeout=30)
                         logger.info("Broker reconnected successfully")
                 except Exception as _rc_exc:
                     logger.warning("Broker reconnect failed: %s", _rc_exc)
@@ -268,7 +289,7 @@ async def _background_scheduler() -> None:
 
             # Every 30 min: regime reclassify
             if now - last_regime >= regime_interval_s:
-                await _reclassify_regime()
+                await _guarded(_reclassify_regime(), "regime", 45)
                 last_regime = now
 
             # Every 15 min: equity signal scan.
@@ -281,7 +302,7 @@ async def _background_scheduler() -> None:
                     and not getattr(_current_regime, "equity_allowed", True)
                 )
                 if not regime_blocks_equity:
-                    await _run_equity_scan()
+                    await _guarded(_run_equity_scan(), "equity_scan", 90)
                 else:
                     logger.info(
                         "Equity scan skipped — regime %s does not allow equities",
@@ -291,17 +312,17 @@ async def _background_scheduler() -> None:
 
             # Every 1 hour: options spread signal scan (if regime allows)
             if now - last_options >= options_interval_s:
-                await _run_options_scan()
+                await _guarded(_run_options_scan(), "options_scan", 90)
                 last_options = now
 
             # Every 30 sec: poll fills from active broker
             if now - last_fills >= fills_interval_s:
-                await _poll_fills()
+                await _guarded(_poll_fills(), "poll_fills", 20)
                 last_fills = now
 
             # Every 1 min: update portfolio Greeks
             if now - last_greeks >= greeks_interval_s:
-                await _update_portfolio_greeks()
+                await _guarded(_update_portfolio_greeks(), "greeks", 30)
                 last_greeks = now
 
         except Exception as exc:
