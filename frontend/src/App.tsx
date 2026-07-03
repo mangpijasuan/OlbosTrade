@@ -1,34 +1,30 @@
 import React, { useState } from "react";
 import "./index.css";
 import TerminalLayout  from "./components/TerminalLayout";
+import ChartWorkstation from "./pages/ChartWorkstation";
 import Dashboard       from "./pages/Dashboard";
-import Backtest        from "./pages/Backtest";
 import TradeDesk       from "./pages/TradeDesk";
 import RiskMonitor     from "./pages/RiskMonitor";
-import Guardrails      from "./pages/Guardrails";
 import Strategy        from "./pages/Strategy";
 import Journal         from "./pages/Journal";
 import Research        from "./pages/Research";
-import ModeAnalytics   from "./pages/ModeAnalytics";
-import EquitySignals   from "./pages/EquitySignals";
-import OptionsFlow     from "./pages/OptionsFlow";
+import Signals         from "./pages/Signals";
+import Settings        from "./pages/Settings";
 
 const PAGES: Record<string, React.ComponentType> = {
+  chart:      ChartWorkstation,
   dashboard:  Dashboard,
-  equity:     EquitySignals,
-  backtest:   Backtest,
+  signals:    Signals,
   paper:      TradeDesk,
   risk:       RiskMonitor,
-  guardrails: Guardrails,
   strategy:   Strategy,
   journal:    Journal,
   research:   Research,
-  analytics:  ModeAnalytics,
-  flow:       OptionsFlow,
+  settings:   Settings,
 };
 
 export default function App() {
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState("chart");
   const Page = PAGES[page] || Dashboard;
 
   return (

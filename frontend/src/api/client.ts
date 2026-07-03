@@ -24,11 +24,13 @@ export const api = {
   // ── Backtest ──────────────────────────────────────────────────────────────
   runBacktest: (body: object) => request("/api/backtest/run", { method: "POST", body: JSON.stringify(body) }),
   getBacktestResults: (id: string) => request(`/api/backtest/${id}/results`),
-  getBacktestHistory: () => request("/api/backtest/history"),
+  getBacktestHistory: (limit?: number) =>
+    request(`/api/backtest/history${limit ? `?limit=${limit}` : ""}`),
   compareStrategies: (body: object) => request("/api/backtest/compare", { method: "POST", body: JSON.stringify(body) }),
 
   // ── Market Data ───────────────────────────────────────────────────────────
   getSnapshot: (symbol: string) => request(`/api/market/snapshot/${symbol}`),
+  getRegime: () => request("/api/market/regime"),
   getOptionsChain: (symbol: string, expiry: string) => request(`/api/market/options-chain/${symbol}?expiry=${expiry}`),
   getIVRank: (symbol: string) => request(`/api/market/iv-rank/${symbol}`),
 
@@ -36,15 +38,29 @@ export const api = {
   getPositions: () => request("/api/paper-trade/positions"),
   getPortfolio: () => request("/api/paper-trade/portfolio"),
   toggleStrategy: (strategy: string) => request(`/api/paper-trade/toggle/${strategy}`, { method: "POST" }),
-  getTradeHistory: () => request("/api/paper-trade/history"),
+  getTradeHistory: (params?: { limit?: number; status?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.status) q.set("status", params.status);
+    const qs = q.toString();
+    return request(`/api/paper-trade/history${qs ? `?${qs}` : ""}`);
+  },
   getGreeksSummary: () => request("/api/paper-trade/greeks-summary"),
 
   // ── Risk ──────────────────────────────────────────────────────────────────
   getPortfolioState: () => request("/api/risk/portfolio-state"),
   getTradeApproval: (tradeId: string) => request(`/api/risk/approval/${tradeId}`),
   getDailyPnl: () => request("/api/risk/daily-pnl"),
+  getLatestReconciliation: () => request("/api/risk/reconciliation/latest"),
+  getReconciliationHistory: (limit?: number) =>
+    request(`/api/risk/reconciliation/history${limit ? `?limit=${limit}` : ""}`),
+  runReconciliation: () => request("/api/risk/reconciliation/run", { method: "POST" }),
   getKillSwitchStatus: () => request("/api/risk/kill-switch/status"),
   triggerKillSwitch: () => request("/api/risk/kill-switch/trigger", { method: "POST" }),
+
+  // ── Options Income (Wheel & CSP) ──────────────────────────────────────────
+  screenCsp: (body: object) =>
+    request("/api/options/csp/screen", { method: "POST", body: JSON.stringify(body) }),
 
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),
@@ -52,10 +68,30 @@ export const api = {
   getTradingMode: () => request("/api/guardrails/trading-mode"),
 
   // ── Strategy & Signals ────────────────────────────────────────────────────
+  getStrategyRegistry: () => request("/api/strategy/registry"),
+  getStrategyProfile: (strategyId: string) => request(`/api/strategy/registry/${strategyId}`),
+  getStrategyPresets: (strategyId?: string) =>
+    request(`/api/strategy${strategyId ? `/${strategyId}/presets` : "/presets"}`),
+  getStrategySnapshots: (strategyId: string) => request(`/api/strategy/${strategyId}/snapshots`),
+  createStrategySnapshot: (body: object) => request("/api/strategy/snapshots", { method: "POST", body: JSON.stringify(body) }),
+  restoreStrategySnapshot: (snapshotId: string) => request(`/api/strategy/snapshots/${snapshotId}/restore`, { method: "POST" }),
+  compareStrategySnapshots: (left: string, right: string) =>
+    request(`/api/strategy/snapshots/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`),
   getStrategyConfig: () => request("/api/strategy/config"),
   updateStrategyConfig: (body: object) => request("/api/strategy/config", { method: "PUT", body: JSON.stringify(body) }),
   getCurrentSignals: () => request("/api/strategy/signals/current"),
   getSignalExplanation: (id: string) => request(`/api/strategy/signals/${id}/explanation`),
+
+  // ── Equity Workstation ────────────────────────────────────────────────────
+  scanEquitySignals: () => request("/api/equity/scan", { method: "POST" }),
+  getEquitySignals: (limit?: number) => request(`/api/equity/signals${limit ? `?limit=${limit}` : ""}`),
+  getEquityChart: (symbol: string, params?: { timeframe?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.timeframe) search.set("timeframe", params.timeframe);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const q = search.toString();
+    return request(`/api/equity/chart/${symbol}${q ? `?${q}` : ""}`);
+  },
 
   // ── Research ──────────────────────────────────────────────────────────────
   getComparison: () => request("/api/research/comparison"),

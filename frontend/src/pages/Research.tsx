@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from "react";
-
-const API = "";
+import { api } from "../api/client";
 
 interface IVData {
   symbol: string;
@@ -254,6 +253,42 @@ function buildSkew(atmIv: number) {
   };
 }
 
+const doctrine = {
+  mission: [
+    "Trade only when statistical edge exists",
+    "Remain in cash when no high-quality setup exists",
+    "Capital preservation over profit maximization",
+  ],
+  assets: ["SPY", "QQQ", "DIA", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
+  strategies: [
+    "Bull Put Spread",
+    "Bear Call Spread",
+    "Bull Call Debit Spread",
+    "Defined-risk bearish spread",
+    "No naked options",
+    "No unlimited-risk structures",
+  ],
+  filters: [
+    "Liquidity must be acceptable",
+    "Event risk and earnings windows matter",
+    "Expected value and risk/reward must be positive",
+    "Confidence must clear threshold",
+  ],
+  limits: [
+    "Max account risk 2%",
+    "Max daily loss 3%",
+    "Max weekly loss 8%",
+    "Max drawdown 10%",
+    "Max concurrent positions 5",
+    "Max exposure 30%",
+  ],
+  fit: [
+    "Fits as platform doctrine and policy layer",
+    "Fits current regime, confidence, guardrail, and strategy pages",
+    "Flow, dark-pool, and full macro/event automation are still partial roadmap items",
+  ],
+};
+
 export default function Research() {
   const [symbol, setSymbol]   = useState("SPY");
   const [input, setInput]     = useState("SPY");
@@ -265,15 +300,13 @@ export default function Research() {
     setLoading(true);
     setData(prev => ({ ...prev, error: null }));
     try {
-      const [ivRes, regimeRes, snapRes] = await Promise.all([
-        fetch(`${API}/api/market/iv-rank/${sym}`),
-        fetch(`${API}/api/market/regime`),
-        fetch(`${API}/api/market/snapshot/${sym}`),
+      // Each call resolves to null on failure so one bad endpoint doesn't blank
+      // the whole panel (preserves the prior res.ok fallback behavior).
+      const [iv, regime, snapshot] = await Promise.all([
+        api.getIVRank(sym).catch(() => null) as Promise<IVData | null>,
+        api.getRegime().catch(() => null) as Promise<RegimeData | null>,
+        api.getSnapshot(sym).catch(() => null) as Promise<SnapshotData | null>,
       ]);
-
-      const iv      = ivRes.ok      ? await ivRes.json()     : null;
-      const regime  = regimeRes.ok  ? await regimeRes.json() : null;
-      const snapshot = snapRes.ok   ? await snapRes.json()   : null;
 
       setData({ iv, regime, snapshot, error: null });
       setSymbol(sym);
@@ -586,6 +619,43 @@ export default function Research() {
             )}
           </div>
         )}
+
+        <div style={{ borderTop: "1px solid var(--line-dim)", background: "var(--bg-1)" }}>
+          <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
+            <span className="panel-title">OlbosQuant Operating Doctrine</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 0 }}>
+            {[
+              { title: "Mission", items: doctrine.mission, color: "var(--green)" },
+              { title: "Universe", items: doctrine.assets, color: "var(--cyan)" },
+              { title: "Strategies", items: doctrine.strategies, color: "var(--amber)" },
+              { title: "Trade Filters", items: doctrine.filters, color: "var(--ink)" },
+              { title: "Risk Limits", items: doctrine.limits, color: "var(--red)" },
+              { title: "Fit In App", items: doctrine.fit, color: "var(--ink-dim)" },
+            ].map((section, index) => (
+              <div
+                key={section.title}
+                style={{
+                  padding: 16,
+                  borderRight: index % 3 !== 2 ? "1px solid var(--line-dim)" : "none",
+                  borderBottom: index < 3 ? "1px solid var(--line-dim)" : "none",
+                  background: "var(--bg-2)",
+                }}
+              >
+                <div className="kicker" style={{ marginBottom: 10, color: section.color }}>
+                  {section.title}
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {section.items.map((item) => (
+                    <div key={item} style={{ fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.6 }}>
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

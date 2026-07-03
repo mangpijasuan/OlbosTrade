@@ -13,12 +13,12 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/api": {
-        // Docker: BACKEND_URL=http://backend:8000  |  Local dev: http://localhost:8000
-        target: process.env.BACKEND_URL ?? "http://localhost:8000",
+        // Docker: BACKEND_URL=http://backend:8000  |  Local dev: http://127.0.0.1:8000
+        target: process.env.BACKEND_URL ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/health": {
-        target: process.env.BACKEND_URL ?? "http://localhost:8000",
+        target: process.env.BACKEND_URL ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

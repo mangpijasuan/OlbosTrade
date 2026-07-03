@@ -34,7 +34,7 @@ export default function Backtest() {
 
   const metrics = [
     { label: "Total Return",   val: results ? `${(results.total_return * 100).toFixed(1)}%` : "—",   color: results?.total_return >= 0 ? "var(--green)" : "var(--red)" },
-    { label: "Sharpe Ratio",   val: results ? results.sharpe_ratio.toFixed(2) : "—",                 color: results?.sharpe_ratio >= 1 ? "var(--cyan)" : "var(--ink)" },
+    { label: "Sharpe Ratio",   val: results ? results.sharpe_ratio.toFixed(2) : "—",                 color: results?.sharpe_ratio >= 1 ? "var(--green)" : "var(--ink)" },
     { label: "Win Rate",       val: results ? `${(results.win_rate * 100).toFixed(1)}%` : "—",        color: "var(--ink)" },
     { label: "Max Drawdown",   val: results ? `${(results.max_drawdown * 100).toFixed(1)}%` : "—",    color: "var(--red)" },
     { label: "Profit Factor",  val: results ? results.profit_factor?.toFixed(2) : "—",               color: "var(--ink)" },
@@ -73,23 +73,26 @@ export default function Backtest() {
         </Field>
         <button className="btn-t" onClick={() => runBacktest(form)}
           style={{ width: "100%", marginTop: 8, padding: "10px", justifyContent: "center", display: "flex" }}>
-          {loading ? "RUNNING..." : "RUN BACKTEST ↗"}
+          {loading ? "Running…" : "Run backtest ↗"}
         </button>
       </div>
 
       {/* Right: results */}
       <div style={{ overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Metrics */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)" }}>
+        {/* Metrics ribbon — tight single row to maximise chart space below. */}
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
+          border: "1px solid var(--line-dim)", borderRadius: 6,
+          background: "var(--bg-2)", overflow: "hidden",
+        }}>
           {metrics.map((m, i) => (
             <div key={m.label} style={{
-              padding: "14px 16px",
+              padding: "8px 12px",
               borderRight: i < 5 ? "1px solid var(--line-dim)" : "none",
-              borderBottom: "1px solid var(--line-dim)",
-              background: "var(--bg-2)",
+              display: "flex", flexDirection: "column", gap: 3,
             }}>
-              <div className="kicker" style={{ marginBottom: 6 }}>{m.label}</div>
-              <div className="data-val" style={{ color: m.color }}>{m.val}</div>
+              <div className="kicker">{m.label}</div>
+              <div className="data-val sm" style={{ color: m.color }}>{m.val}</div>
             </div>
           ))}
         </div>
@@ -101,11 +104,11 @@ export default function Backtest() {
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
             {results
-              ? <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--cyan)" }}>
-                  BACKTEST COMPLETE — {results.total_trades} TRADES
+              ? <span style={{ fontSize: 12, color: "var(--green)" }}>
+                  Backtest complete — <span className="tnum">{results.total_trades}</span> trades
                 </span>
-              : <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-                  CONFIGURE AND RUN BACKTEST
+              : <span style={{ fontSize: 12, color: "var(--ink-dim)" }}>
+                  Configure and run a backtest
                 </span>
             }
           </div>
@@ -123,7 +126,7 @@ export default function Backtest() {
                   <tr key={i}>
                     <td className="mono">{t.entry_date}</td>
                     <td className="mono">{t.exit_date || "—"}</td>
-                    <td className="mono" style={{ color: "var(--cyan)" }}>{t.strategy}</td>
+                    <td className="mono" style={{ color: "var(--ink)" }}>{t.strategy}</td>
                     <td className="mono">${t.credit_received?.toFixed(2) || "—"}</td>
                     <td className="mono" style={{ color: t.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
                       {t.pnl >= 0 ? "+" : ""}${t.pnl?.toFixed(0) || 0}

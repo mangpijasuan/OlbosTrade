@@ -8,10 +8,17 @@
   --bg-3:      #111e35;
   --bg-4:      #162240;
   --line:      rgba(212, 175, 55, 0.12);
-  --line-dim:  rgba(255,255,255,0.05);
+  --line-dim:  rgba(255,255,255,0.07);
   --ink:       #e2e8f0;
-  --ink-dim:   #64748b;
-  --ink-faint: #334155;
+  --ink-dim:   #94a3b8;   /* brightened from #64748b — passes AA on dark */
+  --ink-faint: #64748b;   /* brightened from #334155 — table headers now legible */
+  /* Brand gold — LOGO & brand chrome ONLY. Never P&L, prices, or metrics. */
+  --brand:     #D4AF37;
+  /* Interactive accent (blue) — links, focus rings, non-active affordances. */
+  --accent:    #3b82f6;
+  /* Solid slate fill for ACTIVE tabs/buttons (not a thin border). */
+  --fill-active: #1e293b;
+  /* Legacy aliases — kept so existing references resolve; migrating off gold. */
   --cyan:      #D4AF37;
   --cyan-dim:  rgba(212,175,55,0.12);
   --cyan-glow: rgba(212,175,55,0.25);
@@ -34,6 +41,8 @@ body {
   min-height: 100vh;
 }
 
+#root { min-height: 100vh; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -44,19 +53,23 @@ body {
 
 /* Typography */
 .mono { font-family: var(--mono); }
+/* tabular-nums: proportional sans with monospaced digits — for ALL P&L,
+   prices, percentages, and metrics so columns align without using --mono. */
+.tnum { font-family: var(--sans); font-variant-numeric: tabular-nums; }
+/* Small section labels — sans, sentence-legible, brighter (was mono ALL-CAPS). */
 .kicker {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--ink-dim);
 }
 .panel-title {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--cyan);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
 }
 
 /* Panel */
@@ -73,21 +86,22 @@ body {
   border-bottom: 1px solid var(--line-dim);
 }
 
-/* Data cells */
+/* Data cells — sans + tabular-nums (Rule B). Monospace is reserved for tickers. */
 .data-val {
-  font-family: var(--mono);
+  font-family: var(--sans);
+  font-variant-numeric: tabular-nums;
   font-size: 22px;
   font-weight: 600;
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 .data-val.lg { font-size: 32px; }
 .data-val.sm { font-size: 14px; font-weight: 500; }
 .data-val.xs { font-size: 12px; }
 .pos { color: var(--green); }
 .neg { color: var(--red); }
-.neu { color: var(--ink); }
-.acc { color: var(--cyan); }
+.neu { color: var(--ink); }        /* neutral metrics = light gray, never gold */
+.acc { color: var(--ink); }        /* was gold; metrics must not use brand color */
 
 /* Status dot */
 .dot {
@@ -110,44 +124,42 @@ body {
 /* Table */
 .t-table { width: 100%; border-collapse: collapse; }
 .t-table th {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  padding: 8px 12px;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--ink-dim);
+  padding: 6px 12px;
   text-align: left;
   border-bottom: 1px solid var(--line-dim);
-  font-weight: 400;
+  font-weight: 500;
 }
 .t-table td {
-  padding: 9px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--line-dim);
   font-size: 13px;
 }
 .t-table tr:last-child td { border-bottom: none; }
 .t-table tr:hover td { background: var(--bg-3); }
 
-/* Mode badge */
+/* Mode badge — solid colored fills, sans (Active-state rule). */
 .mode-badge {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   padding: 2px 8px;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 .mode-badge.conservative { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
-.mode-badge.balanced     { background: rgba(212,175,55,0.12); color: var(--cyan);  border: 1px solid rgba(212,175,55,0.3); }
+.mode-badge.balanced     { background: rgba(59,130,246,0.15); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
 .mode-badge.aggressive   { background: rgba(249,115,22,0.15); color: var(--orange);border: 1px solid rgba(249,115,22,0.3); }
 .mode-badge.scalper      { background: rgba(239,68,68,0.15);  color: var(--red);  border: 1px solid rgba(239,68,68,0.3); }
 
-/* Btn */
+/* Btn — sans; ACTIVE gets a solid slate fill (not a thin border). */
 .btn-t {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.01em;
   padding: 6px 14px;
   border: 1px solid var(--line-dim);
   background: transparent;
@@ -155,10 +167,11 @@ body {
   cursor: pointer;
   transition: all 0.12s;
 }
-.btn-t:hover { border-color: var(--cyan); color: var(--cyan); }
-.btn-t.active { border-color: var(--cyan); background: var(--cyan-dim); color: var(--cyan); }
+.btn-t:hover { border-color: var(--accent); color: var(--ink); }
+.btn-t.active { border-color: transparent; background: var(--fill-active); color: var(--ink); }
 .btn-t.danger { border-color: rgba(239,68,68,0.5); color: var(--red); }
 .btn-t.danger:hover { background: rgba(239,68,68,0.12); }
+.workspace-tab:hover { color: var(--ink); background: rgba(255,255,255,0.03); }
 
 /* Bar */
 .bar-track {
@@ -175,3 +188,101 @@ body {
 /* Divider */
 .div-v { width: 1px; background: var(--line-dim); align-self: stretch; }
 .div-h { height: 1px; background: var(--line-dim); }
+
+.workstation-grid {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr) 360px;
+  gap: 14px;
+  align-items: start;
+}
+
+.workstation-col,
+.workstation-center,
+.workstation-right {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.workstation-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.flow-scanner-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) 360px;
+  gap: 14px;
+  align-items: start;
+}
+
+.flow-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.flow-toolbar-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.3fr) repeat(4, minmax(0, auto));
+  gap: 10px;
+  align-items: center;
+}
+
+@media (max-width: 1480px) {
+  .terminal-top-strip {
+    grid-template-columns: auto 44px minmax(0, 1fr) auto !important;
+  }
+
+  .workstation-grid {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .workstation-right {
+    grid-column: 1 / -1;
+  }
+
+  .flow-scanner-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flow-metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .flow-toolbar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .flow-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .flow-toolbar-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .flow-metrics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1080px) {
+  .workspace-bar {
+    overflow-x: auto;
+  }
+
+  .workstation-grid,
+  .workstation-bottom-grid,
+  .workstation-plan-grid,
+  .workstation-metrics-grid,
+  .workstation-top-strip {
+    grid-template-columns: 1fr !important;
+  }
+}

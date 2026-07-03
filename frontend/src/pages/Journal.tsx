@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import ModeAnalytics from "./ModeAnalytics";
 
 interface Entry {
   id: string;
@@ -16,6 +17,9 @@ interface Entry {
   loss_category: string | null;
   mistake_tags: string[];
   pnl: number | null;
+  mfe_pnl: number | null;
+  mae_pnl: number | null;
+  pnl_capture_pct: number | null;
   signal_score: number | null;
   entry_date: string | null;
   exit_date: string | null;
@@ -30,6 +34,8 @@ interface EditState {
 
 const fmt = (n: number | null) =>
   n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(0);
+const fmtPct = (n: number | null) =>
+  n == null ? "—" : `${(n * 100).toFixed(0)}%`;
 
 const holdDays = (entry: string | null, exit: string | null) => {
   if (!entry) return null;
@@ -38,129 +44,97 @@ const holdDays = (entry: string | null, exit: string | null) => {
   return Math.floor((to.getTime() - from.getTime()) / 86400000);
 };
 
-function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
-  const days  = holdDays(e.entry_date, e.exit_date);
+const COLS = ["Symbol", "Status", "Strategy", "Entry", "Exit", "Hold", "Score", "MFE", "MAE", "Capture", "Rules", "P&L"];
+
+function RulesBadge({ v }: { v: boolean | null }) {
+  if (v == null) return <span style={{ color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 2, padding: "0 5px", fontSize: 11 }}>Add</span>;
+  return v
+    ? <span style={{ color: "var(--green)", border: "1px solid rgba(34,197,94,0.4)", borderRadius: 2, padding: "0 5px", fontSize: 11 }}>Yes</span>
+    : <span style={{ color: "var(--red)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 2, padding: "0 5px", fontSize: 11 }}>No</span>;
+}
+
+function JournalRow({ e, expanded, onToggle, onEdit }: {
+  e: Entry; expanded: boolean; onToggle: () => void; onEdit: () => void;
+}) {
+  const days = holdDays(e.entry_date, e.exit_date);
   const isOpen = e.pnl == null;
   const pnlColor = isOpen ? "var(--ink-dim)" : (e.pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)";
 
   return (
-    <div
-      onClick={onClick}
-      style={{
-        background: "var(--bg-2)",
-        border: "1px solid var(--line-dim)",
-        borderLeft: `3px solid ${isOpen ? "var(--cyan)" : (e.pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)"}`,
-        padding: "14px 16px",
-        cursor: "pointer",
-        transition: "background 0.1s",
-      }}
-      onMouseEnter={ev => (ev.currentTarget.style.background = "var(--bg-3)")}
-      onMouseLeave={ev => (ev.currentTarget.style.background = "var(--bg-2)")}
-    >
-      {/* Row 1: symbol + P&L */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 15, fontWeight: 700, color: "var(--cyan)" }}>
-            {e.underlying || "—"}
-          </span>
+    <>
+      <tr onClick={onToggle} style={{ cursor: "pointer" }} aria-expanded={expanded}>
+        <td style={{ fontFamily: "var(--mono)", fontWeight: 600, color: "var(--ink)" }}>
+          <span style={{ color: "var(--ink-faint)", marginRight: 6, fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
+          {e.underlying || "—"}
+        </td>
+        <td>
           <span style={{
-            fontFamily: "var(--mono)", fontSize: 9, padding: "2px 7px",
-            border: `1px solid ${isOpen ? "rgba(6,182,212,0.4)" : "rgba(34,197,94,0.3)"}`,
-            color: isOpen ? "var(--cyan)" : "var(--green)",
-          }}>
-            {isOpen ? "OPEN" : "CLOSED"}
-          </span>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-            {e.strategy?.replace(/_/g, " ").toUpperCase() || "—"}
-          </span>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700, color: pnlColor }}>
-            {isOpen ? "OPEN" : fmt(e.pnl)}
-          </span>
-        </div>
-      </div>
-
-      {/* Row 2: meta info */}
-      <div style={{ display: "flex", gap: 20, marginBottom: 8, flexWrap: "wrap" }}>
-        {[
-          { label: "ENTRY", val: e.entry_date?.slice(0, 10) || "—" },
-          { label: "EXIT",  val: e.exit_date?.slice(0, 10)  || "—" },
-          { label: "HOLD",  val: days != null ? `${days}d` : "—" },
-          { label: "SCORE", val: e.signal_score != null ? e.signal_score.toFixed(3) : "—" },
-          { label: "CONF",  val: e.confidence_level != null ? `${e.confidence_level}/5` : "—" },
-        ].map(item => (
-          <div key={item.label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
-              {item.label}
-            </span>
-            <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-              {item.val}
-            </span>
-          </div>
-        ))}
-
-        {/* Rules followed */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>RULES</span>
-          {e.followed_rules == null ? (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--amber)",
-              border: "1px solid rgba(245,158,11,0.4)", padding: "0px 5px" }}>ADD</span>
-          ) : e.followed_rules ? (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--green)",
-              border: "1px solid rgba(34,197,94,0.3)", padding: "0px 5px" }}>YES ✓</span>
-          ) : (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)",
-              border: "1px solid rgba(239,68,68,0.3)", padding: "0px 5px" }}>NO ✗</span>
-          )}
-        </div>
-      </div>
-
-      {/* Row 3: context + notes */}
-      {(e.market_context || e.post_trade_notes) && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-          {e.market_context && (
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em", marginBottom: 3 }}>CONTEXT</div>
-              <div style={{ fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>{e.market_context}</div>
+            fontSize: 11, padding: "1px 6px", borderRadius: 3,
+            color: isOpen ? "var(--accent)" : "var(--ink-dim)",
+            border: `1px solid ${isOpen ? "rgba(59,130,246,0.4)" : "var(--line-dim)"}`,
+          }}>{isOpen ? "Open" : "Closed"}</span>
+        </td>
+        <td style={{ color: "var(--ink-dim)", fontSize: 12 }}>{e.strategy?.replace(/_/g, " ") || "—"}</td>
+        <td className="tnum" style={{ color: "var(--ink-dim)" }}>{e.entry_date?.slice(0, 10) || "—"}</td>
+        <td className="tnum" style={{ color: "var(--ink-dim)" }}>{e.exit_date?.slice(0, 10) || "—"}</td>
+        <td className="tnum" style={{ textAlign: "right", color: "var(--ink-dim)" }}>{days != null ? `${days}d` : "—"}</td>
+        <td className="tnum" style={{ textAlign: "right", color: "var(--ink)" }}>{e.signal_score != null ? e.signal_score.toFixed(3) : "—"}</td>
+        <td className="tnum" style={{ textAlign: "right", color: "var(--green)" }}>{fmt(e.mfe_pnl)}</td>
+        <td className="tnum" style={{ textAlign: "right", color: "var(--red)" }}>{fmt(e.mae_pnl)}</td>
+        <td className="tnum" style={{ textAlign: "right", color: "var(--ink)" }}>{e.pnl_capture_pct != null ? fmtPct(e.pnl_capture_pct) : "—"}</td>
+        <td style={{ textAlign: "center" }}><RulesBadge v={e.followed_rules} /></td>
+        <td className="tnum" style={{ textAlign: "right", color: pnlColor, fontWeight: 600 }}>{isOpen ? "—" : fmt(e.pnl)}</td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={COLS.length} style={{ background: "var(--bg-2)", padding: "12px 16px" }}>
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+              {e.pre_trade_thesis && (
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div className="kicker" style={{ marginBottom: 4 }}>Thesis</div>
+                  <div style={{ fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.5 }}>{e.pre_trade_thesis}</div>
+                </div>
+              )}
+              {e.market_context && (
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div className="kicker" style={{ marginBottom: 4 }}>Context</div>
+                  <div style={{ fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.5 }}>{e.market_context}</div>
+                </div>
+              )}
+              <div style={{ flex: 2, minWidth: 220 }}>
+                <div className="kicker" style={{ marginBottom: 4 }}>Notes</div>
+                <div style={{ fontSize: 12, color: e.post_trade_notes ? "var(--ink)" : "var(--ink-faint)", lineHeight: 1.5 }}>
+                  {e.post_trade_notes || "No notes yet."}
+                </div>
+              </div>
             </div>
-          )}
-          {e.post_trade_notes && (
-            <div style={{ flex: 2, minWidth: 200 }}>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em", marginBottom: 3 }}>NOTES</div>
-              <div style={{ fontSize: 11, color: "var(--ink)", lineHeight: 1.5 }}>{e.post_trade_notes}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {(e.tags || []).map(t => (
+                  <span key={t} style={{
+                    fontSize: 11, padding: "1px 7px", borderRadius: 3,
+                    background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.25)", color: "var(--accent)",
+                  }}>{t}</span>
+                ))}
+              </div>
+              <button className="btn-t" onClick={(ev) => { ev.stopPropagation(); onEdit(); }}>Edit notes</button>
             </div>
-          )}
-        </div>
+          </td>
+        </tr>
       )}
-
-      {/* Row 4: tags */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {(e.tags || []).map((t: string) => (
-            <span key={t} style={{
-              fontFamily: "var(--mono)", fontSize: 9, padding: "1px 7px",
-              background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)",
-              color: "var(--cyan)",
-            }}>{t}</span>
-          ))}
-        </div>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>
-          CLICK TO EDIT
-        </span>
-      </div>
-    </div>
+    </>
   );
 }
 
 export default function Journal() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab]         = useState<"entries" | "analysis">("entries");
+  const [tab, setTab]         = useState<"entries" | "analysis" | "mode">("entries");
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving]   = useState(false);
   const [impact, setImpact]   = useState<any>(null);
   const [filter, setFilter]   = useState<"all" | "open" | "closed">("all");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -213,30 +187,29 @@ export default function Journal() {
 
       {/* Toolbar */}
       <div style={{
-        padding: "8px 16px", borderBottom: "1px solid var(--line-dim)",
+        padding: "6px 14px", borderBottom: "1px solid var(--line-dim)",
         background: "var(--bg-2)", display: "flex", alignItems: "center", gap: 8,
       }}>
-        {(["entries", "analysis"] as const).map(t => (
+        {([["entries", "Entries"], ["analysis", "Analysis"], ["mode", "Mode"]] as const).map(([t, label]) => (
           <button key={t} className={`btn-t ${tab === t ? "active" : ""}`}
-            onClick={() => setTab(t)}>{t.toUpperCase()}</button>
+            onClick={() => setTab(t)}>{label}</button>
         ))}
         <div style={{ width: 1, height: 16, background: "var(--line-dim)", margin: "0 4px" }} />
         {tab === "entries" && (["all","open","closed"] as const).map(f => (
           <button key={f} className={`btn-t ${filter === f ? "active" : ""}`}
-            style={{ fontSize: 10 }} onClick={() => setFilter(f)}>
-            {f.toUpperCase()}
+            style={{ textTransform: "capitalize" }} onClick={() => setFilter(f)}>
+            {f}
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        {/* Summary stats */}
         {closed > 0 && (
-          <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 10 }}>
+          <div style={{ display: "flex", gap: 16, fontSize: 12 }}>
             <span style={{ color: "var(--ink-dim)" }}>
-              {closed} CLOSED &nbsp;·&nbsp;
-              <span style={{ color: totalPnl >= 0 ? "var(--green)" : "var(--red)" }}>{fmt(totalPnl)}</span>
+              <span className="tnum">{closed}</span> closed ·{" "}
+              <span className="tnum" style={{ color: totalPnl >= 0 ? "var(--green)" : "var(--red)" }}>{fmt(totalPnl)}</span>
             </span>
-            <span style={{ color: winRate >= 50 ? "var(--green)" : "var(--amber)" }}>
-              WIN {winRate}%
+            <span className="tnum" style={{ color: winRate >= 50 ? "var(--green)" : "var(--amber)" }}>
+              Win {winRate}%
             </span>
           </div>
         )}
@@ -246,52 +219,66 @@ export default function Journal() {
 
         {/* ── Entries tab ── */}
         {tab === "entries" && (
-          loading ? (
-            <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-              LOADING...
-            </div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 48, textAlign: "center" }}>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--cyan)", marginBottom: 8 }}>
-                NO JOURNAL ENTRIES YET
+          <div style={{ overflowX: "auto" }}>
+            <table className="t-table">
+              <thead>
+                <tr>
+                  {COLS.map((c, i) => (
+                    <th key={c} style={{ textAlign: i >= 5 && c !== "Rules" ? "right" : c === "Rules" ? "center" : "left", whiteSpace: "nowrap" }}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!loading && filtered.map(e => (
+                  <JournalRow
+                    key={e.id}
+                    e={e}
+                    expanded={expandedId === e.id}
+                    onToggle={() => setExpandedId(expandedId === e.id ? null : e.id)}
+                    onEdit={() => openEdit(e)}
+                  />
+                ))}
+              </tbody>
+            </table>
+            {/* Empty / loading states keep the header skeleton above visible. */}
+            {loading ? (
+              <div style={{ padding: 40, textAlign: "center", fontSize: 12, color: "var(--ink-dim)" }}>Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center" }}>
+                <div style={{ fontSize: 13, color: "var(--ink)", marginBottom: 6 }}>No journal entries yet</div>
+                <div style={{ fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.7 }}>
+                  Entries are created automatically when a trade fills.<br/>
+                  MFE and MAE track after a fill; capture appears after the trade closes.
+                </div>
               </div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", lineHeight: 1.8 }}>
-                Entries are created automatically when a trade fills.
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: 0 }}>
-              {filtered.map(e => (
-                <EntryCard key={e.id} e={e} onClick={() => openEdit(e)} />
-              ))}
-            </div>
-          )
+            ) : null}
+          </div>
         )}
 
         {/* ── Analysis tab ── */}
         {tab === "analysis" && (
-          <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                <span className="panel-title">Rule Breach Impact</span>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginLeft: 12 }}>
-                  Requires followed_rules set on trades
+          <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", borderRadius: 6 }}>
+              <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--line-dim)" }}>
+                <span className="panel-title">Rule breach impact</span>
+                <span style={{ fontSize: 11, color: "var(--ink-dim)", marginLeft: 12 }}>
+                  Requires followed-rules set on trades
                 </span>
               </div>
               {!impact ? (
-                <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-                  Need 5+ trades with followed_rules data.<br/>
-                  Click any trade card and mark whether you followed the rules.
+                <div style={{ padding: 24, textAlign: "center", fontSize: 12, color: "var(--ink-dim)" }}>
+                  Need 5+ trades with followed-rules data.<br/>
+                  Expand any trade and mark whether you followed the rules.
                 </div>
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
                   {[
-                    { label: "Followed — Avg P&L",    val: fmt(impact.followed_avg_pnl),               color: "var(--green)" },
-                    { label: "Breached — Avg P&L",    val: fmt(impact.breached_avg_pnl),               color: "var(--red)"   },
-                    { label: "Followed — Win Rate",   val: `${(impact.followed_win_rate*100).toFixed(1)}%`, color: "var(--green)" },
-                    { label: "Cost of Breach/Trade",  val: fmt(impact.pnl_delta),                      color: "var(--amber)" },
+                    { label: "Followed — avg P&L",    val: fmt(impact.followed_avg_pnl),               color: "var(--green)" },
+                    { label: "Breached — avg P&L",    val: fmt(impact.breached_avg_pnl),               color: "var(--red)"   },
+                    { label: "Followed — win rate",   val: `${(impact.followed_win_rate*100).toFixed(1)}%`, color: "var(--green)" },
+                    { label: "Cost of breach/trade",  val: fmt(impact.pnl_delta),                      color: "var(--amber)" },
                   ].map((s, i) => (
-                    <div key={s.label} style={{ padding: "16px 18px", borderRight: i < 3 ? "1px solid var(--line-dim)" : "none" }}>
+                    <div key={s.label} style={{ padding: "14px 16px", borderRight: i < 3 ? "1px solid var(--line-dim)" : "none" }}>
                       <div className="kicker" style={{ marginBottom: 6 }}>{s.label}</div>
                       <div className="data-val" style={{ color: s.color }}>{s.val}</div>
                     </div>
@@ -299,14 +286,16 @@ export default function Journal() {
                 </div>
               )}
               {impact && (
-                <div style={{ padding: "10px 14px", borderTop: "1px solid var(--line-dim)",
-                  fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                <div style={{ padding: "10px 14px", borderTop: "1px solid var(--line-dim)", fontSize: 12, color: "var(--ink-dim)" }}>
                   {impact.summary}
                 </div>
               )}
             </div>
           </div>
         )}
+
+        {/* ── Mode analytics tab ── */}
+        {tab === "mode" && <ModeAnalytics />}
       </div>
 
       {/* Edit modal */}
@@ -316,17 +305,17 @@ export default function Journal() {
           display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
         }}>
           <div style={{
-            background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-            maxWidth: 500, width: "100%", padding: 28,
+            background: "var(--bg-2)", border: "1px solid var(--line-dim)", borderRadius: 8,
+            maxWidth: 500, width: "100%", padding: 24,
           }}>
-            <div className="panel-title" style={{ marginBottom: 20 }}>ADD TRADE NOTES</div>
+            <div className="panel-title" style={{ marginBottom: 18 }}>Add trade notes</div>
 
             <div style={{ marginBottom: 16 }}>
               <div className="kicker" style={{ marginBottom: 8 }}>Did you follow the rules?</div>
               <div style={{ display: "flex", gap: 8 }}>
                 {[
-                  { val: true,  label: "YES — followed rules",  color: "var(--green)" },
-                  { val: false, label: "NO — broke a rule",     color: "var(--red)"   },
+                  { val: true,  label: "Yes — followed rules",  color: "var(--green)" },
+                  { val: false, label: "No — broke a rule",     color: "var(--red)"   },
                   { val: null,  label: "Skip",                  color: "var(--ink-dim)" },
                 ].map(o => (
                   <button key={String(o.val)}
@@ -350,7 +339,7 @@ export default function Journal() {
                   width: "100%", background: "var(--bg-3)",
                   border: "1px solid var(--line-dim)", color: "var(--ink)",
                   fontFamily: "var(--sans)", fontSize: 13, padding: "8px 10px",
-                  outline: "none", resize: "vertical", boxSizing: "border-box",
+                  outline: "none", resize: "vertical", boxSizing: "border-box", borderRadius: 4,
                 }}
               />
             </div>
@@ -364,16 +353,16 @@ export default function Journal() {
                 style={{
                   width: "100%", background: "var(--bg-3)",
                   border: "1px solid var(--line-dim)", color: "var(--ink)",
-                  fontFamily: "var(--mono)", fontSize: 12, padding: "7px 10px",
-                  outline: "none", boxSizing: "border-box",
+                  fontFamily: "var(--sans)", fontSize: 13, padding: "7px 10px",
+                  outline: "none", boxSizing: "border-box", borderRadius: 4,
                 }}
               />
             </div>
 
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn-t" onClick={() => setEditing(null)} style={{ flex: 1 }}>CANCEL</button>
+              <button className="btn-t" onClick={() => setEditing(null)} style={{ flex: 1 }}>Cancel</button>
               <button className="btn-t active" onClick={saveEdit} disabled={saving} style={{ flex: 2 }}>
-                {saving ? "SAVING..." : "SAVE NOTES"}
+                {saving ? "Saving…" : "Save notes"}
               </button>
             </div>
           </div>

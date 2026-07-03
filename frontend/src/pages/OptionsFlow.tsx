@@ -1,15 +1,3 @@
-/**
- * OptionsFlow page — live options flow feed (Options Intelligence module).
- *
- * Bloomberg-style: dark bg, monospace, existing theme variables. Streams the
- * /api/options-flow/ws channel with filter params, seeded by an initial REST
- * pull. Feed pauses on hover; WebSocket reconnects with exponential backoff.
- *
- * NOTE: real ticks require a live IBKR OPRA subscription with
- * options_flow_enabled=true. With options_flow_demo_mode=true the backend
- * emits synthetic ticks so this panel can be exercised end-to-end.
- */
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, optionsFlowWsUrl } from "../api/client";
 
@@ -33,91 +21,267 @@ interface FlowTick {
   large_sweep: boolean;
 }
 
-const TICKERS = ["ALL", "SPY", "QQQ", "IWM"];
+interface FlowSummaryTicker {
+  ticker: string;
+  bullish_premium: number;
+  bearish_premium: number;
+  neutral_premium: number;
+  total_premium: number;
+  trade_count: number;
+  large_sweep_count: number;
+  most_active_strike: string | null;
+  bullish_ratio: number;
+}
+
+interface FlowSummary {
+  as_of: string;
+  total_premium_today: number;
+  large_sweep_count_today: number;
+  most_active_ticker: string | null;
+  by_ticker: FlowSummaryTicker[];
+}
+
+const QUICK_TICKERS = ["ALL", "SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA"];
 const MAX_ROWS = 250;
 
 function fmtUsd(n: number): string {
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
 }
+
+function fmtShort(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toFixed(0);
+}
+
 function fmtTime(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString("en-US", { hour12: false });
+    return new Date(iso).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
   } catch {
     return iso;
   }
 }
 
-function rowStyle(t: FlowTick): React.CSSProperties {
-  const s: React.CSSProperties = {
+function fmtDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-CA");
+  } catch {
+    return iso;
+  }
+}
+
+function pct(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  return Math.max(0, Math.min(1, value));
+}
+
+function sentimentColor(sentiment: FlowTick["sentiment"]): string {
+  if (sentiment === "bullish") return "var(--green)";
+  if (sentiment === "bearish") return "var(--red)";
+  return "var(--ink-dim)";
+}
+
+function rightColor(right: FlowTick["right"]): string {
+  return right === "C" ? "var(--green)" : "var(--red)";
+}
+
+function rowStyle(tick: FlowTick): React.CSSProperties {
+  const style: React.CSSProperties = {
     cursor: "pointer",
     borderBottom: "1px solid var(--line-dim)",
   };
-  if (t.sentiment === "bullish") s.background = "rgba(34,197,94,0.07)";
-  else if (t.sentiment === "bearish") s.background = "rgba(239,68,68,0.07)";
-  if (t.sweep_confirmed || t.large_sweep) {
-    s.borderLeft = "2px solid var(--amber)";
-    if (t.large_sweep) s.fontWeight = 700;
+  if (tick.sentiment === "bullish") style.background = "rgba(34,197,94,0.05)";
+  if (tick.sentiment === "bearish") style.background = "rgba(239,68,68,0.05)";
+  if (tick.large_sweep || tick.sweep_confirmed) {
+    style.borderLeft = "2px solid var(--amber)";
   }
-  return s;
+  return style;
 }
 
-function SentimentTag({ s }: { s: FlowTick["sentiment"] }) {
-  const color =
-    s === "bullish" ? "var(--green)" : s === "bearish" ? "var(--red)" : "var(--ink-dim)";
-  return <span style={{ color, fontWeight: 600 }}>{s.toUpperCase()}</span>;
-}
-
-function RatioBar({ ratio }: { ratio: number }) {
-  const bull = Math.round(ratio * 100);
+function MetricTile({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  hint?: string;
+}) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 160 }}>
-      <div style={{ flex: 1, height: 8, borderRadius: 2, overflow: "hidden", display: "flex" }}>
-        <div style={{ width: `${bull}%`, background: "var(--green)" }} />
-        <div style={{ width: `${100 - bull}%`, background: "var(--red)" }} />
+    <div
+      className="panel"
+      style={{
+        padding: "12px 14px",
+        minHeight: 84,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+      }}
+    >
+      <div className="kicker">{label}</div>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 22, color: tone || "var(--ink)", fontWeight: 700 }}>
+        {value}
       </div>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 11 }}>
-        {bull}% / {100 - bull}%
-      </span>
+      {hint ? (
+        <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", lineHeight: 1.4 }}>
+          {hint}
+        </div>
+      ) : (
+        <div />
+      )}
     </div>
   );
 }
 
-export default function OptionsFlow() {
-  const [ticker, setTicker] = useState("ALL");
-  const [right, setRight] = useState<"all" | "C" | "P">("all");
-  const [minPremium, setMinPremium] = useState(0);
-  const [tradeType, setTradeType] = useState<"" | "sweep" | "block" | "single">("");
+function Panel({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div className="panel-title">{title}</div>
+        {action}
+      </div>
+      <div style={{ padding: 14 }}>{children}</div>
+    </section>
+  );
+}
 
-  const [rows, setRows] = useState<FlowTick[]>([]);
-  const [summary, setSummary] = useState<any>(null);
-  const [connected, setConnected] = useState(false);
+function FlowBar({
+  bullRatio,
+  callRatio,
+}: {
+  bullRatio: number;
+  callRatio: number;
+}) {
+  const safeBull = Math.round(clampRatio(bullRatio) * 100);
+  const safeCall = Math.round(clampRatio(callRatio) * 100);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div>
+        <div className="kicker" style={{ marginBottom: 6 }}>Bull / Bear Premium</div>
+        <div style={{ display: "flex", height: 10, overflow: "hidden", borderRadius: 3, background: "var(--bg-4)" }}>
+          <div style={{ width: `${safeBull}%`, background: "var(--green)" }} />
+          <div style={{ width: `${100 - safeBull}%`, background: "var(--red)" }} />
+        </div>
+        <div style={{ marginTop: 6, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+          {safeBull}% bull / {100 - safeBull}% bear
+        </div>
+      </div>
+
+      <div>
+        <div className="kicker" style={{ marginBottom: 6 }}>Calls / Puts Premium</div>
+        <div style={{ display: "flex", height: 10, overflow: "hidden", borderRadius: 3, background: "var(--bg-4)" }}>
+          <div style={{ width: `${safeCall}%`, background: "var(--cyan)" }} />
+          <div style={{ width: `${100 - safeCall}%`, background: "var(--orange)" }} />
+        </div>
+        <div style={{ marginTop: 6, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+          {safeCall}% calls / {100 - safeCall}% puts
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button className={`btn-t ${active ? "active" : ""}`} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+export default function OptionsFlow() {
+  const [quickTicker, setQuickTicker] = useState("ALL");
+  const [tickerDraft, setTickerDraft] = useState("");
+  const [tickerFilter, setTickerFilter] = useState("ALL");
+  const [right, setRight] = useState<"all" | "C" | "P">("all");
+  const [sentiment, setSentiment] = useState<"" | "bullish" | "bearish" | "neutral">("");
+  const [tradeType, setTradeType] = useState<"" | "sweep" | "block" | "single">("");
+  const [maxDte, setMaxDte] = useState<number | "">("");
+  const [minPremium, setMinPremium] = useState(100000);
+  const [sortMode, setSortMode] = useState<"premium" | "recent">("premium");
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  const pausedRef = useRef(false);          // pause feed on hover
-  const bufferRef = useRef<FlowTick[]>([]);  // hold ticks while paused
+  const [rows, setRows] = useState<FlowTick[]>([]);
+  const [summary, setSummary] = useState<FlowSummary | null>(null);
+  const [connected, setConnected] = useState(false);
+
+  const pausedRef = useRef(false);
+  const bufferRef = useRef<FlowTick[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const closedRef = useRef(false);
 
+  const applyTickerDraft = useCallback(() => {
+    const next = tickerDraft.trim().toUpperCase();
+    if (!next) {
+      setQuickTicker("ALL");
+      setTickerFilter("ALL");
+      return;
+    }
+    setQuickTicker(next);
+    setTickerFilter(next);
+  }, [tickerDraft]);
+
+  const clearTickerFilter = useCallback(() => {
+    setTickerDraft("");
+    setQuickTicker("ALL");
+    setTickerFilter("ALL");
+  }, []);
+
   const filters = useMemo(
     () => ({
-      ticker: ticker === "ALL" ? undefined : ticker,
+      ticker: tickerFilter === "ALL" ? undefined : tickerFilter,
       right: right === "all" ? undefined : right,
-      min_premium: minPremium > 0 ? minPremium : undefined,
+      sentiment: sentiment || undefined,
       trade_type: tradeType || undefined,
+      max_dte: maxDte === "" ? undefined : maxDte,
+      min_premium: minPremium > 0 ? minPremium : undefined,
     }),
-    [ticker, right, minPremium, tradeType]
+    [maxDte, minPremium, right, sentiment, tickerFilter, tradeType],
   );
 
-  // ── Initial REST seed + summary, refreshed on filter change ────────────────
   useEffect(() => {
     let alive = true;
     api
-      .getOptionsFlow({ ...filters, limit: 100 })
-      .then((r) => alive && setRows(r.results || []))
-      .catch(() => alive && setRows([]));
+      .getOptionsFlow({ ...filters, limit: MAX_ROWS })
+      .then((response) => {
+        if (!alive) return;
+        setRows(response.results || []);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setRows([]);
+      });
     return () => {
       alive = false;
     };
@@ -126,23 +290,28 @@ export default function OptionsFlow() {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      api.getOptionsFlowSummary().then((s) => alive && setSummary(s)).catch(() => {});
+      api
+        .getOptionsFlowSummary()
+        .then((response) => {
+          if (!alive) return;
+          setSummary(response);
+        })
+        .catch(() => {});
+
     load();
-    const id = setInterval(load, 15000);
+    const timer = setInterval(load, 15000);
     return () => {
       alive = false;
-      clearInterval(id);
+      clearInterval(timer);
     };
   }, []);
 
   const flushBuffer = useCallback(() => {
-    if (bufferRef.current.length) {
-      setRows((prev) => [...bufferRef.current, ...prev].slice(0, MAX_ROWS));
-      bufferRef.current = [];
-    }
+    if (!bufferRef.current.length) return;
+    setRows((prev) => [...bufferRef.current, ...prev].slice(0, MAX_ROWS));
+    bufferRef.current = [];
   }, []);
 
-  // ── WebSocket with exponential backoff reconnect ───────────────────────────
   useEffect(() => {
     closedRef.current = false;
 
@@ -155,16 +324,16 @@ export default function OptionsFlow() {
         setConnected(true);
         retryRef.current = 0;
       };
-      ws.onmessage = (ev) => {
+      ws.onmessage = (event) => {
         try {
-          const tick: FlowTick = JSON.parse(ev.data);
+          const tick: FlowTick = JSON.parse(event.data);
           if (pausedRef.current) {
             bufferRef.current = [tick, ...bufferRef.current].slice(0, MAX_ROWS);
-          } else {
-            setRows((prev) => [tick, ...prev].slice(0, MAX_ROWS));
+            return;
           }
+          setRows((prev) => [tick, ...prev].slice(0, MAX_ROWS));
         } catch {
-          /* ignore malformed */
+          // Ignore malformed ticks from the feed.
         }
       };
       ws.onclose = () => {
@@ -184,247 +353,581 @@ export default function OptionsFlow() {
     };
   }, [filters]);
 
+  const displayRows = useMemo(() => {
+    const copy = [...rows];
+    copy.sort((left, rightItem) => {
+      if (sortMode === "premium") return rightItem.premium - left.premium;
+      return new Date(rightItem.timestamp).getTime() - new Date(left.timestamp).getTime();
+    });
+    return copy;
+  }, [rows, sortMode]);
+
+  const scannerStats = useMemo(() => {
+    const base = {
+      callPremium: 0,
+      putPremium: 0,
+      bullishPremium: 0,
+      bearishPremium: 0,
+      neutralPremium: 0,
+      largeSweeps: 0,
+      totalSize: 0,
+      callCount: 0,
+      putCount: 0,
+      bullishCount: 0,
+      bearishCount: 0,
+    };
+
+    for (const row of displayRows) {
+      if (row.right === "C") {
+        base.callPremium += row.premium;
+        base.callCount += 1;
+      } else {
+        base.putPremium += row.premium;
+        base.putCount += 1;
+      }
+
+      if (row.sentiment === "bullish") {
+        base.bullishPremium += row.premium;
+        base.bullishCount += 1;
+      } else if (row.sentiment === "bearish") {
+        base.bearishPremium += row.premium;
+        base.bearishCount += 1;
+      } else {
+        base.neutralPremium += row.premium;
+      }
+
+      if (row.large_sweep) base.largeSweeps += 1;
+      base.totalSize += row.size;
+    }
+
+    return base;
+  }, [displayRows]);
+
+  const bullRatio = useMemo(() => {
+    const denom = scannerStats.bullishPremium + scannerStats.bearishPremium;
+    if (!denom) return 0.5;
+    return scannerStats.bullishPremium / denom;
+  }, [scannerStats.bearishPremium, scannerStats.bullishPremium]);
+
+  const callRatio = useMemo(() => {
+    const denom = scannerStats.callPremium + scannerStats.putPremium;
+    if (!denom) return 0.5;
+    return scannerStats.callPremium / denom;
+  }, [scannerStats.callPremium, scannerStats.putPremium]);
+
+  const dominanceLabel = useMemo(() => {
+    if (bullRatio >= 0.62 && callRatio >= 0.55) return "BULLISH CALL PRESSURE";
+    if (bullRatio <= 0.38 && callRatio <= 0.45) return "BEARISH PUT PRESSURE";
+    if (bullRatio >= 0.58) return "BULLISH PREMIUM LEAN";
+    if (bullRatio <= 0.42) return "BEARISH PREMIUM LEAN";
+    return "TWO-WAY FLOW";
+  }, [bullRatio, callRatio]);
+
+  const focusTicker = useMemo(() => {
+    if (tickerFilter !== "ALL") return tickerFilter;
+    if (summary?.most_active_ticker) return summary.most_active_ticker;
+    return displayRows[0]?.ticker || null;
+  }, [displayRows, summary?.most_active_ticker, tickerFilter]);
+
+  const focusRows = useMemo(
+    () => displayRows.filter((row) => !focusTicker || row.ticker === focusTicker),
+    [displayRows, focusTicker],
+  );
+
+  const focusSummary = useMemo(
+    () => summary?.by_ticker?.find((item) => item.ticker === focusTicker) || null,
+    [focusTicker, summary?.by_ticker],
+  );
+
+  const leaderboard = useMemo(() => {
+    const items = [...(summary?.by_ticker || [])].sort((left, rightItem) => rightItem.total_premium - left.total_premium);
+    if (tickerFilter !== "ALL") return items.filter((item) => item.ticker === tickerFilter);
+    return items.slice(0, 8);
+  }, [summary?.by_ticker, tickerFilter]);
+
+  const standoutTrade = displayRows[0] || null;
+  const biggestSweep = displayRows.find((row) => row.large_sweep || row.sweep_confirmed) || null;
+
   return (
-    <div style={{ padding: 16, fontFamily: "var(--sans)" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontFamily: "var(--mono)", color: "var(--cyan)" }}>
-          OPTIONS FLOW
-        </h2>
-        <span className={`dot ${connected ? "live" : "dead"}`} />
-        <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>
-          {connected ? "STREAMING" : "DISCONNECTED"}
-        </span>
-      </div>
-
-      {/* Top filter bar */}
-      <div
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+      <section
+        className="panel"
         style={{
+          padding: "14px 16px",
           display: "flex",
           flexWrap: "wrap",
-          gap: 16,
           alignItems: "center",
-          background: "var(--bg-2)",
-          border: "1px solid var(--line-dim)",
-          borderRadius: 6,
-          padding: "10px 14px",
-          marginBottom: 12,
+          justifyContent: "space-between",
+          gap: 12,
         }}
       >
-        <div style={{ display: "flex", gap: 6 }}>
-          {TICKERS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTicker(t)}
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                padding: "4px 10px",
-                borderRadius: 4,
-                cursor: "pointer",
-                border: `1px solid ${ticker === t ? "var(--cyan)" : "var(--line-dim)"}`,
-                background: ticker === t ? "var(--cyan-dim)" : "transparent",
-                color: ticker === t ? "var(--cyan)" : "var(--ink-dim)",
-              }}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", gap: 4 }}>
-          {(["all", "C", "P"] as const).map((r) => (
-            <button
-              key={r}
-              onClick={() => setRight(r)}
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                padding: "4px 10px",
-                borderRadius: 4,
-                cursor: "pointer",
-                border: `1px solid ${right === r ? "var(--cyan)" : "var(--line-dim)"}`,
-                background: right === r ? "var(--cyan-dim)" : "transparent",
-                color: right === r ? "var(--cyan)" : "var(--ink-dim)",
-              }}
-            >
-              {r === "all" ? "C/P" : r}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>MIN PREM</span>
-          <input
-            type="range"
-            min={0}
-            max={1_000_000}
-            step={25_000}
-            value={minPremium}
-            onChange={(e) => setMinPremium(Number(e.target.value))}
-          />
-          <span style={{ fontFamily: "var(--mono)", fontSize: 11, minWidth: 48 }}>
-            {fmtUsd(minPremium)}
-          </span>
-        </div>
-
-        <select
-          value={tradeType}
-          onChange={(e) => setTradeType(e.target.value as any)}
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            background: "var(--bg-3)",
-            color: "var(--ink)",
-            border: "1px solid var(--line-dim)",
-            borderRadius: 4,
-            padding: "4px 8px",
-          }}
-        >
-          <option value="">ALL TYPES</option>
-          <option value="sweep">SWEEP</option>
-          <option value="block">BLOCK</option>
-          <option value="single">SINGLE</option>
-        </select>
-      </div>
-
-      {/* Summary row */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 24,
-          alignItems: "center",
-          background: "var(--bg-2)",
-          border: "1px solid var(--line-dim)",
-          borderRadius: 6,
-          padding: "10px 14px",
-          marginBottom: 12,
-        }}
-      >
-        <Metric label="TOTAL PREMIUM" value={summary ? fmtUsd(summary.total_premium_today || 0) : "—"} />
         <div>
-          <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4 }}>
-            BULLISH / BEARISH
+          <div className="panel-title" style={{ marginBottom: 6 }}>Options Flow Scanner</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+            <span className={`dot ${connected ? "live" : "dead"}`} />
+            <span>{connected ? "Live stream connected" : "Stream disconnected"}</span>
+            <span style={{ color: "var(--ink-faint)" }}>premium-ranked unusual activity with directional context</span>
           </div>
-          <RatioBar
-            ratio={
-              summary?.by_ticker?.length
-                ? summary.by_ticker.reduce((a: number, t: any) => a + (t.bullish_ratio || 0.5), 0) /
-                  summary.by_ticker.length
-                : 0.5
-            }
-          />
         </div>
-        <Metric
-          label="LARGE SWEEPS"
-          value={summary ? String(summary.large_sweep_count_today || 0) : "—"}
-          color="var(--amber)"
-        />
-        <div>
-          <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4 }}>MOST ACTIVE</div>
-          <span
-            style={{
-              fontFamily: "var(--mono)",
-              fontSize: 12,
-              padding: "2px 8px",
-              borderRadius: 4,
-              background: "var(--cyan-dim)",
-              color: "var(--cyan)",
-            }}
-          >
-            {summary?.most_active_ticker || "—"}
-          </span>
-        </div>
-      </div>
 
-      {/* Live feed table */}
-      <div
-        onMouseEnter={() => {
-          pausedRef.current = true;
-        }}
-        onMouseLeave={() => {
-          pausedRef.current = false;
-          flushBuffer();
-        }}
-        style={{
-          background: "var(--bg-2)",
-          border: "1px solid var(--line-dim)",
-          borderRadius: 6,
-          maxHeight: "calc(100vh - 320px)",
-          overflowY: "auto",
-        }}
-      >
-        <table className="t-table" style={{ width: "100%", fontFamily: "var(--mono)", fontSize: 12 }}>
-          <thead>
-            <tr style={{ position: "sticky", top: 0, background: "var(--bg-3)", zIndex: 1 }}>
-              <Th>Time</Th><Th>Ticker</Th><Th>C/P</Th><Th>Strike</Th><Th>Expiry</Th>
-              <Th align="right">Size</Th><Th align="right">Premium</Th><Th>Type</Th><Th>Sentiment</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={9} style={{ padding: 24, textAlign: "center", color: "var(--ink-dim)" }}>
-                  No flow yet. Enable options_flow_demo_mode (or a live OPRA feed) to see ticks.
-                </td>
-              </tr>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <span className="mode-badge balanced">{dominanceLabel}</span>
+          <span className="mode-badge conservative">
+            {sortMode === "premium" ? "Ranked by premium" : "Sorted by time"}
+          </span>
+          <button className="btn-t" onClick={() => setSortMode((current) => (current === "premium" ? "recent" : "premium"))}>
+            {sortMode === "premium" ? "Show recent" : "Show unusual"}
+          </button>
+        </div>
+      </section>
+
+      <section className="panel" style={{ padding: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {QUICK_TICKERS.map((item) => (
+              <FilterButton
+                key={item}
+                active={quickTicker === item && tickerFilter === item}
+                onClick={() => {
+                  setQuickTicker(item);
+                  setTickerFilter(item);
+                  setTickerDraft(item === "ALL" ? "" : item);
+                }}
+              >
+                {item}
+              </FilterButton>
+            ))}
+          </div>
+
+          <div className="flow-toolbar-grid">
+            <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+              <input
+                value={tickerDraft}
+                onChange={(event) => setTickerDraft(event.target.value.toUpperCase())}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") applyTickerDraft();
+                }}
+                placeholder="Specific ticker: AAPL"
+                style={{
+                  width: "100%",
+                  minWidth: 180,
+                  background: "var(--bg-3)",
+                  border: "1px solid var(--line-dim)",
+                  color: "var(--ink)",
+                  padding: "8px 10px",
+                  fontFamily: "var(--mono)",
+                  fontSize: 12,
+                }}
+              />
+              <button className="btn-t active" onClick={applyTickerDraft}>Apply</button>
+              <button className="btn-t" onClick={clearTickerFilter}>Clear</button>
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {(["all", "C", "P"] as const).map((value) => (
+                <FilterButton key={value} active={right === value} onClick={() => setRight(value)}>
+                  {value === "all" ? "Calls + Puts" : value === "C" ? "Calls" : "Puts"}
+                </FilterButton>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {[
+                { value: "", label: "All Bias" },
+                { value: "bullish", label: "Bull" },
+                { value: "bearish", label: "Bear" },
+                { value: "neutral", label: "Neutral" },
+              ].map((item) => (
+                <FilterButton
+                  key={item.label}
+                  active={sentiment === item.value}
+                  onClick={() => setSentiment(item.value as "" | "bullish" | "bearish" | "neutral")}
+                >
+                  {item.label}
+                </FilterButton>
+              ))}
+            </div>
+
+            <select
+              value={tradeType}
+              onChange={(event) => setTradeType(event.target.value as "" | "sweep" | "block" | "single")}
+              style={{
+                background: "var(--bg-3)",
+                border: "1px solid var(--line-dim)",
+                color: "var(--ink)",
+                padding: "8px 10px",
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+              }}
+            >
+              <option value="">All prints</option>
+              <option value="sweep">Sweeps</option>
+              <option value="block">Blocks</option>
+              <option value="single">Singles</option>
+            </select>
+
+            <select
+              value={maxDte}
+              onChange={(event) => setMaxDte(event.target.value ? Number(event.target.value) : "")}
+              style={{
+                background: "var(--bg-3)",
+                border: "1px solid var(--line-dim)",
+                color: "var(--ink)",
+                padding: "8px 10px",
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+              }}
+            >
+              <option value="">All DTE</option>
+              <option value="0">0DTE</option>
+              <option value="7">0-7 DTE</option>
+              <option value="30">0-30 DTE</option>
+              <option value="60">0-60 DTE</option>
+            </select>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="kicker">Min Premium</span>
+              <input
+                type="range"
+                min={0}
+                max={1_000_000}
+                step={25_000}
+                value={minPremium}
+                onChange={(event) => setMinPremium(Number(event.target.value))}
+                style={{ width: 160 }}
+              />
+              <span style={{ fontFamily: "var(--mono)", minWidth: 64, color: "var(--cyan)" }}>
+                {fmtUsd(minPremium)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="flow-metrics-grid">
+        <MetricTile
+          label="Calls Premium"
+          value={fmtUsd(scannerStats.callPremium)}
+          tone="var(--green)"
+          hint={`${scannerStats.callCount} call prints`}
+        />
+        <MetricTile
+          label="Puts Premium"
+          value={fmtUsd(scannerStats.putPremium)}
+          tone="var(--red)"
+          hint={`${scannerStats.putCount} put prints`}
+        />
+        <MetricTile
+          label="Bull / Bear"
+          value={`${pct(bullRatio)} / ${pct(1 - bullRatio)}`}
+          tone={bullRatio >= 0.5 ? "var(--green)" : "var(--red)"}
+          hint="premium-weighted directional split"
+        />
+        <MetricTile
+          label="Large Sweeps"
+          value={String(scannerStats.largeSweeps)}
+          tone="var(--amber)"
+          hint={summary ? `${summary.large_sweep_count_today} across the day` : "scanner window"}
+        />
+        <MetricTile
+          label="Focus Ticker"
+          value={focusTicker || "—"}
+          tone="var(--cyan)"
+          hint={focusSummary?.most_active_strike ? `hot strike ${focusSummary.most_active_strike}` : "no concentrated strike yet"}
+        />
+        <MetricTile
+          label="Tape Size"
+          value={fmtShort(scannerStats.totalSize)}
+          tone="var(--ink)"
+          hint={summary?.most_active_ticker ? `today leader ${summary.most_active_ticker}` : "watching live flow"}
+        />
+      </section>
+
+      <div className="flow-scanner-grid">
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <Panel
+            title="Unusual Options Activity"
+            action={(
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
+                <span>{displayRows.length} rows</span>
+                <span>hover pauses stream</span>
+              </div>
             )}
-            {rows.map((t, i) => {
-              const key = t.id ?? `${t.timestamp}-${i}`;
-              const isOpen = expanded === (t.id ?? i);
-              return (
-                <React.Fragment key={key}>
-                  <tr style={rowStyle(t)} onClick={() => setExpanded(isOpen ? null : t.id ?? i)}>
-                    <td>{fmtTime(t.timestamp)}</td>
-                    <td style={{ color: "var(--cyan)" }}>{t.ticker}</td>
-                    <td style={{ color: t.right === "C" ? "var(--green)" : "var(--red)" }}>{t.right}</td>
-                    <td>{t.strike}</td>
-                    <td>{t.expiry}</td>
-                    <td style={{ textAlign: "right" }}>{t.size.toLocaleString()}</td>
-                    <td style={{ textAlign: "right" }}>{fmtUsd(t.premium)}</td>
-                    <td style={{ textTransform: "uppercase", color: t.trade_type === "sweep" ? "var(--amber)" : "var(--ink)" }}>
-                      {t.trade_type}
-                    </td>
-                    <td><SentimentTag s={t.sentiment} /></td>
+          >
+            <div
+              onMouseEnter={() => {
+                pausedRef.current = true;
+              }}
+              onMouseLeave={() => {
+                pausedRef.current = false;
+                flushBuffer();
+              }}
+              style={{ maxHeight: "calc(100vh - 420px)", overflow: "auto", margin: "-14px" }}
+            >
+              <table className="t-table" style={{ width: "100%", fontFamily: "var(--mono)", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ position: "sticky", top: 0, background: "var(--bg-3)", zIndex: 1 }}>
+                    <Th>Time</Th>
+                    <Th>Ticker</Th>
+                    <Th>Bias</Th>
+                    <Th>C/P</Th>
+                    <Th>Strike</Th>
+                    <Th>Exp</Th>
+                    <Th align="right">DTE</Th>
+                    <Th align="right">Premium</Th>
+                    <Th align="right">Size</Th>
+                    <Th align="right">Vol/OI</Th>
+                    <Th align="right">IV</Th>
+                    <Th>Type</Th>
+                    <Th>Flags</Th>
                   </tr>
-                  {isOpen && (
-                    <tr style={{ background: "var(--bg-4)" }}>
-                      <td colSpan={9} style={{ padding: "8px 14px", color: "var(--ink-dim)" }}>
-                        <span style={{ marginRight: 18 }}>Δ {t.delta ?? "—"}</span>
-                        <span style={{ marginRight: 18 }}>IV {t.iv != null ? `${(t.iv * 100).toFixed(1)}%` : "—"}</span>
-                        <span style={{ marginRight: 18 }}>DTE {t.dte}</span>
-                        <span style={{ marginRight: 18 }}>Exch {t.exchange || "—"}</span>
-                        <span style={{ marginRight: 18 }}>RelVol {t.relative_volume ?? "—"}×</span>
-                        <span>Sweep {t.sweep_confirmed ? "✓" : "—"}{t.large_sweep ? " (LARGE)" : ""}</span>
+                </thead>
+                <tbody>
+                  {displayRows.length === 0 && (
+                    <tr>
+                      <td colSpan={13} style={{ padding: 24, textAlign: "center", color: "var(--ink-dim)" }}>
+                        No options flow matched this scanner. Try lowering the premium filter or clearing the ticker.
                       </td>
                     </tr>
                   )}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                  {displayRows.map((row, index) => {
+                    const key = row.id ?? `${row.timestamp}-${index}`;
+                    const open = expanded === (row.id ?? index);
+                    return (
+                      <React.Fragment key={key}>
+                        <tr style={rowStyle(row)} onClick={() => setExpanded(open ? null : row.id ?? index)}>
+                          <td>{fmtTime(row.timestamp)}</td>
+                          <td style={{ color: "var(--cyan)", fontWeight: 700 }}>{row.ticker}</td>
+                          <td style={{ color: sentimentColor(row.sentiment), fontWeight: 700 }}>{row.sentiment.toUpperCase()}</td>
+                          <td style={{ color: rightColor(row.right), fontWeight: 700 }}>{row.right}</td>
+                          <td>{row.strike}</td>
+                          <td>{fmtDate(row.expiry)}</td>
+                          <td style={{ textAlign: "right" }}>{row.dte}</td>
+                          <td style={{ textAlign: "right", color: row.premium >= 500000 ? "var(--amber)" : "var(--ink)" }}>
+                            {fmtUsd(row.premium)}
+                          </td>
+                          <td style={{ textAlign: "right" }}>{fmtShort(row.size)}</td>
+                          <td style={{ textAlign: "right", color: "var(--amber)" }}>
+                            {row.relative_volume != null ? `${row.relative_volume.toFixed(1)}x` : "—"}
+                          </td>
+                          <td style={{ textAlign: "right" }}>
+                            {row.iv != null ? `${Math.round(row.iv * 100)}%` : "—"}
+                          </td>
+                          <td style={{ textTransform: "uppercase", color: row.trade_type === "sweep" ? "var(--amber)" : "var(--ink-dim)" }}>
+                            {row.trade_type}
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {row.large_sweep && <span className="mode-badge aggressive">large</span>}
+                              {row.sweep_confirmed && <span className="mode-badge balanced">sweep</span>}
+                              {!row.large_sweep && !row.sweep_confirmed && <span style={{ color: "var(--ink-faint)" }}>-</span>}
+                            </div>
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr style={{ background: "var(--bg-4)" }}>
+                            <td colSpan={13} style={{ padding: "10px 14px" }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 18, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                                <span>Delta {row.delta != null ? row.delta.toFixed(2) : "—"}</span>
+                                <span>Exchange {row.exchange || "—"}</span>
+                                <span>Premium / contract {row.size ? fmtUsd(row.premium / row.size) : "—"}</span>
+                                <span>
+                                  Narrative{" "}
+                                  <span style={{ color: sentimentColor(row.sentiment) }}>
+                                    {row.sentiment === "bullish"
+                                      ? "upside appetite"
+                                      : row.sentiment === "bearish"
+                                        ? "downside hedge or speculative pressure"
+                                        : "neutral / structure-driven"}
+                                  </span>
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <Panel title="Flow Bias">
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <FlowBar bullRatio={bullRatio} callRatio={callRatio} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                <BiasCell
+                  label="Bullish Premium"
+                  value={fmtUsd(scannerStats.bullishPremium)}
+                  tone="var(--green)"
+                />
+                <BiasCell
+                  label="Bearish Premium"
+                  value={fmtUsd(scannerStats.bearishPremium)}
+                  tone="var(--red)"
+                />
+                <BiasCell
+                  label="Top Print"
+                  value={standoutTrade ? `${standoutTrade.ticker} ${standoutTrade.right} ${standoutTrade.strike}` : "—"}
+                  tone="var(--cyan)"
+                />
+                <BiasCell
+                  label="Sweep Focus"
+                  value={biggestSweep ? `${biggestSweep.ticker} ${biggestSweep.right}` : "None"}
+                  tone="var(--amber)"
+                />
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Ticker Pressure">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {leaderboard.length === 0 && (
+                <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                  No summary snapshot available for this ticker yet.
+                </div>
+              )}
+              {leaderboard.map((item) => {
+                const bull = clampRatio(item.bullish_ratio);
+                return (
+                  <button
+                    key={item.ticker}
+                    onClick={() => {
+                      setTickerDraft(item.ticker);
+                      setQuickTicker(item.ticker);
+                      setTickerFilter(item.ticker);
+                    }}
+                    style={{
+                      textAlign: "left",
+                      background: item.ticker === focusTicker ? "rgba(212,175,55,0.08)" : "var(--bg-3)",
+                      border: item.ticker === focusTicker ? "1px solid rgba(212,175,55,0.38)" : "1px solid var(--line-dim)",
+                      padding: "10px 12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 15, color: "var(--ink)", fontWeight: 700 }}>
+                        {item.ticker}
+                      </span>
+                      <span style={{ marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 11, color: bull >= 0.5 ? "var(--green)" : "var(--red)" }}>
+                        {pct(bull)} bull
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                      <MiniStat label="Premium" value={fmtUsd(item.total_premium)} tone="var(--cyan)" />
+                      <MiniStat label="Trades" value={String(item.trade_count)} tone="var(--ink)" />
+                      <MiniStat label="Large" value={String(item.large_sweep_count)} tone="var(--amber)" />
+                    </div>
+                    <div style={{ marginTop: 8, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
+                      Active strike {item.most_active_strike || "—"}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Panel>
+
+          <Panel title={focusTicker ? `${focusTicker} Focus` : "Ticker Focus"}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
+                {focusTicker
+                  ? `${focusTicker} is the active focus. Use this panel to compare call appetite, put pressure, and whether the tape is being driven by sweeps or broad participation.`
+                  : "Pick a ticker from the tape or pressure list to inspect its directional flow."}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                <BiasCell
+                  label="Calls"
+                  value={String(focusRows.filter((row) => row.right === "C").length)}
+                  tone="var(--green)"
+                />
+                <BiasCell
+                  label="Puts"
+                  value={String(focusRows.filter((row) => row.right === "P").length)}
+                  tone="var(--red)"
+                />
+                <BiasCell
+                  label="Bullish"
+                  value={fmtUsd(focusSummary?.bullish_premium || 0)}
+                  tone="var(--green)"
+                />
+                <BiasCell
+                  label="Bearish"
+                  value={fmtUsd(focusSummary?.bearish_premium || 0)}
+                  tone="var(--red)"
+                />
+                <BiasCell
+                  label="Top Strike"
+                  value={focusSummary?.most_active_strike || "—"}
+                  tone="var(--cyan)"
+                />
+                <BiasCell
+                  label="Large Sweeps"
+                  value={String(focusSummary?.large_sweep_count || 0)}
+                  tone="var(--amber)"
+                />
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--line-dim)", paddingTop: 12 }}>
+                <div className="kicker" style={{ marginBottom: 8 }}>Scanner Read</div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.8 }}>
+                  {focusSummary
+                    ? `${focusTicker} shows ${pct(focusSummary.bullish_ratio)} bullish premium, ${focusSummary.trade_count} tracked prints, and concentration around ${focusSummary.most_active_strike || "no clear strike"}.
+                    ${focusSummary.large_sweep_count > 0 ? "Large sweeps are present, which usually means institutional urgency." : "No large sweeps yet, so read this as lighter conviction."}`
+                    : "No aggregated ticker summary yet. The live tape is still usable, but conviction signals are limited until more prints arrive."}
+                </div>
+              </div>
+            </div>
+          </Panel>
+        </div>
       </div>
     </div>
   );
 }
 
-function Th({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
+function Th({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  return <th style={{ textAlign: align }}>{children}</th>;
+}
+
+function BiasCell({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+}) {
   return (
-    <th style={{ textAlign: align, padding: "8px 10px", color: "var(--ink-faint)", fontWeight: 600 }}>
-      {children}
-    </th>
+    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-3)", padding: "10px 12px" }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>{label}</div>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 14, color: tone, fontWeight: 700 }}>{value}</div>
+    </div>
   );
 }
 
-function Metric({ label, value, color }: { label: string; value: string; color?: string }) {
+function MiniStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+}) {
   return (
     <div>
-      <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 600, color: color || "var(--ink)" }}>
-        {value}
-      </div>
+      <div className="kicker" style={{ marginBottom: 4 }}>{label}</div>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: tone }}>{value}</div>
     </div>
   );
 }

@@ -3,9 +3,11 @@ import { useRisk } from "../hooks/useRisk";
 import { api } from "../api/client";
 
 export default function Guardrails() {
-  const { guardrailStatus } = useRisk();
+  const { guardrailStatus, reconciliation, refresh } = useRisk();
   const [tab, setTab] = useState<"status"|"history">("status");
   const [activeMode, setActiveMode] = useState<any>(null);
+  const [reconRunning, setReconRunning] = useState(false);
+  const [reconMessage, setReconMessage] = useState<string | null>(null);
 
   // Poll the active trading mode independently — it lives in a different endpoint
   useEffect(() => {
@@ -24,22 +26,81 @@ export default function Guardrails() {
     ? activeMode.signal_threshold.toFixed(2)
     : guardrailStatus?.signal_threshold?.toFixed(2) ?? "0.65";
 
+  const activeLimits = {
+    dailyLoss: guardrailStatus?.max_daily_loss_pct ?? 0.02,
+    weeklyLoss: guardrailStatus?.max_weekly_loss_pct ?? 0.05,
+    monthlyLoss: guardrailStatus?.max_monthly_loss_pct ?? 0.10,
+    tradesPerDay: guardrailStatus?.max_trades_per_day ?? 3,
+    consecutiveLosses: guardrailStatus?.max_consecutive_losses ?? 3,
+    capitalThreshold: guardrailStatus?.capital_preservation_threshold ?? 0.85,
+  };
+
   // Color the mode badge
   const modeColor: Record<string, string> = {
     conservative: "var(--green)",
-    balanced:     "var(--cyan)",
+    balanced:     "var(--accent)",
     aggressive:   "var(--amber)",
     scalper:      "var(--red)",
   };
-  const badgeColor = modeColor[modeName] ?? "var(--cyan)";
+  const badgeColor = modeColor[modeName] ?? "var(--accent)";
+  const reconColor =
+    reconciliation?.status === "clean" ? "var(--green)"
+    : reconciliation?.status === "warning" ? "var(--amber)"
+    : reconciliation?.status === "error" ? "var(--red)"
+    : "var(--ink-dim)";
+  const reconLabel = reconciliation?.status?.toUpperCase() || "NO SNAPSHOT";
+
+  const runReconciliation = async () => {
+    setReconRunning(true);
+    setReconMessage("Running reconciliation...");
+    try {
+      const res: any = await api.runReconciliation();
+      setReconMessage(
+        res.status === "error"
+          ? (res.error || "Reconciliation failed")
+          : res.status === "warning"
+            ? "Reconciliation completed with warnings."
+            : "Reconciliation clean."
+      );
+      await refresh();
+    } catch (err: any) {
+      setReconMessage(err.message || "Could not run reconciliation");
+    } finally {
+      setReconRunning(false);
+    }
+  };
 
   const rules = [
-    { label: "Max Daily Loss",      val: "2.0%",  status: guardrailStatus?.daily_loss_pct > -0.02 },
-    { label: "Max Weekly Loss",     val: "5.0%",  status: guardrailStatus?.weekly_loss_pct > -0.05 },
-    { label: "Max Monthly Loss",    val: "10.0%", status: true },
-    { label: "Max Trades Per Day",  val: "3",     status: (guardrailStatus?.trades_today || 0) < 3 },
-    { label: "Consecutive Losses",  val: "3",     status: (guardrailStatus?.consecutive_losses || 0) < 3 },
-    { label: "Capital Threshold",   val: "85%",   status: true },
+    {
+      label: "Max Daily Loss",
+      val: `${(activeLimits.dailyLoss * 100).toFixed(1)}%`,
+      status: Math.abs(guardrailStatus?.daily_loss_pct || 0) < activeLimits.dailyLoss,
+    },
+    {
+      label: "Max Weekly Loss",
+      val: `${(activeLimits.weeklyLoss * 100).toFixed(1)}%`,
+      status: Math.abs(guardrailStatus?.weekly_loss_pct || 0) < activeLimits.weeklyLoss,
+    },
+    {
+      label: "Max Monthly Loss",
+      val: `${(activeLimits.monthlyLoss * 100).toFixed(1)}%`,
+      status: Math.abs(guardrailStatus?.monthly_loss_pct || 0) < activeLimits.monthlyLoss,
+    },
+    {
+      label: "Max Trades Per Day",
+      val: String(activeLimits.tradesPerDay),
+      status: (guardrailStatus?.trades_today || 0) < activeLimits.tradesPerDay,
+    },
+    {
+      label: "Consecutive Losses",
+      val: String(activeLimits.consecutiveLosses),
+      status: (guardrailStatus?.consecutive_losses || 0) < activeLimits.consecutiveLosses,
+    },
+    {
+      label: "Capital Threshold",
+      val: `${(activeLimits.capitalThreshold * 100).toFixed(0)}%`,
+      status: true,
+    },
     { label: "Kill Switch",         val: "OFF",   status: !guardrailStatus?.kill_switch_engaged },
   ];
 
@@ -89,6 +150,23 @@ export default function Guardrails() {
               </div>
             </div>
 
+            {guardrailStatus?.paper_visibility_mode && (
+              <div style={{
+                border: "1px solid rgba(249,115,22,0.42)",
+                background: "rgba(249,115,22,0.08)",
+                padding: "12px 16px",
+                fontFamily: "var(--mono)",
+                fontSize: 11,
+                color: "var(--amber)",
+                lineHeight: 1.7,
+              }}>
+                PAPER VISIBILITY MODE ACTIVE
+                <div style={{ color: "var(--ink-dim)", marginTop: 4 }}>
+                  Paper-only rules are relaxed so the app can generate more signals, executions, and trade history for testing. Live guardrails remain unchanged.
+                </div>
+              </div>
+            )}
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Rule status */}
               <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
@@ -97,21 +175,18 @@ export default function Guardrails() {
                 </div>
                 {rules.map((r, i) => (
                   <div key={r.label} style={{
-                    padding: "13px 16px",
+                    padding: "8px 14px",
                     borderBottom: i < rules.length - 1 ? "1px solid var(--line-dim)" : "none",
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
                   }}>
-                    <div>
-                      <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink)" }}>{r.label}</div>
-                      <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
-                        Limit: {r.val}
-                      </div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                      <span style={{ fontSize: 13, color: "var(--ink)" }}>{r.label}</span>
+                      <span className="tnum" style={{ fontSize: 11, color: "var(--ink-dim)" }}>{r.val}</span>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
                       <span className={`dot ${r.status ? "live" : "dead"}`} />
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 10,
-                        color: r.status ? "var(--green)" : "var(--red)" }}>
-                        {r.status ? "OK" : "BREACH"}
+                      <span style={{ fontSize: 11, color: r.status ? "var(--green)" : "var(--red)" }}>
+                        {r.status ? "OK" : "Breach"}
                       </span>
                     </div>
                   </div>
@@ -123,7 +198,7 @@ export default function Guardrails() {
                 <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
                   <span className="panel-title">Current State</span>
                 </div>
-                <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 12px" }}>
                   {[
                     { label: "Trades Today",       val: guardrailStatus?.trades_today || 0 },
                     { label: "Consecutive Losses", val: guardrailStatus?.consecutive_losses || 0 },
@@ -133,15 +208,90 @@ export default function Guardrails() {
                     { label: "Weekly Loss",        val: `${((guardrailStatus?.weekly_loss_pct || 0) * 100).toFixed(2)}%` },
                   ].map(s => (
                     <div key={s.label} style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      paddingBottom: 10, borderBottom: "1px solid var(--line-dim)",
+                      background: "var(--bg-3)", borderRadius: 4, padding: "7px 10px",
+                      display: "flex", flexDirection: "column", gap: 3,
                     }}>
                       <span className="kicker">{s.label}</span>
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--cyan)" }}>
+                      <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
                         {String(s.val)}
                       </span>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
+              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span className="panel-title">Reconciliation Status</span>
+                <button className="btn-t" onClick={runReconciliation} disabled={reconRunning}>
+                  {reconRunning ? "Running..." : "Run Check"}
+                </button>
+              </div>
+              <div style={{ padding: 16, display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
+                <div style={{
+                  border: `1px solid ${reconColor}55`,
+                  background: "var(--bg-1)",
+                  padding: 14,
+                }}>
+                  <div className="kicker" style={{ marginBottom: 6 }}>Latest Result</div>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 18, color: reconColor, marginBottom: 10 }}>
+                    {reconLabel}
+                  </div>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", lineHeight: 1.7 }}>
+                    <div>BROKER {reconciliation?.broker_name?.toUpperCase() || "—"}</div>
+                    <div>CHECKED {reconciliation?.checked_at ? new Date(reconciliation.checked_at).toLocaleString("en-US") : "—"}</div>
+                    <div>SOURCE {reconciliation?.source?.replace(/_/g, " ").toUpperCase() || "—"}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                    {[
+                      { label: "Broker Positions", value: reconciliation?.broker_position_count ?? "—", color: "var(--ink)" },
+                      { label: "DB Open Trades", value: reconciliation?.db_open_trade_count ?? "—", color: "var(--ink)" },
+                      { label: "Untracked", value: reconciliation?.untracked_at_broker?.length ?? 0, color: "var(--red)" },
+                      { label: "Quantity Drift", value: reconciliation?.quantity_mismatches?.length ?? 0, color: "var(--amber)" },
+                    ].map((item) => (
+                      <div key={item.label} style={{ border: "1px solid var(--line-dim)", borderRadius: 4, padding: 12, background: "var(--bg-1)" }}>
+                        <div className="kicker" style={{ marginBottom: 6 }}>{item.label}</div>
+                        <div className="tnum" style={{ fontSize: 16, color: item.color }}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {reconMessage && (
+                    <div style={{ fontSize: 11, color: "var(--ink-dim)" }}>
+                      {reconMessage}
+                    </div>
+                  )}
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    {[
+                      { title: "Warnings", items: reconciliation?.warnings || [], empty: "No warnings recorded." },
+                      { title: "Drift Details", items: [
+                        ...(reconciliation?.untracked_at_broker || []).map((s: string) => `Untracked broker position: ${s}`),
+                        ...(reconciliation?.phantom_in_db || []).map((s: string) => `Open DB trade without broker position: ${s}`),
+                        ...(reconciliation?.quantity_mismatches || []),
+                        ...(reconciliation?.error_message ? [reconciliation.error_message] : []),
+                      ], empty: "No drift detected." },
+                    ].map((group) => (
+                      <div key={group.title} style={{ border: "1px solid var(--line-dim)", background: "var(--bg-1)", padding: 12 }}>
+                        <div className="kicker" style={{ marginBottom: 8 }}>{group.title}</div>
+                        {group.items.length === 0 ? (
+                          <div style={{ color: "var(--ink-faint)", fontSize: 12 }}>{group.empty}</div>
+                        ) : (
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {group.items.map((item: string, index: number) => (
+                              <div key={`${group.title}-${index}`} style={{ fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.6 }}>
+                                {item}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>

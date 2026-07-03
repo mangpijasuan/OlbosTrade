@@ -19,6 +19,12 @@ const Badge = ({ text, color }: { text: string; color: string }) => (
   }}>{text}</span>
 );
 
+const fmtDollars = (value: number | null | undefined, digits = 0) =>
+  value == null ? "—" : `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(digits)}`;
+
+const fmtCapture = (value: number | null | undefined) =>
+  value == null ? "—" : `${(value * 100).toFixed(0)}%`;
+
 // ── Execution Mode Selector ───────────────────────────────────────────────────
 function ExecModeBar() {
   const [mode, setMode]     = useState<ExecMode>("manual");
@@ -340,7 +346,7 @@ function PnLBreakdown() {
       ) : (
         <table className="t-table">
           <thead><tr>
-            {["Symbol","Strategy","Entry","Exit","Hold","Credit","Net P&L","Commission","Slip Est.","Exit Reason"].map(h => (
+            {["Symbol","Strategy","Entry","Exit","Hold","Credit","Net P&L","MFE","MAE","Capture","Commission","Slip Est.","Exit Reason"].map(h => (
               <th key={h}>{h}</th>
             ))}
           </tr></thead>
@@ -360,6 +366,9 @@ function PnLBreakdown() {
                   <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)", fontWeight: 600 }}>
                     {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
                   </td>
+                  <td className="mono" style={{ color: "var(--green)" }}>{fmtDollars(t.mfe_pnl, 2)}</td>
+                  <td className="mono" style={{ color: "var(--red)" }}>{fmtDollars(t.mae_pnl, 2)}</td>
+                  <td className="mono" style={{ color: "var(--amber)" }}>{fmtCapture(t.pnl_capture_pct)}</td>
                   <td className="mono" style={{ color: "var(--amber)" }}>-${comm.toFixed(2)}</td>
                   <td className="mono" style={{ color: "var(--amber)" }}>~-${slip.toFixed(2)}</td>
                   <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{t.exit_reason?.replace(/_/g," ").toUpperCase() || "—"}</td>
@@ -454,15 +463,15 @@ export default function TradeDesk() {
             )}
             <table className="t-table">
               <thead><tr>
-                {["Entry Date","Symbol","Qty","Strategy","Status","Entry Price","P&L","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
+                {["Entry Date","Symbol","Qty","Strategy","Status","Entry Price","P&L","MFE","MAE","Capture","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {tradesLoading ? (
-                  <tr><td colSpan={9} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                  <tr><td colSpan={12} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
                     LOADING…
                   </td></tr>
                 ) : trades.length === 0 ? (
-                  <tr><td colSpan={9} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                  <tr><td colSpan={12} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
                     NO TRADE HISTORY — RUN A CYCLE OR WAIT FOR NEXT SCAN
                   </td></tr>
                 ) : trades.map((t: any, i: number) => {
@@ -485,6 +494,9 @@ export default function TradeDesk() {
                       <td className="mono" style={{ color: t.status === "open" ? "var(--ink-dim)" : pnl >= 0 ? "var(--green)" : "var(--red)", fontWeight: pnl !== 0 ? 600 : 400 }}>
                         {t.status === "open" ? "—" : pnl !== 0 ? `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : "$0.00"}
                       </td>
+                      <td className="mono" style={{ color: "var(--green)" }}>{fmtDollars(t.mfe_pnl, t.status === "open" ? 0 : 2)}</td>
+                      <td className="mono" style={{ color: "var(--red)" }}>{fmtDollars(t.mae_pnl, t.status === "open" ? 0 : 2)}</td>
+                      <td className="mono" style={{ color: "var(--amber)" }}>{t.status === "closed" ? fmtCapture(t.pnl_capture_pct) : "—"}</td>
                       <td className="mono">{days != null ? `${days}d` : "—"}</td>
                       <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>
                         {t.exit_reason?.replace(/_/g," ").toUpperCase() || (t.status === "open" ? "OPEN" : "—")}
@@ -501,11 +513,11 @@ export default function TradeDesk() {
         {tab === "positions" && (
           <table className="t-table">
             <thead><tr>
-              {["Symbol","Type","Strategy","Entry Credit","Unreal P&L","Hold Days","Status","Mode"].map(h => <th key={h}>{h}</th>)}
+              {["Symbol","Type","Strategy","Entry Credit","Unreal P&L","MFE","MAE","Hold Days","Status","Mode"].map(h => <th key={h}>{h}</th>)}
             </tr></thead>
             <tbody>
               {(positions || []).length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                <tr><td colSpan={10} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
                   NO OPEN POSITIONS
                 </td></tr>
               ) : (positions || []).map((p: any, i: number) => {
@@ -519,6 +531,8 @@ export default function TradeDesk() {
                     <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
                       {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
                     </td>
+                    <td className="mono" style={{ color: "var(--green)" }}>{fmtDollars(p.mfe_pnl)}</td>
+                    <td className="mono" style={{ color: "var(--red)" }}>{fmtDollars(p.mae_pnl)}</td>
                     <td className="mono">{p.hold_days != null ? `${p.hold_days}d` : "—"}</td>
                     <td><Badge text="OPEN" color="var(--cyan)" /></td>
                     <td><span className={`mode-badge ${p.trading_mode || "balanced"}`}>{p.trading_mode || "balanced"}</span></td>

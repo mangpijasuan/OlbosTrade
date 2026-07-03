@@ -10,10 +10,9 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { api }           from "../api/client";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk }       from "../hooks/useRisk";
-
-const API = "";
 
 // ── Equity chart canvas ───────────────────────────────────────────────────────
 interface ChartPoint { date: string; value: number; }
@@ -148,7 +147,7 @@ function PositionRow({ pos }: { pos: any }) {
   const pnl = pos.unrealized_pnl ?? 0;
   return (
     <tr>
-      <td className="mono" style={{ color: "var(--cyan)" }}>{pos.symbol || "—"}</td>
+      <td className="mono" style={{ color: "var(--ink)" }}>{pos.symbol || "—"}</td>
       <td className="mono">{pos.option_type?.toUpperCase() || pos.strategy || "EQUITY"}</td>
       <td className="mono">{pos.strike || pos.avg_cost?.toFixed(2) || "—"}</td>
       <td className="mono">{pos.expiration || pos.entry_date || "—"}</td>
@@ -222,9 +221,10 @@ export default function Dashboard() {
     setCurveLoading(true);
     try {
       // 1. Try real trade history from DB
-      const tradeRes = await fetch(`${API}/api/paper-trade/history?limit=500&status=closed`);
-      if (tradeRes.ok) {
-        const tradeData = await tradeRes.json();
+      const tradeData: any = await api
+        .getTradeHistory({ limit: 500, status: "closed" })
+        .catch(() => null);
+      if (tradeData) {
         const trades = tradeData.trades ?? [];
         const curve = buildCurveFromTrades(trades, portfolio?.starting_capital ?? 25000);
         if (curve.length >= 2) {
@@ -236,15 +236,15 @@ export default function Dashboard() {
       }
 
       // 2. Fall back to latest completed backtest equity_curve
-      const histRes = await fetch(`${API}/api/backtest/history?limit=5`);
-      if (histRes.ok) {
-        const histData = await histRes.json();
+      const histData: any = await api.getBacktestHistory(5).catch(() => null);
+      if (histData) {
         const completed = (histData.runs ?? []).find((r: any) => r.status === "completed");
         if (completed) {
           // Fetch full result to get equity_curve array
-          const runRes = await fetch(`${API}/api/backtest/${completed.run_id}/results`);
-          if (runRes.ok) {
-            const runData = await runRes.json();
+          const runData: any = await api
+            .getBacktestResults(completed.run_id)
+            .catch(() => null);
+          if (runData) {
             const ec: number[] = runData.equity_curve ?? [];
             if (ec.length >= 2) {
               // Generate synthetic dates for backtest curve
@@ -292,7 +292,6 @@ export default function Dashboard() {
           label="Portfolio Value"
           value={`$${(pv / 1000).toFixed(2)}k`}
           sub={portfolio?.return_pct != null ? `${portfolio.return_pct >= 0 ? "+" : ""}${portfolio.return_pct.toFixed(2)}% all-time` : undefined}
-          color="var(--cyan)"
         />
         <StatCell
           label="Day P&L"
@@ -312,7 +311,7 @@ export default function Dashboard() {
         />
         <StatCell label="Buying Power"     value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
         <StatCell label="Net Delta"        value={(greeks?.net_delta || 0).toFixed(3)} />
-        <StatCell label="Net Theta / day"  value={(greeks?.net_theta || 0).toFixed(3)} color="var(--cyan)" />
+        <StatCell label="Net Theta / day"  value={(greeks?.net_theta || 0).toFixed(3)} />
         <StatCell label="Open Positions"   value={String(portfolio?.open_positions ?? positions.length)} />
       </div>
 
@@ -453,9 +452,9 @@ export default function Dashboard() {
                 { label: "Θ THETA", val: (greeks?.net_theta || 0).toFixed(4) },
                 { label: "ν VEGA",  val: (greeks?.net_vega  || 0).toFixed(4) },
               ].map(g => (
-                <div key={g.label} style={{ background: "var(--bg-3)", padding: "10px 12px" }}>
+                <div key={g.label} style={{ background: "var(--bg-3)", borderRadius: 4, padding: "8px 10px" }}>
                   <div className="kicker" style={{ marginBottom: 4 }}>{g.label}</div>
-                  <div className="data-val sm mono">{g.val}</div>
+                  <div className="data-val sm">{g.val}</div>
                 </div>
               ))}
             </div>
