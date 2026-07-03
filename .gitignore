@@ -1,7 +1,11 @@
 # Environment — NEVER commit real secrets
 .env
+.env.*
+!.env.example
+!.env.prod.example
 .env.local
 .env.production
+.env.prod
 
 # Python
 __pycache__/
