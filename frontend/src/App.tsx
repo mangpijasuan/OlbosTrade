@@ -9,6 +9,7 @@ import Strategy        from "./pages/Strategy";
 import Journal         from "./pages/Journal";
 import Research        from "./pages/Research";
 import Signals         from "./pages/Signals";
+import Intel           from "./pages/Intel";
 import Settings        from "./pages/Settings";
 
 const PAGES: Record<string, React.ComponentType> = {
@@ -20,6 +21,7 @@ const PAGES: Record<string, React.ComponentType> = {
   strategy:   Strategy,
   journal:    Journal,
   research:   Research,
+  intel:      Intel,
   settings:   Settings,
 };
 

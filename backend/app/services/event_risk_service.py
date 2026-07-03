@@ -68,6 +68,38 @@ _MACRO_CALENDAR: list[tuple[date, str]] = [
     (date(2026, 12, 9), "FOMC"),
 ]
 
+# Severity per macro event type — feeds the calendar UI and event-risk windows.
+_MACRO_SEVERITY: dict[str, str] = {
+    "FOMC": "very_high",
+    "CPI": "high",
+    "PPI": "high",
+    "NFP": "high",
+    "PCE": "moderate",
+    "GDP": "moderate",
+}
+
+
+def list_macro_events(as_of: date | None = None, days_ahead: int = 45) -> list[dict]:
+    """Upcoming high-impact macro events within the window, with severity.
+
+    Read-only accessor for the calendar UI. Does not affect the risk gate."""
+    today = as_of or datetime.now(timezone.utc).date()
+    horizon = today.toordinal() + days_ahead
+    out: list[dict] = []
+    for event_date, name in sorted(_MACRO_CALENDAR):
+        if event_date < today or event_date.toordinal() > horizon:
+            continue
+        out.append({
+            "name": name,
+            "date": event_date.isoformat(),
+            "days_away": (event_date - today).days,
+            "severity": _MACRO_SEVERITY.get(name, "moderate"),
+            "kind": "macro",
+            "source": "maintained macro calendar",
+        })
+    return out
+
+
 _earnings_cache: dict[str, tuple[int | None, datetime]] = {}
 _CACHE_TTL_SECONDS = 3600
 

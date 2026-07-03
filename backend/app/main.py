@@ -65,6 +65,7 @@ from app.api.routes import equity
 from app.api.routes import trade_desk
 from app.api.routes import options_flow
 from app.api.routes import options_csp
+from app.api.routes import intel
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -108,6 +109,7 @@ app.include_router(equity.router,      prefix="/api/equity",       tags=["Equity
 app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade Desk"])
 app.include_router(options_flow.router,prefix="/api/options-flow",  tags=["Options Flow"])
 app.include_router(options_csp.router, prefix="/api/options/csp",   tags=["Options Income"])
+app.include_router(intel.router,       prefix="/api/intel",        tags=["Intelligence Hub"])
 
 # Nightly archive scheduler (Options Flow data retention)
 _flow_scheduler: Optional[object] = None
@@ -156,6 +158,13 @@ async def on_startup() -> None:
 
     # 4. Start background scheduler
     asyncio.create_task(_background_scheduler())
+
+    # 4b. Seed default smart watchlists (idempotent, non-fatal).
+    try:
+        from app.services.intel.watchlist_service import seed_defaults
+        await seed_defaults()
+    except Exception as exc:
+        logger.warning("Watchlist seeding skipped (non-fatal): %s", exc)
 
     # 5. Start Options Flow ingest service (idle unless enabled / demo mode)
     try:

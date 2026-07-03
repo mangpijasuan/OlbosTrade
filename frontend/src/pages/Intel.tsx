@@ -1,0 +1,177 @@
+/**
+ * Intel — Market News & Catalyst Intelligence Hub (Phase 1).
+ *
+ * Read-only research: event calendar, smart watchlists, data quality, and a
+ * "why is it moving?" lookup. Nothing here creates orders or touches risk.
+ */
+
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
+
+type Tab = "calendar" | "watchlists" | "why";
+
+interface CalEvent {
+  name: string; date: string; days_away: number;
+  severity: "very_high" | "high" | "moderate" | "low";
+  kind: string; symbol?: string; source: string;
+}
+interface Watchlist {
+  slug: string; name: string; description: string; is_system: boolean;
+  symbols: { symbol: string; asset_class: string }[];
+}
+interface WhyMoving {
+  symbol: string; headline: string;
+  facts: string[]; inferences: string[]; risk_notes: string[]; unknown: string[];
+}
+
+const SEV_TONE: Record<string, string> = {
+  very_high: "var(--red)", high: "var(--amber)", moderate: "var(--accent)", low: "var(--ink-dim)",
+};
+
+function SevBadge({ s }: { s: string }) {
+  const tone = SEV_TONE[s] || "var(--ink-dim)";
+  return (
+    <span style={{ fontSize: 11, color: tone, border: `1px solid ${tone}`, borderRadius: 3, padding: "1px 7px", whiteSpace: "nowrap" }}>
+      {s.replace("_", " ")}
+    </span>
+  );
+}
+
+function CalendarTab() {
+  const [events, setEvents] = useState<CalEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    (api.getCatalystCalendar(undefined, 60) as Promise<{ events: CalEvent[] }>)
+      .then(d => setEvents(d.events || [])).finally(() => setLoading(false));
+  }, []);
+  return (
+    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, overflow: "hidden" }}>
+      <table className="t-table">
+        <thead><tr>
+          <th>Event</th><th>Date</th><th style={{ textAlign: "right" }}>In</th><th>Type</th><th>Severity</th><th>Source</th>
+        </tr></thead>
+        <tbody>
+          {events.map((e, i) => (
+            <tr key={i}>
+              <td style={{ color: "var(--ink)" }}>{e.name}</td>
+              <td className="tnum" style={{ color: "var(--ink-dim)" }}>{e.date}</td>
+              <td className="tnum" style={{ textAlign: "right", color: "var(--ink-dim)" }}>{e.days_away}d</td>
+              <td style={{ color: "var(--ink-dim)", fontSize: 12, textTransform: "capitalize" }}>{e.kind}</td>
+              <td><SevBadge s={e.severity} /></td>
+              <td style={{ color: "var(--ink-faint)", fontSize: 12 }}>{e.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {loading ? <div style={{ padding: 24, textAlign: "center", color: "var(--ink-dim)", fontSize: 12 }}>Loading…</div>
+        : events.length === 0 ? <div style={{ padding: 24, textAlign: "center", color: "var(--ink-dim)", fontSize: 12 }}>No events in window.</div> : null}
+    </div>
+  );
+}
+
+function WatchlistsTab() {
+  const [lists, setLists] = useState<Watchlist[]>([]);
+  useEffect(() => {
+    (api.getWatchlists() as Promise<{ watchlists: Watchlist[] }>).then(d => setLists(d.watchlists || []));
+  }, []);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+      {lists.map(w => (
+        <div key={w.slug} style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{w.name}</span>
+            {w.is_system && <span style={{ fontSize: 10, color: "var(--ink-faint)", border: "1px solid var(--line-dim)", borderRadius: 2, padding: "0 4px" }}>system</span>}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--ink-dim)", marginBottom: 8 }}>{w.description}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {w.symbols.map(s => (
+              <span key={s.symbol} className="mono" style={{ fontSize: 11, color: "var(--ink)", background: "var(--bg-3)", borderRadius: 3, padding: "2px 7px" }}>{s.symbol}</span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Bucket({ title, items, tone }: { title: string; items: string[]; tone: string }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="kicker" style={{ marginBottom: 5 }}>{title}</div>
+      {items.map((t, i) => (
+        <div key={i} style={{ fontSize: 13, color: tone, lineHeight: 1.6, display: "flex", gap: 7 }}>
+          <span style={{ color: "var(--ink-faint)" }}>·</span>{t}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WhyTab() {
+  const [sym, setSym] = useState("NVDA");
+  const [data, setData] = useState<WhyMoving | null>(null);
+  const [quality, setQuality] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const run = (s: string) => {
+    setLoading(true);
+    Promise.all([
+      api.getWhyMoving(s) as Promise<WhyMoving>,
+      api.getDataQuality(s).catch(() => null),
+    ]).then(([w, q]) => { setData(w); setQuality(q); }).finally(() => setLoading(false));
+  };
+  useEffect(() => { run("NVDA"); }, []);
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <input value={sym} onChange={e => setSym(e.target.value.toUpperCase())}
+          onKeyDown={e => { if (e.key === "Enter") run(sym); }}
+          style={{ background: "var(--bg-3)", border: "1px solid var(--line-dim)", color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 13, padding: "7px 10px", borderRadius: 4, outline: "none", width: 120 }} />
+        <button className="btn-t active" onClick={() => run(sym)} disabled={loading}>{loading ? "Loading…" : "Explain"}</button>
+        {quality && (
+          <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12, color: "var(--ink-dim)" }}>
+            Data quality <span className="tnum" style={{ color: quality.score >= 70 ? "var(--green)" : "var(--amber)" }}>{quality.score}/100</span>
+          </span>
+        )}
+      </div>
+      {data && (
+        <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 12 }}>{data.headline}</div>
+          <Bucket title="Observed facts" items={data.facts} tone="var(--ink)" />
+          <Bucket title="Possible drivers (inference)" items={data.inferences} tone="var(--ink-dim)" />
+          <Bucket title="Risk notes" items={data.risk_notes} tone="var(--amber)" />
+          <Bucket title="Unknown / unavailable" items={data.unknown} tone="var(--ink-faint)" />
+          <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8, borderTop: "1px solid var(--line-dim)", paddingTop: 8 }}>
+            Research context only — not a trade signal. Drivers are inferences, not confirmed causes.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "calendar", label: "Event Calendar" },
+  { key: "watchlists", label: "Smart Watchlists" },
+  { key: "why", label: "Why Is It Moving?" },
+];
+
+export default function Intel() {
+  const [tab, setTab] = useState<Tab>("calendar");
+  return (
+    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, maxWidth: 1180 }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Intel</h2>
+        <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--ink-dim)" }}>News &amp; catalyst intelligence · research context, not trade signals</p>
+      </div>
+      <div style={{ display: "flex", gap: 6, borderBottom: "1px solid var(--line-dim)", paddingBottom: 8 }}>
+        {TABS.map(t => (
+          <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+      {tab === "calendar" && <CalendarTab />}
+      {tab === "watchlists" && <WatchlistsTab />}
+      {tab === "why" && <WhyTab />}
+    </div>
+  );
+}

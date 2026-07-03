@@ -39,6 +39,7 @@ const NAV_SECTIONS = [
       { key: "risk", label: "Risk", icon: "risk", fx: "F6" },
       { key: "journal", label: "Journal", icon: "journal", fx: "F8" },
       { key: "research", label: "Research", icon: "research", fx: "F9" },
+      { key: "intel", label: "Intel", icon: "flow", fx: "" },
     ],
   },
 ];

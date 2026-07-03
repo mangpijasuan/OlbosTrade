@@ -62,6 +62,13 @@ export const api = {
   screenCsp: (body: object) =>
     request("/api/options/csp/screen", { method: "POST", body: JSON.stringify(body) }),
 
+  // ── Intelligence Hub ──────────────────────────────────────────────────────
+  getCatalystCalendar: (symbols?: string, daysAhead = 45) =>
+    request(`/api/intel/calendar?days_ahead=${daysAhead}${symbols ? `&symbols=${symbols}` : ""}`),
+  getWatchlists: () => request("/api/intel/watchlists"),
+  getDataQuality: (symbol: string) => request(`/api/intel/data-quality/${symbol}`),
+  getWhyMoving: (symbol: string) => request(`/api/intel/why-moving/${symbol}`),
+
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),
   getGuardrailHistory: () => request("/api/guardrails/history"),
