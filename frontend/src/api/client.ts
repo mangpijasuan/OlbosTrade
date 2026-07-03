@@ -68,6 +68,8 @@ export const api = {
   getWatchlists: () => request("/api/intel/watchlists"),
   getDataQuality: (symbol: string) => request(`/api/intel/data-quality/${symbol}`),
   getWhyMoving: (symbol: string) => request(`/api/intel/why-moving/${symbol}`),
+  getSymbolNews: (symbol: string, limit = 15) => request(`/api/intel/news/${symbol}?limit=${limit}`),
+  getSymbolFilings: (symbol: string, limit = 15) => request(`/api/intel/filings/${symbol}?limit=${limit}`),
 
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),

@@ -23,6 +23,9 @@ interface WhyMoving {
   symbol: string; headline: string;
   facts: string[]; inferences: string[]; risk_notes: string[]; unknown: string[];
 }
+interface FeedItem {
+  payload: any; source: string; as_of: string; is_delayed: boolean;
+}
 
 const SEV_TONE: Record<string, string> = {
   very_high: "var(--red)", high: "var(--amber)", moderate: "var(--accent)", low: "var(--ink-dim)",
@@ -108,22 +111,47 @@ function Bucket({ title, items, tone }: { title: string; items: string[]; tone: 
   );
 }
 
+function FeedList({ title, items, render }: { title: string; items: FeedItem[]; render: (i: FeedItem) => React.ReactNode }) {
+  return (
+    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12, color: "var(--ink-faint)" }}>None available.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {items.map((it, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <span className="tnum" style={{ fontSize: 11, color: "var(--ink-faint)", minWidth: 70 }}>{it.as_of.slice(0, 10)}</span>
+              <div style={{ minWidth: 0 }}>{render(it)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WhyTab() {
   const [sym, setSym] = useState("NVDA");
   const [data, setData] = useState<WhyMoving | null>(null);
   const [quality, setQuality] = useState<any>(null);
+  const [news, setNews] = useState<FeedItem[]>([]);
+  const [filings, setFilings] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(false);
   const run = (s: string) => {
     setLoading(true);
     Promise.all([
       api.getWhyMoving(s) as Promise<WhyMoving>,
       api.getDataQuality(s).catch(() => null),
-    ]).then(([w, q]) => { setData(w); setQuality(q); }).finally(() => setLoading(false));
+      (api.getSymbolNews(s) as Promise<{ items: FeedItem[] }>).catch(() => ({ items: [] })),
+      (api.getSymbolFilings(s) as Promise<{ items: FeedItem[] }>).catch(() => ({ items: [] })),
+    ]).then(([w, q, n, f]) => { setData(w); setQuality(q); setNews(n.items || []); setFilings(f.items || []); })
+      .finally(() => setLoading(false));
   };
   useEffect(() => { run("NVDA"); }, []);
   return (
-    <div style={{ maxWidth: 640 }}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+    <div style={{ maxWidth: 1000 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, maxWidth: 640 }}>
         <input value={sym} onChange={e => setSym(e.target.value.toUpperCase())}
           onKeyDown={e => { if (e.key === "Enter") run(sym); }}
           style={{ background: "var(--bg-3)", border: "1px solid var(--line-dim)", color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 13, padding: "7px 10px", borderRadius: 4, outline: "none", width: 120 }} />
@@ -134,18 +162,33 @@ function WhyTab() {
           </span>
         )}
       </div>
-      {data && (
-        <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 14 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 12 }}>{data.headline}</div>
-          <Bucket title="Observed facts" items={data.facts} tone="var(--ink)" />
-          <Bucket title="Possible drivers (inference)" items={data.inferences} tone="var(--ink-dim)" />
-          <Bucket title="Risk notes" items={data.risk_notes} tone="var(--amber)" />
-          <Bucket title="Unknown / unavailable" items={data.unknown} tone="var(--ink-faint)" />
-          <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8, borderTop: "1px solid var(--line-dim)", paddingTop: 8 }}>
-            Research context only — not a trade signal. Drivers are inferences, not confirmed causes.
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
+        {data && (
+          <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 12 }}>{data.headline}</div>
+            <Bucket title="Observed facts" items={data.facts} tone="var(--ink)" />
+            <Bucket title="Possible drivers (inference)" items={data.inferences} tone="var(--ink-dim)" />
+            <Bucket title="Risk notes" items={data.risk_notes} tone="var(--amber)" />
+            <Bucket title="Unknown / unavailable" items={data.unknown} tone="var(--ink-faint)" />
+            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8, borderTop: "1px solid var(--line-dim)", paddingTop: 8 }}>
+              Research context only — not a trade signal. Drivers are inferences, not confirmed causes.
+            </div>
           </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <FeedList title="News (delayed)" items={news} render={it => (
+            it.payload.link
+              ? <a href={it.payload.link} style={{ fontSize: 13, color: "var(--accent)", textDecoration: "none" }}>{it.payload.title}</a>
+              : <span style={{ fontSize: 13, color: "var(--ink)" }}>{it.payload.title}</span>
+          )} />
+          <FeedList title="SEC filings" items={filings} render={it => (
+            <span style={{ fontSize: 13 }}>
+              <span className="mono" style={{ color: it.payload.is_insider ? "var(--amber)" : "var(--ink)" }}>{it.payload.form_type}</span>
+              <span style={{ color: "var(--ink-dim)", marginLeft: 8 }}>{it.payload.category}</span>
+            </span>
+          )} />
         </div>
-      )}
+      </div>
     </div>
   );
 }

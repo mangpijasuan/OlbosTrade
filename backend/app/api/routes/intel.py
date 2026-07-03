@@ -85,6 +85,33 @@ async def delete_watchlist(slug: str):
     return {"deleted": True}
 
 
+# ── News & Filings feeds ─────────────────────────────────────────────────────
+async def _gather(providers, method: str, symbol: str, limit: int) -> list[dict]:
+    """Run each provider's blocking fetch in a thread; merge enveloped results."""
+    loop = asyncio.get_running_loop()
+    items: list[dict] = []
+    for p in providers:
+        try:
+            envs = await loop.run_in_executor(None, lambda p=p: getattr(p, method)(symbol, limit))
+            items.extend(e.to_dict() for e in envs)
+        except Exception as exc:
+            logger.warning("%s.%s failed for %s: %s", getattr(p, "name", "?"), method, symbol, exc)
+    items.sort(key=lambda d: d["as_of"], reverse=True)
+    return items[:limit]
+
+
+@router.get("/news/{symbol}")
+async def news(symbol: str, limit: int = 20):
+    items = await _gather(registry._news, "fetch_news", symbol.upper(), limit)
+    return {"symbol": symbol.upper(), "items": items, "count": len(items)}
+
+
+@router.get("/filings/{symbol}")
+async def filings(symbol: str, limit: int = 20):
+    items = await _gather(registry._filings, "fetch_filings", symbol.upper(), limit)
+    return {"symbol": symbol.upper(), "items": items, "count": len(items)}
+
+
 # ── Data quality ─────────────────────────────────────────────────────────────
 @router.get("/data-quality/{symbol}")
 async def data_quality(symbol: str):
@@ -123,11 +150,14 @@ async def why_moving(symbol: str):
     sym = symbol.upper()
     snap = await _snapshot(sym)
     days_earn = _days_to_next_earnings(sym)
+    # A sourced news item existing is a fact; its content/cause is not asserted.
+    news_items = await _gather(registry._news, "fetch_news", sym, 5)
     result = explain_move(MoveInputs(
         symbol=sym,
         change_pct=snap.get("change_pct"),
         relative_volume=snap.get("relative_volume"),
         days_to_earnings=days_earn,
+        news_detected=len(news_items) > 0,
         # Sector/VWAP/options context are wired in a later phase — omitted
         # inputs surface honestly under `unknown`, never fabricated.
     ))

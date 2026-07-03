@@ -159,12 +159,14 @@ async def on_startup() -> None:
     # 4. Start background scheduler
     asyncio.create_task(_background_scheduler())
 
-    # 4b. Seed default smart watchlists (idempotent, non-fatal).
+    # 4b. Seed default smart watchlists + register intel providers (non-fatal).
     try:
         from app.services.intel.watchlist_service import seed_defaults
+        from app.services.intel.bootstrap import register_default_providers
+        register_default_providers()
         await seed_defaults()
     except Exception as exc:
-        logger.warning("Watchlist seeding skipped (non-fatal): %s", exc)
+        logger.warning("Intel init skipped (non-fatal): %s", exc)
 
     # 5. Start Options Flow ingest service (idle unless enabled / demo mode)
     try:
