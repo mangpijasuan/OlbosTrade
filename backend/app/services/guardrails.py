@@ -64,13 +64,13 @@ class GuardrailEngine:
     """
 
     def __init__(self) -> None:
-        self.max_daily_loss_pct = settings.max_daily_loss_pct
-        self.max_weekly_loss_pct = settings.max_weekly_loss_pct
-        self.max_monthly_loss_pct = settings.max_monthly_loss_pct
-        self.cooling_off_hours = settings.cooling_off_hours
-        self.max_trades_per_day = settings.max_trades_per_day
-        self.max_consecutive_losses = settings.max_consecutive_losses
-        self.preservation_threshold = settings.capital_preservation_threshold
+        self.max_daily_loss_pct = settings.effective_max_daily_loss_pct
+        self.max_weekly_loss_pct = settings.effective_max_weekly_loss_pct
+        self.max_monthly_loss_pct = settings.effective_max_monthly_loss_pct
+        self.cooling_off_hours = settings.effective_cooling_off_hours
+        self.max_trades_per_day = settings.effective_max_trades_per_day
+        self.max_consecutive_losses = settings.effective_max_consecutive_losses
+        self.preservation_threshold = settings.effective_capital_preservation_threshold
 
     def check_all(self, portfolio: PortfolioState) -> GuardrailStatus:
         """
@@ -279,8 +279,8 @@ class GuardrailEngine:
     def get_signal_threshold(self, status: GuardrailStatus) -> float:
         """Return the minimum AI signal score required to trade."""
         if status.trading_mode == "capital_preservation":
-            return settings.signal_score_preservation_mode
-        return settings.signal_score_threshold
+            return settings.effective_signal_score_preservation_mode
+        return settings.effective_signal_score_threshold
 
     def get_position_size_multiplier(self, status: GuardrailStatus) -> float:
         """In capital preservation mode, cut position size by 50%."""

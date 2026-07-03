@@ -11,6 +11,7 @@ import asyncio
 import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import Dict, List, Literal, Tuple
 
 from ib_insync import IB, Contract, Index, LimitOrder, Option, Stock
 
@@ -28,7 +29,6 @@ from app.broker.broker_interface import (
     SpreadLeg,
     SpreadOrder,
 )
-from typing import Literal
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -153,8 +153,8 @@ class IBKRClient(BrokerInterface):
         if not target_chain:
             raise ValueError(f"No IBKR chain found for {symbol} on {expiry}")
 
-        calls: list[OptionContract] = []
-        puts: list[OptionContract] = []
+        calls: List[OptionContract] = []
+        puts: List[OptionContract] = []
 
         for option_type in ("C", "P"):
             for strike in sorted(target_chain.strikes):
@@ -230,7 +230,7 @@ class IBKRClient(BrokerInterface):
         )
 
     @staticmethod
-    def _combo_sizing(legs: list[SpreadLeg]) -> tuple[int, list[int]]:
+    def _combo_sizing(legs: List[SpreadLeg]) -> Tuple[int, List[int]]:
         """
         Convert absolute per-leg contract counts into IB combo terms: a single
         ``totalQuantity`` (the number of spreads) plus an integer ratio per leg.
@@ -251,7 +251,7 @@ class IBKRClient(BrokerInterface):
         ratios = [q // spread_qty for q in quantities]
         return spread_qty, ratios
 
-    async def _await_order(self, trade, total_qty: int, timeout: int) -> tuple[str, int, float]:
+    async def _await_order(self, trade, total_qty: int, timeout: int) -> Tuple[str, int, float]:
         """
         Poll an order until it fully fills, terminates, or the timeout expires.
 
@@ -309,7 +309,7 @@ class IBKRClient(BrokerInterface):
         is_market = spread.order_type == "MKT"
 
         # ── Qualify every leg once (reused across retries) ─────────────────────
-        qualified: list[tuple[SpreadLeg, Contract]] = []
+        qualified: List[Tuple[SpreadLeg, Contract]] = []
         for leg in spread.legs:
             expiry_ib = leg.expiration.strftime("%Y%m%d")
             opt = Option(leg.symbol, expiry_ib, float(leg.strike),
@@ -508,7 +508,7 @@ class IBKRClient(BrokerInterface):
             message=f"No fill after {_retries + 1} attempt(s)",
         )
 
-    async def get_positions(self) -> list[Position]:
+    async def get_positions(self) -> List[Position]:
         """Return all open positions from IBKR account."""
         self._require_connection()
 
@@ -567,9 +567,9 @@ class IBKRClient(BrokerInterface):
         qty: int,
         side: Literal["BUY", "SELL"],
         order_type: Literal["market", "limit", "stop", "stop_limit"] = "market",
-        limit_price: float | None = None,
-        stop: float | None = None,
-        take_profit: float | None = None,
+        limit_price: Optional[float] = None,
+        stop: Optional[float] = None,
+        take_profit: Optional[float] = None,
     ) -> EquityOrderResult:
         """Submit an equity order via IBKR."""
         self._require_connection()
@@ -656,7 +656,7 @@ class IBKRClient(BrokerInterface):
     async def get_bars(
         self, ticker: str, timeframe: str = "1 day", limit: int = 100,
         end_date: str = "",
-    ) -> list[Bar]:
+    ) -> List[Bar]:
         """
         Fetch OHLCV daily bars from IBKR historical data.
 
@@ -695,7 +695,7 @@ class IBKRClient(BrokerInterface):
             ))
         return result
 
-    async def get_index_bars(self, symbol: str, exchange: str = "CBOE", limit: int = 60) -> list[Bar]:
+    async def get_index_bars(self, symbol: str, exchange: str = "CBOE", limit: int = 60) -> List[Bar]:
         """
         Fetch historical bars for an index (e.g. VIX on CBOE).
         Uses secType=IND instead of STK — required for $VIX, $SPX, etc.
@@ -779,7 +779,7 @@ class IBKRClient(BrokerInterface):
             account_values = self.ib.accountValues()
             await self.ib.reqAccountUpdatesAsync(False, account_id_temp)
 
-        values: dict[str, str] = {}
+        values: Dict[str, str] = {}
         account_id = (self.ib.managedAccounts() or ["unknown"])[0]
         for v in account_values:
             if v.currency in ("USD", "BASE", ""):

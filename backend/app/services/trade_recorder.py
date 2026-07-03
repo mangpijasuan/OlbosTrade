@@ -72,6 +72,7 @@ class TradeRecorder:
             from app.core.database import AsyncSessionLocal
             from app.models.trade import Trade
             from app.models.journal_entry import JournalEntry
+            from app.services.strategy_config_service import strategy_config_service
 
             # ── Idempotency check ───────────────────────────────────────────
             async with AsyncSessionLocal() as session:
@@ -86,6 +87,12 @@ class TradeRecorder:
                 return str(existing.id)
 
             trade_id = uuid.uuid4()
+            snapshot_id = None
+
+            async with AsyncSessionLocal() as session:
+                active_snapshot = await strategy_config_service.get_active_snapshot(session, strategy)
+                if active_snapshot is not None:
+                    snapshot_id = active_snapshot.id
 
             async with AsyncSessionLocal() as session:
                 async with session.begin():
@@ -111,6 +118,10 @@ class TradeRecorder:
                         quantity=int(quantity or 1),
                         trading_mode_at_entry=trading_mode or "balanced",
                         dispatch_id=dispatch_id,
+                        strategy_snapshot_id=snapshot_id,
+                        mfe_pnl=Decimal("0"),
+                        mae_pnl=Decimal("0"),
+                        pnl_capture_pct=None,
                     )
                     session.add(trade)
 
@@ -180,10 +191,17 @@ class TradeRecorder:
                     pnl    = (credit - cost_to_close) * qty * 100
                     starting_capital = float(settings.starting_capital)
                     pnl_pct = pnl / starting_capital if starting_capital > 0 else 0.0
+                    mfe_pnl = float(getattr(trade, "mfe_pnl", 0) or 0)
+                    pnl_capture_pct = (pnl / mfe_pnl) if mfe_pnl > 0 else None
 
                     trade.cost_to_close = Decimal(str(round(cost_to_close, 4)))
                     trade.pnl           = Decimal(str(round(pnl, 2)))
                     trade.pnl_pct       = Decimal(str(round(pnl_pct, 6)))
+                    trade.pnl_capture_pct = (
+                        Decimal(str(round(pnl_capture_pct, 6)))
+                        if pnl_capture_pct is not None
+                        else None
+                    )
                     trade.status        = "closed"
                     trade.exit_date     = datetime.now(timezone.utc)
                     trade.exit_reason   = exit_reason

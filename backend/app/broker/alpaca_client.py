@@ -10,7 +10,7 @@ import asyncio
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Dict, List, Literal, Optional
 
 import httpx
 
@@ -60,13 +60,13 @@ class AlpacaClient(BrokerInterface):
         self,
         method: str,
         url: str,
-        headers: dict | None = None,
+        headers: Optional[Dict] = None,
         **kwargs,
-    ) -> dict:
+    ) -> Dict:
         """Execute an httpx request with exponential backoff retry on 429/timeout."""
         hdrs = headers or self._headers
         delay = BASE_RETRY_DELAY
-        last_exc: Exception | None = None
+        last_exc: Optional[Exception] = None
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -108,7 +108,7 @@ class AlpacaClient(BrokerInterface):
     async def place_order(self, spread: SpreadOrder) -> OrderResult:
         raise NotImplementedError("Use IBKR for options")
 
-    async def get_positions(self) -> list[Position]:
+    async def get_positions(self) -> List[Position]:
         """
         Alpaca is equity-only. Delegate to get_equity_positions and convert
         EquityPosition → Position so the generic interface works correctly.
@@ -153,9 +153,9 @@ class AlpacaClient(BrokerInterface):
         qty: int,
         side: Literal["BUY", "SELL"],
         order_type: Literal["market", "limit", "stop", "stop_limit"] = "market",
-        limit_price: float | None = None,
-        stop: float | None = None,
-        take_profit: float | None = None,
+        limit_price: Optional[float] = None,
+        stop: Optional[float] = None,
+        take_profit: Optional[float] = None,
     ) -> EquityOrderResult:
         """POST /v2/orders — bracket orders supported."""
         payload: dict = {
@@ -210,7 +210,7 @@ class AlpacaClient(BrokerInterface):
 
     async def get_bars(
         self, ticker: str, timeframe: str = "1Day", limit: int = 100
-    ) -> list[Bar]:
+    ) -> List[Bar]:
         """GET /v2/stocks/{symbol}/bars from Alpaca data API."""
         url = f"{self._data_url}/v2/stocks/{ticker}/bars"
         params = {
@@ -251,13 +251,13 @@ class AlpacaClient(BrokerInterface):
             timestamp=ts,
         )
 
-    async def get_latest_trade(self, ticker: str) -> dict:
+    async def get_latest_trade(self, ticker: str) -> Dict:
         """GET /v2/stocks/{symbol}/trades/latest — returns raw dict."""
         url = f"{self._data_url}/v2/stocks/{ticker}/trades/latest"
         data = await self._request("GET", url)
         return data.get("trade", {})
 
-    async def get_equity_positions(self) -> list[dict]:
+    async def get_equity_positions(self) -> List[Dict]:
         """GET /v2/positions — returns raw list of position dicts."""
         data = await self._request("GET", f"{self._base_url}/v2/positions")
         return data if isinstance(data, list) else []

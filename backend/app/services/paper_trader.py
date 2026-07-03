@@ -188,7 +188,7 @@ class PaperTrader:
         try:
             # ── Position reconciliation ───────────────────────────────────────
             try:
-                recon = await self.reconciler.reconcile()
+                recon = await self.reconciler.reconcile_and_record(source="cycle_preflight")
                 for w in recon.warnings:
                     actions.append({"action": "warning", "message": w})
             except ReconciliationError as exc:

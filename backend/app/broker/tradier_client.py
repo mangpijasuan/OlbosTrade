@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -45,7 +46,7 @@ class TradierClient(BrokerInterface):
             timeout=15.0,
         )
 
-    async def _get(self, path: str, params: dict | None = None) -> dict:
+    async def _get(self, path: str, params: Optional[Dict] = None) -> Dict:
         """Shared GET helper with error handling."""
         response = await self._client.get(path, params=params)
         response.raise_for_status()
@@ -65,8 +66,8 @@ class TradierClient(BrokerInterface):
 
         options = data.get("options", {}).get("option", []) or []
 
-        calls: list[OptionContract] = []
-        puts: list[OptionContract] = []
+        calls: List[OptionContract] = []
+        puts: List[OptionContract] = []
 
         for opt in options:
             greeks_data = opt.get("greeks") or {}
@@ -132,7 +133,7 @@ class TradierClient(BrokerInterface):
         Tradier uses their combo order endpoint for spreads.
         """
         # Build leg payload
-        payload: dict = {
+        payload: Dict = {
             "class": "multileg",
             "symbol": spread.underlying,
             "type": spread.order_type.lower(),
@@ -154,7 +155,7 @@ class TradierClient(BrokerInterface):
             message=data.get("status"),
         )
 
-    async def get_positions(self) -> list[Position]:
+    async def get_positions(self) -> List[Position]:
         """Return open positions from Tradier account."""
         data = await self._get("/accounts/{account_id}/positions")
         raw = data.get("positions", {}).get("position", []) or []

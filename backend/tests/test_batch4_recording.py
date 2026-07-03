@@ -188,6 +188,7 @@ def test_pnl_pct_uses_settings_not_hardcoded():
     src = inspect.getsource(TradeRecorder.record_exit)
     assert "25000.0" not in src, "pnl_pct must not divide by hardcoded 25000.0"
     assert "settings.starting_capital" in src, "pnl_pct must use settings.starting_capital"
+    assert "pnl_capture_pct" in src, "record_exit should compute capture percentage"
 
 
 @pytest.mark.asyncio
@@ -210,13 +211,14 @@ async def test_pnl_pct_scales_with_starting_capital():
 
     class _CaptureTrade:
         def __setattr__(self, name, value):
-            if name in ("pnl", "pnl_pct", "cost_to_close", "status", "exit_date", "exit_reason"):
+            if name in ("pnl", "pnl_pct", "pnl_capture_pct", "cost_to_close", "status", "exit_date", "exit_reason"):
                 captured[name] = value
             super().__setattr__(name, value)
 
     fake_trade2 = _CaptureTrade()
     fake_trade2.credit_received = Decimal("2.00")
     fake_trade2.quantity = 1
+    fake_trade2.mfe_pnl = Decimal("200.00")
 
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -243,6 +245,11 @@ async def test_pnl_pct_scales_with_starting_capital():
         assert abs(actual_pnl_pct - expected_pct) < 1e-6, (
             f"pnl_pct={actual_pnl_pct} but expected {expected_pct} "
             f"(starting_capital={settings.starting_capital})"
+        )
+    if "pnl_capture_pct" in captured:
+        actual_capture = float(captured["pnl_capture_pct"])
+        assert abs(actual_capture - 0.5) < 1e-6, (
+            f"pnl_capture_pct={actual_capture} but expected 0.5"
         )
 
 

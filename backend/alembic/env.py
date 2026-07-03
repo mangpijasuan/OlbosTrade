@@ -15,6 +15,7 @@ from app.models import (  # noqa: F401
     journal_entry,
     options_flow,
     position,
+    reconciliation_snapshot,
     risk_state,
     trade,
 )

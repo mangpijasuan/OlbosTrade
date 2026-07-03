@@ -5,6 +5,7 @@ Run with: pytest tests/test_guardrails.py -v
 
 from datetime import datetime, timedelta, timezone
 import pytest
+from app.core.config import settings
 from app.services.guardrails import GuardrailEngine, PortfolioState
 
 
@@ -203,3 +204,28 @@ def test_cooling_off_takes_priority_over_daily_loss(engine):
     ))
     assert status.trading_allowed is False
     assert "cooling_off_active" in status.flags
+
+
+def test_paper_visibility_mode_relaxes_trade_cap(monkeypatch):
+    monkeypatch.setattr(settings, "broker", "ibkr")
+    monkeypatch.setattr(settings, "ibkr_trading_mode", "paper")
+    monkeypatch.setattr(settings, "paper_trade_visibility_mode", True)
+    monkeypatch.setattr(settings, "paper_visibility_max_trades_per_day", 20)
+
+    engine = GuardrailEngine()
+
+    assert engine.max_trades_per_day == 20
+    status = engine.check_all(make_portfolio(trades_today=6))
+    assert status.trading_allowed is True
+
+
+def test_paper_visibility_mode_lowers_signal_threshold(monkeypatch):
+    monkeypatch.setattr(settings, "broker", "ibkr")
+    monkeypatch.setattr(settings, "ibkr_trading_mode", "paper")
+    monkeypatch.setattr(settings, "paper_trade_visibility_mode", True)
+    monkeypatch.setattr(settings, "paper_visibility_signal_score_threshold", 0.35)
+
+    engine = GuardrailEngine()
+    status = engine.check_all(make_portfolio())
+
+    assert engine.get_signal_threshold(status) == 0.35

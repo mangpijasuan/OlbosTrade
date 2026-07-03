@@ -6,12 +6,13 @@ All application code calls get_broker() instead of importing clients directly.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from app.broker.broker_interface import BrokerInterface
 
 logger = logging.getLogger(__name__)
 
-_broker_instance: BrokerInterface | None = None
+_broker_instance: Optional[BrokerInterface] = None
 
 
 def get_broker() -> BrokerInterface:

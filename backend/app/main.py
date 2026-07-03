@@ -64,6 +64,7 @@ from app.api.routes import (
 from app.api.routes import equity
 from app.api.routes import trade_desk
 from app.api.routes import options_flow
+from app.api.routes import options_csp
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -106,6 +107,7 @@ app.include_router(trading_mode.router,prefix="/api/mode",         tags=["Tradin
 app.include_router(equity.router,      prefix="/api/equity",       tags=["Equity"])
 app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade Desk"])
 app.include_router(options_flow.router,prefix="/api/options-flow",  tags=["Options Flow"])
+app.include_router(options_csp.router, prefix="/api/options/csp",   tags=["Options Income"])
 
 # Nightly archive scheduler (Options Flow data retention)
 _flow_scheduler: Optional[object] = None
@@ -672,8 +674,16 @@ async def _update_portfolio_greeks() -> None:
         return
     try:
         from app.broker.broker_factory import get_broker
+        from app.services.trade_excursion_tracker import trade_excursion_tracker
         broker = get_broker()
         positions = await broker.get_positions()
+
+        excursion_result = await trade_excursion_tracker.update_from_broker_positions(positions)
+        if excursion_result.updated_trades > 0:
+            logger.debug(
+                "Trade excursion tracker updated %d trade(s)",
+                excursion_result.updated_trades,
+            )
 
         # Rebuild the tracker from live positions on every tick
         _greeks_tracker._positions.clear()
@@ -780,6 +790,8 @@ async def guardrail_status():
         "trading_mode":          status.trading_mode,
         "reason":                status.reason,
         "flags":                 status.flags,
+        "paper_mode":            settings.is_paper_trading,
+        "paper_visibility_mode": settings.paper_visibility_active,
         "daily_pnl":             daily_pnl,
         "weekly_pnl":            weekly_pnl,
         "monthly_pnl":           monthly_pnl,
@@ -789,6 +801,13 @@ async def guardrail_status():
         "consecutive_losses":    consecutive_losses,
         "trades_today":          trades_today,
         "capital_pct_remaining": status.capital_pct_remaining,
+        "max_daily_loss_pct":    _guardrail_engine.max_daily_loss_pct,
+        "max_weekly_loss_pct":   _guardrail_engine.max_weekly_loss_pct,
+        "max_monthly_loss_pct":  _guardrail_engine.max_monthly_loss_pct,
+        "max_trades_per_day":    _guardrail_engine.max_trades_per_day,
+        "max_consecutive_losses": _guardrail_engine.max_consecutive_losses,
+        "capital_preservation_threshold": _guardrail_engine.preservation_threshold,
+        "signal_threshold":      _guardrail_engine.get_signal_threshold(status),
     }
 
 
@@ -800,4 +819,8 @@ async def guardrail_history():
 @app.get("/api/guardrails/trading-mode", tags=["Guardrails"])
 async def get_trading_mode():
     from app.services.trading_mode import trading_mode_manager
-    return {"mode": trading_mode_manager.current.active_mode.value, "signal_threshold": settings.signal_score_threshold}
+    return {
+        "mode": trading_mode_manager.current.active_mode.value,
+        "signal_threshold": settings.effective_signal_score_threshold,
+        "paper_visibility_mode": settings.paper_visibility_active,
+    }

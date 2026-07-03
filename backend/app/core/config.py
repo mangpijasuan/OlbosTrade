@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        protected_namespaces=("settings_",),
     )
 
     # ── Active broker ─────────────────────────────────────────────────────
@@ -50,6 +51,21 @@ class Settings(BaseSettings):
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
 
+    # ── Paper visibility mode ─────────────────────────────────────────────
+    # Lets the app generate more activity in paper mode so the operator can
+    # confirm scans, execution, and trade history without weakening live rules.
+    paper_trade_visibility_mode: bool = Field(default=False)
+    paper_visibility_signal_score_threshold: float = Field(default=0.35)
+    paper_visibility_signal_score_preservation_mode: float = Field(default=0.55)
+    paper_visibility_equity_min_confidence: float = Field(default=0.28)
+    paper_visibility_max_daily_loss_pct: float = Field(default=0.08)
+    paper_visibility_max_weekly_loss_pct: float = Field(default=0.15)
+    paper_visibility_max_monthly_loss_pct: float = Field(default=0.25)
+    paper_visibility_max_trades_per_day: int = Field(default=20)
+    paper_visibility_max_consecutive_losses: int = Field(default=8)
+    paper_visibility_cooling_off_hours: int = Field(default=1)
+    paper_visibility_capital_preservation_threshold: float = Field(default=0.65)
+
     # ── Equity signal settings ────────────────────────────────────────────
     equity_watchlist: str = Field(
         default="AAPL,NVDA,MSFT,META,AMZN,GOOGL,AMD,TSLA,SPY,QQQ,JPM,V,MA"
@@ -66,8 +82,10 @@ class Settings(BaseSettings):
 
     @property
     def effective_equity_min_confidence(self) -> float:
-        """Use lower threshold in paper mode to build training data faster."""
-        if self.ibkr_trading_mode == "paper":
+        """Use lower thresholds in paper mode to build training data faster."""
+        if self.paper_visibility_active:
+            return self.paper_visibility_equity_min_confidence
+        if self.is_paper_trading:
             return self.equity_min_confidence_paper
         return self.equity_min_confidence
 
@@ -132,6 +150,72 @@ class Settings(BaseSettings):
     def get_equity_watchlist(self) -> list[str]:
         """Parse comma-separated watchlist into a list."""
         return [t.strip().upper() for t in self.equity_watchlist.split(",") if t.strip()]
+
+    @property
+    def is_paper_trading(self) -> bool:
+        """True when the active broker is configured for paper trading."""
+        if self.broker == "alpaca":
+            return "paper" in self.alpaca_base_url.lower()
+        return self.ibkr_trading_mode.lower() == "paper"
+
+    @property
+    def paper_visibility_active(self) -> bool:
+        """Relaxed paper-only profile for generating observable app activity."""
+        return self.is_paper_trading and self.paper_trade_visibility_mode
+
+    @property
+    def effective_signal_score_threshold(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_signal_score_threshold
+        return self.signal_score_threshold
+
+    @property
+    def effective_signal_score_preservation_mode(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_signal_score_preservation_mode
+        return self.signal_score_preservation_mode
+
+    @property
+    def effective_max_daily_loss_pct(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_daily_loss_pct
+        return self.max_daily_loss_pct
+
+    @property
+    def effective_max_weekly_loss_pct(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_weekly_loss_pct
+        return self.max_weekly_loss_pct
+
+    @property
+    def effective_max_monthly_loss_pct(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_monthly_loss_pct
+        return self.max_monthly_loss_pct
+
+    @property
+    def effective_max_trades_per_day(self) -> int:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_trades_per_day
+        return self.max_trades_per_day
+
+    @property
+    def effective_max_consecutive_losses(self) -> int:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_consecutive_losses
+        return self.max_consecutive_losses
+
+    @property
+    def effective_cooling_off_hours(self) -> int:
+        if self.paper_visibility_active:
+            return self.paper_visibility_cooling_off_hours
+        return self.cooling_off_hours
+
+    @property
+    def effective_capital_preservation_threshold(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_capital_preservation_threshold
+        return self.capital_preservation_threshold
 
 
 settings = Settings()

@@ -215,7 +215,7 @@ class SignalScorer:
         if self.model_type == "regressor":
             effective_threshold = threshold or self._ror_threshold
         else:
-            effective_threshold = threshold or settings.signal_score_threshold
+            effective_threshold = threshold or settings.effective_signal_score_threshold
 
         if self.model is not None:
             raw_score, impacts = self._model_score(features)

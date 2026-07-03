@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.broker.broker_factory import get_broker
 from app.core.config import settings
@@ -201,3 +201,68 @@ async def get_equity_positions():
         return {"positions": positions, "broker": settings.broker}
     except Exception as exc:
         return {"positions": [], "error": str(exc), "broker": settings.broker}
+
+
+@router.get("/chart/{ticker}")
+async def get_equity_chart(
+    ticker: str,
+    timeframe: str = Query("15m", pattern="^(5m|15m|1h|1d)$"),
+    limit: int = Query(96, ge=20, le=240),
+):
+    """
+    Return recent OHLCV bars for the chart workstation UI.
+
+    Uses yfinance so the chart remains available even when IBKR is offline.
+    """
+    import asyncio
+    import yfinance as yf
+
+    ticker = ticker.upper().strip()
+    loop = asyncio.get_running_loop()
+
+    interval_map = {
+        "5m":  ("5d", "5m"),
+        "15m": ("10d", "15m"),
+        "1h":  ("60d", "60m"),
+        "1d":  ("1y", "1d"),
+    }
+    period, interval = interval_map[timeframe]
+
+    def _fetch():
+        hist = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
+        hist = hist.tail(limit)
+        bars: list[dict] = []
+        for ts, row in hist.iterrows():
+            bars.append({
+                "timestamp": ts.to_pydatetime().isoformat(),
+                "open": round(float(row["Open"]), 4),
+                "high": round(float(row["High"]), 4),
+                "low": round(float(row["Low"]), 4),
+                "close": round(float(row["Close"]), 4),
+                "volume": int(row.get("Volume", 0) or 0),
+            })
+        return bars
+
+    try:
+        bars = await loop.run_in_executor(None, _fetch)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not load chart data for {ticker}: {exc}") from exc
+
+    if not bars:
+        raise HTTPException(status_code=404, detail=f"No chart data available for {ticker}")
+
+    closes = [bar["close"] for bar in bars]
+    highs = [bar["high"] for bar in bars]
+    lows = [bar["low"] for bar in bars]
+
+    return {
+        "ticker": ticker,
+        "timeframe": timeframe,
+        "bars": bars,
+        "summary": {
+            "last": closes[-1],
+            "change_pct": round(((closes[-1] / closes[0]) - 1) * 100, 2) if closes[0] else 0.0,
+            "high": max(highs),
+            "low": min(lows),
+        },
+    }

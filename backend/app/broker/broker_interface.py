@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,7 +38,7 @@ class OptionContract(BaseModel):
     last: Decimal
     volume: int
     open_interest: int
-    greeks: Greeks | None = None
+    greeks: Optional[Greeks] = None
 
 
 class OptionsChain(BaseModel):
@@ -46,8 +46,8 @@ class OptionsChain(BaseModel):
     underlying: str
     expiration: date
     underlying_price: Decimal
-    calls: list[OptionContract]
-    puts: list[OptionContract]
+    calls: List[OptionContract]
+    puts: List[OptionContract]
     fetched_at: datetime
 
 
@@ -65,11 +65,11 @@ class SpreadOrder(BaseModel):
     """A complete multi-leg options spread order."""
     strategy: str
     underlying: str
-    legs: list[SpreadLeg]
+    legs: List[SpreadLeg]
     limit_price: Decimal = Field(description="Net credit (positive) or debit (negative)")
     order_type: Literal["LMT", "MKT"] = "LMT"
     time_in_force: Literal["DAY", "GTC"] = "DAY"
-    client_order_id: str | None = None
+    client_order_id: Optional[str] = None
 
 
 class OrderResult(BaseModel):
@@ -85,11 +85,11 @@ class OrderResult(BaseModel):
     """
     order_id: str
     status: Literal["submitted", "filled", "partial", "cancelled", "rejected", "pending"]
-    fill_price: Decimal | None = None
-    filled_at: datetime | None = None
-    filled_quantity: int | None = None
-    remaining_quantity: int | None = None
-    message: str | None = None
+    fill_price: Optional[Decimal] = None
+    filled_at: Optional[datetime] = None
+    filled_quantity: Optional[int] = None
+    remaining_quantity: Optional[int] = None
+    message: Optional[str] = None
 
 
 class Position(BaseModel):
@@ -101,9 +101,9 @@ class Position(BaseModel):
     option_type: Literal["call", "put"]
     quantity: int = Field(description="Positive = long, negative = short")
     avg_cost: Decimal
-    current_price: Decimal | None = None
-    unrealized_pnl: Decimal | None = None
-    greeks: Greeks | None = None
+    current_price: Optional[Decimal] = None
+    unrealized_pnl: Optional[Decimal] = None
+    greeks: Optional[Greeks] = None
 
 
 class EquityPosition(BaseModel):
@@ -111,9 +111,9 @@ class EquityPosition(BaseModel):
     symbol: str
     quantity: int = Field(description="Positive = long, negative = short")
     avg_cost: Decimal
-    current_price: Decimal | None = None
-    unrealized_pnl: Decimal | None = None
-    market_value: Decimal | None = None
+    current_price: Optional[Decimal] = None
+    unrealized_pnl: Optional[Decimal] = None
+    market_value: Optional[Decimal] = None
 
 
 class AccountSummary(BaseModel):
@@ -122,7 +122,7 @@ class AccountSummary(BaseModel):
     net_liquidation: Decimal
     cash_balance: Decimal
     buying_power: Decimal
-    day_trades_remaining: int | None = None
+    day_trades_remaining: Optional[int] = None
     trading_mode: Literal["live", "paper", "sandbox"] = "paper"
 
 
@@ -150,9 +150,9 @@ class EquityOrderResult(BaseModel):
     """Result of an equity order submission."""
     order_id: str
     status: Literal["submitted", "filled", "cancelled", "rejected", "pending"]
-    fill_price: Decimal | None = None
-    filled_at: datetime | None = None
-    message: str | None = None
+    fill_price: Optional[Decimal] = None
+    filled_at: Optional[datetime] = None
+    message: Optional[str] = None
 
 
 # ── Abstract Interface ──────────────────────────────────────────────────────
@@ -194,7 +194,7 @@ class BrokerInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_positions(self) -> list[Position]:
+    async def get_positions(self) -> List[Position]:
         """Return all currently open options positions."""
         ...
 
@@ -210,9 +210,9 @@ class BrokerInterface(ABC):
         qty: int,
         side: Literal["BUY", "SELL"],
         order_type: Literal["market", "limit", "stop", "stop_limit"] = "market",
-        limit_price: float | None = None,
-        stop: float | None = None,
-        take_profit: float | None = None,
+        limit_price: Optional[float] = None,
+        stop: Optional[float] = None,
+        take_profit: Optional[float] = None,
     ) -> EquityOrderResult:
         """Submit an equity order with optional bracket (stop + take-profit)."""
         ...
@@ -220,7 +220,7 @@ class BrokerInterface(ABC):
     @abstractmethod
     async def get_bars(
         self, ticker: str, timeframe: str = "1Day", limit: int = 100
-    ) -> list[Bar]:
+    ) -> List[Bar]:
         """Fetch OHLCV bars for an equity symbol."""
         ...
 
