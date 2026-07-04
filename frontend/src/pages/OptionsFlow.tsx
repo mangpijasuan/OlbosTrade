@@ -462,19 +462,27 @@ export default function OptionsFlow() {
         }}
       >
         <div>
-          <div className="panel-title" style={{ marginBottom: 6 }}>Options Flow Scanner</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", marginBottom: 3 }}>Unusual Options Activity</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-dim)" }}>
             <span className={`dot ${connected ? "live" : "dead"}`} />
-            <span>{connected ? "Live stream connected" : "Stream disconnected"}</span>
-            <span style={{ color: "var(--ink-faint)" }}>premium-ranked unusual activity with directional context</span>
+            <span style={{ color: "var(--ink-faint)" }}>free snapshot · volume » open interest · not a real-time OPRA tape</span>
           </div>
         </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          <span className="mode-badge balanced">{dominanceLabel}</span>
-          <span className="mode-badge conservative">
-            {sortMode === "premium" ? "Ranked by premium" : "Sorted by time"}
-          </span>
+        {/* Inline Calls / Puts / Bullish summary — matches the production header. */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span className="kicker">Calls</span>
+            <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--green)" }}>{fmtUsd(scannerStats.callPremium)}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span className="kicker">Puts</span>
+            <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--red)" }}>{fmtUsd(scannerStats.putPremium)}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span className="kicker">Bullish</span>
+            <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: bullRatio >= 0.5 ? "var(--green)" : "var(--red)" }}>{Math.round(bullRatio * 100)}%</span>
+          </div>
           <button className="btn-t" onClick={() => setSortMode((current) => (current === "premium" ? "recent" : "premium"))}>
             {sortMode === "premium" ? "Show recent" : "Show unusual"}
           </button>
