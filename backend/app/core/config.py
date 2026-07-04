@@ -111,6 +111,13 @@ class Settings(BaseSettings):
     # Emit synthetic ticks so the full pipeline (ingest → sweep → DB → WS →
     # UI) can be exercised without a live data feed. For demos / testing only.
     options_flow_demo_mode: bool = Field(default=False)
+    # FREE unusual-activity snapshot from yfinance option chains (volume vs OI).
+    # Real, delayed data — no OPRA subscription. On by default; complements the
+    # premium OPRA stream above (which stays off unless subscribed).
+    options_flow_free_snapshot_enabled: bool = Field(default=True)
+    options_flow_snapshot_interval_min: int = Field(default=15)
+    options_flow_snapshot_min_vol_oi: float = Field(default=1.5)
+    options_flow_snapshot_min_premium: float = Field(default=50_000.0)
     options_flow_watchlist: str = Field(default="SPY,QQQ,IWM,AAPL,TSLA,NVDA")
     options_flow_max_dte: int = Field(default=60)
     # Max number of option contracts to subscribe to concurrently. IBKR caps

@@ -175,6 +175,19 @@ async def on_startup() -> None:
     except Exception as exc:
         logger.warning("Options flow ingest failed to start (non-fatal): %s", exc)
 
+    # 5b. FREE yfinance unusual-activity snapshot — run once now, then periodically.
+    if settings.options_flow_free_snapshot_enabled:
+        async def _snapshot_loop():
+            from app.services.options_flow_snapshot import run_snapshot
+            interval = max(5, settings.options_flow_snapshot_interval_min) * 60
+            while True:
+                try:
+                    await run_snapshot()
+                except Exception as exc:
+                    logger.warning("Options-flow snapshot run failed: %s", exc)
+                await asyncio.sleep(interval)
+        asyncio.create_task(_snapshot_loop())
+
     # 6. Nightly options_flow archive job (data retention → JSONL)
     global _flow_scheduler
     try:

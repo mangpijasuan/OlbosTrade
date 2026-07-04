@@ -29,6 +29,14 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+@router.post("/snapshot")
+async def refresh_snapshot():
+    """Run the free yfinance unusual-activity snapshot now and return the count."""
+    from app.services.options_flow_snapshot import run_snapshot
+    count = await run_snapshot()
+    return {"refreshed": True, "rows": count, "source": "yfinance-snapshot"}
+
+
 def _serialize(row: OptionsFlow) -> dict:
     return {
         "id": row.id,
