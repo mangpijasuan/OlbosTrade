@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, optionsFlowWsUrl } from "../api/client";
+import { Panel } from "../components/ui";
 
 interface FlowTick {
   id?: number;
@@ -41,6 +42,8 @@ interface FlowSummary {
   by_ticker: FlowSummaryTicker[];
 }
 
+type ViewMode = "flow" | "unusual";
+
 const QUICK_TICKERS = ["ALL", "SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA"];
 const MAX_ROWS = 250;
 
@@ -49,6 +52,11 @@ function fmtUsd(n: number): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
+}
+
+function fmtSignedUsd(n: number): string {
+  const abs = fmtUsd(Math.abs(n));
+  return `${n >= 0 ? "+" : "-"}${abs}`;
 }
 
 function fmtShort(n: number): string {
@@ -73,6 +81,14 @@ function fmtTime(iso: string): string {
 function fmtDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString("en-CA");
+  } catch {
+    return iso;
+  }
+}
+
+function fmtDateShort(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
   } catch {
     return iso;
   }
@@ -147,56 +163,40 @@ function MetricTile({
   );
 }
 
-function Panel({
-  title,
-  action,
-  children,
-}: {
-  title: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <div className="panel-title">{title}</div>
-        {action}
-      </div>
-      <div style={{ padding: 14 }}>{children}</div>
-    </section>
-  );
-}
-
 function FlowBar({
   bullRatio,
   callRatio,
+  hasData = true,
 }: {
   bullRatio: number;
   callRatio: number;
+  hasData?: boolean;
 }) {
   const safeBull = Math.round(clampRatio(bullRatio) * 100);
   const safeCall = Math.round(clampRatio(callRatio) * 100);
+  const bullLabel = hasData ? `${safeBull}% bull / ${100 - safeBull}% bear` : "Waiting for directional premium";
+  const callLabel = hasData ? `${safeCall}% calls / ${100 - safeCall}% puts` : "Waiting for call/put volume";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div>
         <div className="kicker" style={{ marginBottom: 6 }}>Bull / Bear Premium</div>
         <div style={{ display: "flex", height: 10, overflow: "hidden", borderRadius: 3, background: "var(--bg-4)" }}>
-          <div style={{ width: `${safeBull}%`, background: "var(--green)" }} />
-          <div style={{ width: `${100 - safeBull}%`, background: "var(--red)" }} />
+          <div style={{ width: hasData ? `${safeBull}%` : "0%", background: "var(--green)" }} />
+          <div style={{ width: hasData ? `${100 - safeBull}%` : "0%", background: "var(--red)" }} />
         </div>
         <div style={{ marginTop: 6, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-          {safeBull}% bull / {100 - safeBull}% bear
+          {bullLabel}
         </div>
       </div>
 
       <div>
         <div className="kicker" style={{ marginBottom: 6 }}>Calls / Puts Premium</div>
         <div style={{ display: "flex", height: 10, overflow: "hidden", borderRadius: 3, background: "var(--bg-4)" }}>
-          <div style={{ width: `${safeCall}%`, background: "var(--cyan)" }} />
-          <div style={{ width: `${100 - safeCall}%`, background: "var(--orange)" }} />
+          <div style={{ width: hasData ? `${safeCall}%` : "0%", background: "var(--accent)" }} />
+          <div style={{ width: hasData ? `${100 - safeCall}%` : "0%", background: "var(--orange)" }} />
         </div>
         <div style={{ marginTop: 6, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-          {safeCall}% calls / {100 - safeCall}% puts
+          {callLabel}
         </div>
       </div>
     </div>
@@ -219,7 +219,38 @@ function FilterButton({
   );
 }
 
+function MiniSparkline({
+  values,
+}: {
+  values: number[];
+}) {
+  const safe = values.length ? values : [0];
+  const min = Math.min(...safe);
+  const max = Math.max(...safe);
+  const span = max - min || 1;
+  const points = safe
+    .map((value, index) => {
+      const x = (index / Math.max(safe.length - 1, 1)) * 100;
+      const y = 42 - ((value - min) / span) * 30;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  const final = safe[safe.length - 1] || 0;
+  return (
+    <svg viewBox="0 0 100 42" preserveAspectRatio="none" style={{ width: "100%", height: 42 }}>
+      <polyline
+        fill="none"
+        stroke={final >= 0 ? "var(--green)" : "var(--red)"}
+        strokeWidth="2.2"
+        points={points}
+      />
+    </svg>
+  );
+}
+
 export default function OptionsFlow() {
+  const [viewMode, setViewMode] = useState<ViewMode>("flow");
   const [quickTicker, setQuickTicker] = useState("ALL");
   const [tickerDraft, setTickerDraft] = useState("");
   const [tickerFilter, setTickerFilter] = useState("ALL");
@@ -402,6 +433,7 @@ export default function OptionsFlow() {
 
     return base;
   }, [displayRows]);
+  const hasTape = displayRows.length > 0;
 
   const bullRatio = useMemo(() => {
     const denom = scannerStats.bullishPremium + scannerStats.bearishPremium;
@@ -416,12 +448,13 @@ export default function OptionsFlow() {
   }, [scannerStats.callPremium, scannerStats.putPremium]);
 
   const dominanceLabel = useMemo(() => {
+    if (!hasTape) return "WAITING FOR FLOW";
     if (bullRatio >= 0.62 && callRatio >= 0.55) return "BULLISH CALL PRESSURE";
     if (bullRatio <= 0.38 && callRatio <= 0.45) return "BEARISH PUT PRESSURE";
     if (bullRatio >= 0.58) return "BULLISH PREMIUM LEAN";
     if (bullRatio <= 0.42) return "BEARISH PREMIUM LEAN";
     return "TWO-WAY FLOW";
-  }, [bullRatio, callRatio]);
+  }, [bullRatio, callRatio, hasTape]);
 
   const focusTicker = useMemo(() => {
     if (tickerFilter !== "ALL") return tickerFilter;
@@ -447,6 +480,92 @@ export default function OptionsFlow() {
 
   const standoutTrade = displayRows[0] || null;
   const biggestSweep = displayRows.find((row) => row.large_sweep || row.sweep_confirmed) || null;
+  const callVolume = scannerStats.callCount ? displayRows.filter((row) => row.right === "C").reduce((sum, row) => sum + row.size, 0) : 0;
+  const putVolume = scannerStats.putCount ? displayRows.filter((row) => row.right === "P").reduce((sum, row) => sum + row.size, 0) : 0;
+  const pcRatio = callVolume > 0 ? putVolume / callVolume : 0;
+
+  const topRepeats = useMemo(() => {
+    const bucket = new Map<string, { label: string; count: number; premium: number }>();
+    for (const row of displayRows) {
+      const key = `${row.ticker}-${row.strike}`;
+      const existing = bucket.get(key);
+      if (existing) {
+        existing.count += 1;
+        existing.premium += row.premium;
+      } else {
+        bucket.set(key, {
+          label: `${row.ticker} ${row.strike}`,
+          count: 1,
+          premium: row.premium,
+        });
+      }
+    }
+    return [...bucket.values()]
+      .sort((left, rightItem) => {
+        if (rightItem.count !== left.count) return rightItem.count - left.count;
+        return rightItem.premium - left.premium;
+      })
+      .slice(0, 3);
+  }, [displayRows]);
+
+  const intradaySeries = useMemo(() => {
+    const ordered = [...displayRows]
+      .sort((left, rightItem) => new Date(left.timestamp).getTime() - new Date(rightItem.timestamp).getTime())
+      .slice(-24);
+
+    if (!ordered.length) {
+      return {
+        net: 0,
+        labels: [] as string[],
+        calls: 0,
+        puts: 0,
+        values: [0],
+      };
+    }
+
+    const values: number[] = [];
+    const labels: string[] = [];
+    let running = 0;
+    let calls = 0;
+    let puts = 0;
+
+    for (const row of ordered) {
+      if (row.sentiment === "bullish") running += row.premium;
+      else if (row.sentiment === "bearish") running -= row.premium;
+      if (row.right === "C") calls += row.premium;
+      else puts += row.premium;
+      values.push(running);
+      labels.push(fmtTime(row.timestamp).slice(0, 5));
+    }
+
+    return {
+      net: running,
+      labels,
+      calls,
+      puts,
+      values,
+    };
+  }, [displayRows]);
+
+  const setPremiumPreset = useCallback((value: number) => {
+    setMinPremium((current) => (current === value ? 0 : value));
+  }, []);
+
+  const setDtePreset = useCallback((value: number) => {
+    setMaxDte((current) => (current === value ? "" : value));
+  }, []);
+
+  const setTradeTypePreset = useCallback((value: "" | "sweep" | "block" | "single") => {
+    setTradeType((current) => (current === value ? "" : value));
+  }, []);
+
+  const setRightPreset = useCallback((value: "all" | "C" | "P") => {
+    setRight((current) => (current === value ? "all" : value));
+  }, []);
+
+  const setSentimentPreset = useCallback((value: "" | "bullish" | "bearish") => {
+    setSentiment((current) => (current === value ? "" : value));
+  }, []);
 
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -461,15 +580,38 @@ export default function OptionsFlow() {
           gap: 12,
         }}
       >
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", marginBottom: 3 }}>Unusual Options Activity</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-dim)" }}>
-            <span className={`dot ${connected ? "live" : "dead"}`} />
-            <span style={{ color: "var(--ink-faint)" }}>free snapshot · volume » open interest · not a real-time OPRA tape</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button
+              className={`btn-t ${viewMode === "flow" ? "active" : ""}`}
+              onClick={() => {
+                setViewMode("flow");
+                setSortMode("recent");
+              }}
+            >
+              Options Flow
+            </button>
+            <button
+              className={`btn-t ${viewMode === "unusual" ? "active" : ""}`}
+              onClick={() => {
+                setViewMode("unusual");
+                setSortMode("premium");
+              }}
+            >
+              Unusual Activity
+            </button>
+          </div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", marginBottom: 3 }}>
+              {viewMode === "flow" ? "Live Options Tape" : "Unusual Options Activity"}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-dim)" }}>
+              <span className={`dot ${connected ? "live" : "dead"}`} />
+              <span style={{ color: "var(--ink-faint)" }}>free snapshot · volume » open interest proxy · not a real-time OPRA tape</span>
+            </div>
           </div>
         </div>
 
-        {/* Inline Calls / Puts / Bullish summary — matches the production header. */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
             <span className="kicker">Calls</span>
@@ -481,7 +623,9 @@ export default function OptionsFlow() {
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
             <span className="kicker">Bullish</span>
-            <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: bullRatio >= 0.5 ? "var(--green)" : "var(--red)" }}>{Math.round(bullRatio * 100)}%</span>
+            <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: hasTape ? bullRatio >= 0.5 ? "var(--green)" : "var(--red)" : "var(--ink-dim)" }}>
+              {hasTape ? `${Math.round(bullRatio * 100)}%` : "No tape"}
+            </span>
           </div>
           <button className="btn-t" onClick={() => setSortMode((current) => (current === "premium" ? "recent" : "premium"))}>
             {sortMode === "premium" ? "Show recent" : "Show unusual"}
@@ -507,6 +651,21 @@ export default function OptionsFlow() {
             ))}
           </div>
 
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <FilterButton active={right === "C"} onClick={() => setRightPreset("C")}>Calls</FilterButton>
+            <FilterButton active={right === "P"} onClick={() => setRightPreset("P")}>Puts</FilterButton>
+            <FilterButton active={tradeType === "sweep"} onClick={() => setTradeTypePreset("sweep")}>Sweeps</FilterButton>
+            <FilterButton active={tradeType === "block"} onClick={() => setTradeTypePreset("block")}>Blocks</FilterButton>
+            <FilterButton active={minPremium === 100000} onClick={() => setPremiumPreset(100000)}>$100K+</FilterButton>
+            <FilterButton active={minPremium === 500000} onClick={() => setPremiumPreset(500000)}>$500K+</FilterButton>
+            <FilterButton active={minPremium === 1000000} onClick={() => setPremiumPreset(1000000)}>$1M+</FilterButton>
+            <FilterButton active={maxDte === 0} onClick={() => setDtePreset(0)}>0DTE</FilterButton>
+            <FilterButton active={maxDte === 7} onClick={() => setDtePreset(7)}>Weeklies</FilterButton>
+            <FilterButton active={maxDte === 14} onClick={() => setDtePreset(14)}>Near-Term</FilterButton>
+            <FilterButton active={sentiment === "bullish"} onClick={() => setSentimentPreset("bullish")}>Bullish</FilterButton>
+            <FilterButton active={sentiment === "bearish"} onClick={() => setSentimentPreset("bearish")}>Bearish</FilterButton>
+          </div>
+
           <div className="flow-toolbar-grid">
             <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
               <input
@@ -529,31 +688,6 @@ export default function OptionsFlow() {
               />
               <button className="btn-t active" onClick={applyTickerDraft}>Apply</button>
               <button className="btn-t" onClick={clearTickerFilter}>Clear</button>
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {(["all", "C", "P"] as const).map((value) => (
-                <FilterButton key={value} active={right === value} onClick={() => setRight(value)}>
-                  {value === "all" ? "Calls + Puts" : value === "C" ? "Calls" : "Puts"}
-                </FilterButton>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {[
-                { value: "", label: "All Bias" },
-                { value: "bullish", label: "Bull" },
-                { value: "bearish", label: "Bear" },
-                { value: "neutral", label: "Neutral" },
-              ].map((item) => (
-                <FilterButton
-                  key={item.label}
-                  active={sentiment === item.value}
-                  onClick={() => setSentiment(item.value as "" | "bullish" | "bearish" | "neutral")}
-                >
-                  {item.label}
-                </FilterButton>
-              ))}
             </div>
 
             <select
@@ -612,6 +746,93 @@ export default function OptionsFlow() {
         </div>
       </section>
 
+      <section className="flow-overview-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <div className="panel-title">Intraday Flow</div>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: intradaySeries.net >= 0 ? "var(--green)" : "var(--red)" }}>
+              NET {fmtSignedUsd(intradaySeries.net)}
+            </div>
+          </div>
+          <div style={{ padding: 14, display: "grid", gridTemplateColumns: "180px minmax(0, 1fr)", gap: 14, alignItems: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <span className="kicker">Net</span>
+                <span className="tnum" style={{ color: intradaySeries.net >= 0 ? "var(--green)" : "var(--red)", fontWeight: 600 }}>
+                  {fmtSignedUsd(intradaySeries.net)}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <span className="kicker">Calls</span>
+                <span className="tnum" style={{ color: "var(--green)", fontWeight: 600 }}>{fmtUsd(intradaySeries.calls)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <span className="kicker">Puts</span>
+                <span className="tnum" style={{ color: "var(--red)", fontWeight: 600 }}>{fmtUsd(intradaySeries.puts)}</span>
+              </div>
+            </div>
+            <div>
+              <MiniSparkline values={intradaySeries.values} />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, color: "var(--ink-faint)", fontSize: 10, fontFamily: "var(--mono)" }}>
+                <span>{intradaySeries.labels[0] || "09:30"}</span>
+                <span>{intradaySeries.labels[Math.max(intradaySeries.labels.length - 1, 0)] || "16:00"}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <div className="panel-title">Tape Snapshot</div>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
+              {displayRows.length} tracked prints
+            </div>
+          </div>
+          <div className="flow-overview-stats">
+            <div className="flow-stat-cell flow-stat-repeats">
+              <div className="kicker" style={{ marginBottom: 8 }}>Top Repeats</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {topRepeats.length === 0 && <span style={{ color: "var(--ink-faint)", fontSize: 11 }}>No repeat tape yet</span>}
+                {topRepeats.map((item) => (
+                  <span
+                    key={item.label}
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: "rgba(34,197,94,0.12)",
+                      color: "var(--ink)",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flow-stat-cell">
+              <div className="kicker">P/C Ratio</div>
+              <div className="tnum" style={{ fontSize: 20, fontWeight: 700, color: "var(--ink)" }}>
+                {hasTape && callVolume > 0 ? pcRatio.toFixed(2) : "No tape"}
+              </div>
+              <div style={{ fontSize: 11, color: hasTape ? bullRatio >= 0.5 ? "var(--green)" : "var(--red)" : "var(--ink-dim)" }}>
+                {hasTape ? bullRatio >= 0.5 ? "Bullish" : "Bearish" : "Awaiting prints"}
+              </div>
+            </div>
+            <div className="flow-stat-cell">
+              <div className="kicker">Put Vol</div>
+              <div className="tnum" style={{ fontSize: 18, fontWeight: 700, color: "var(--red)" }}>{fmtShort(putVolume)}</div>
+              <div className="flow-meter"><div style={{ width: `${Math.round((putVolume / Math.max(callVolume + putVolume, 1)) * 100)}%`, background: "var(--red)" }} /></div>
+            </div>
+            <div className="flow-stat-cell">
+              <div className="kicker">Call Vol</div>
+              <div className="tnum" style={{ fontSize: 18, fontWeight: 700, color: "var(--green)" }}>{fmtShort(callVolume)}</div>
+              <div className="flow-meter"><div style={{ width: `${Math.round((callVolume / Math.max(callVolume + putVolume, 1)) * 100)}%`, background: "var(--green)" }} /></div>
+            </div>
+          </div>
+        </section>
+      </section>
+
       <section className="flow-metrics-grid">
         <MetricTile
           label="Calls Premium"
@@ -627,9 +848,9 @@ export default function OptionsFlow() {
         />
         <MetricTile
           label="Bull / Bear"
-          value={`${pct(bullRatio)} / ${pct(1 - bullRatio)}`}
-          tone={bullRatio >= 0.5 ? "var(--green)" : "var(--red)"}
-          hint="premium-weighted directional split"
+          value={hasTape ? `${pct(bullRatio)} / ${pct(1 - bullRatio)}` : "No tape"}
+          tone={hasTape ? bullRatio >= 0.5 ? "var(--green)" : "var(--red)" : "var(--ink-dim)"}
+          hint={hasTape ? "premium-weighted directional split" : "waiting for qualifying options prints"}
         />
         <MetricTile
           label="Large Sweeps"
@@ -651,121 +872,11 @@ export default function OptionsFlow() {
         />
       </section>
 
-      <div className="flow-scanner-grid">
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          <Panel
-            title="Unusual Options Activity"
-            action={(
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                <span>{displayRows.length} rows</span>
-                <span>hover pauses stream</span>
-              </div>
-            )}
-          >
-            <div
-              onMouseEnter={() => {
-                pausedRef.current = true;
-              }}
-              onMouseLeave={() => {
-                pausedRef.current = false;
-                flushBuffer();
-              }}
-              style={{ maxHeight: "calc(100vh - 420px)", overflow: "auto", margin: "-14px" }}
-            >
-              <table className="t-table" style={{ width: "100%", fontFamily: "var(--mono)", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ position: "sticky", top: 0, background: "var(--bg-3)", zIndex: 1 }}>
-                    <Th>Time</Th>
-                    <Th>Ticker</Th>
-                    <Th>Bias</Th>
-                    <Th>C/P</Th>
-                    <Th>Strike</Th>
-                    <Th>Exp</Th>
-                    <Th align="right">DTE</Th>
-                    <Th align="right">Premium</Th>
-                    <Th align="right">Size</Th>
-                    <Th align="right">Vol/OI</Th>
-                    <Th align="right">IV</Th>
-                    <Th>Type</Th>
-                    <Th>Flags</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayRows.length === 0 && (
-                    <tr>
-                      <td colSpan={13} style={{ padding: 24, textAlign: "center", color: "var(--ink-dim)" }}>
-                        No options flow matched this scanner. Try lowering the premium filter or clearing the ticker.
-                      </td>
-                    </tr>
-                  )}
-                  {displayRows.map((row, index) => {
-                    const key = row.id ?? `${row.timestamp}-${index}`;
-                    const open = expanded === (row.id ?? index);
-                    return (
-                      <React.Fragment key={key}>
-                        <tr style={rowStyle(row)} onClick={() => setExpanded(open ? null : row.id ?? index)}>
-                          <td>{fmtTime(row.timestamp)}</td>
-                          <td style={{ color: "var(--cyan)", fontWeight: 700 }}>{row.ticker}</td>
-                          <td style={{ color: sentimentColor(row.sentiment), fontWeight: 700 }}>{row.sentiment.toUpperCase()}</td>
-                          <td style={{ color: rightColor(row.right), fontWeight: 700 }}>{row.right}</td>
-                          <td>{row.strike}</td>
-                          <td>{fmtDate(row.expiry)}</td>
-                          <td style={{ textAlign: "right" }}>{row.dte}</td>
-                          <td style={{ textAlign: "right", color: row.premium >= 500000 ? "var(--amber)" : "var(--ink)" }}>
-                            {fmtUsd(row.premium)}
-                          </td>
-                          <td style={{ textAlign: "right" }}>{fmtShort(row.size)}</td>
-                          <td style={{ textAlign: "right", color: "var(--amber)" }}>
-                            {row.relative_volume != null ? `${row.relative_volume.toFixed(1)}x` : "—"}
-                          </td>
-                          <td style={{ textAlign: "right" }}>
-                            {row.iv != null ? `${Math.round(row.iv * 100)}%` : "—"}
-                          </td>
-                          <td style={{ textTransform: "uppercase", color: row.trade_type === "sweep" ? "var(--amber)" : "var(--ink-dim)" }}>
-                            {row.trade_type}
-                          </td>
-                          <td>
-                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              {row.large_sweep && <span className="mode-badge aggressive">large</span>}
-                              {row.sweep_confirmed && <span className="mode-badge balanced">sweep</span>}
-                              {!row.large_sweep && !row.sweep_confirmed && <span style={{ color: "var(--ink-faint)" }}>-</span>}
-                            </div>
-                          </td>
-                        </tr>
-                        {open && (
-                          <tr style={{ background: "var(--bg-4)" }}>
-                            <td colSpan={13} style={{ padding: "10px 14px" }}>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 18, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-                                <span>Delta {row.delta != null ? row.delta.toFixed(2) : "—"}</span>
-                                <span>Exchange {row.exchange || "—"}</span>
-                                <span>Premium / contract {row.size ? fmtUsd(row.premium / row.size) : "—"}</span>
-                                <span>
-                                  Narrative{" "}
-                                  <span style={{ color: sentimentColor(row.sentiment) }}>
-                                    {row.sentiment === "bullish"
-                                      ? "upside appetite"
-                                      : row.sentiment === "bearish"
-                                        ? "downside hedge or speculative pressure"
-                                        : "neutral / structure-driven"}
-                                  </span>
-                                </span>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+      <section className="flow-insight-grid">
+        <div style={{ minWidth: 0 }}>
           <Panel title="Flow Bias">
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <FlowBar bullRatio={bullRatio} callRatio={callRatio} />
+              <FlowBar bullRatio={bullRatio} callRatio={callRatio} hasData={hasTape} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                 <BiasCell
                   label="Bullish Premium"
@@ -790,7 +901,9 @@ export default function OptionsFlow() {
               </div>
             </div>
           </Panel>
+        </div>
 
+        <div style={{ minWidth: 0 }}>
           <Panel title="Ticker Pressure">
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {leaderboard.length === 0 && (
@@ -810,8 +923,8 @@ export default function OptionsFlow() {
                     }}
                     style={{
                       textAlign: "left",
-                      background: item.ticker === focusTicker ? "rgba(212,175,55,0.08)" : "var(--bg-3)",
-                      border: item.ticker === focusTicker ? "1px solid rgba(212,175,55,0.38)" : "1px solid var(--line-dim)",
+                      background: item.ticker === focusTicker ? "rgba(59,130,246,0.10)" : "var(--bg-3)",
+                      border: item.ticker === focusTicker ? "1px solid rgba(59,130,246,0.45)" : "1px solid var(--line-dim)",
                       padding: "10px 12px",
                       cursor: "pointer",
                     }}
@@ -837,7 +950,9 @@ export default function OptionsFlow() {
               })}
             </div>
           </Panel>
+        </div>
 
+        <div style={{ minWidth: 0 }}>
           <Panel title={focusTicker ? `${focusTicker} Focus` : "Ticker Focus"}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
@@ -891,7 +1006,129 @@ export default function OptionsFlow() {
             </div>
           </Panel>
         </div>
-      </div>
+      </section>
+
+      <Panel
+        title="Unusual Options Activity"
+        action={(
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
+            <span>{displayRows.length} rows</span>
+            <span>hover pauses stream</span>
+          </div>
+        )}
+      >
+        <div
+          className="flow-tape-scroll"
+          onMouseEnter={() => {
+            pausedRef.current = true;
+          }}
+          onMouseLeave={() => {
+            pausedRef.current = false;
+            flushBuffer();
+          }}
+        >
+          <table className="t-table" style={{ width: "100%", fontFamily: "var(--mono)", fontSize: 12 }}>
+            <thead>
+              <tr style={{ position: "sticky", top: 0, background: "var(--bg-3)", zIndex: 1 }}>
+                <Th>Date</Th>
+                <Th>Time</Th>
+                <Th>Ticker</Th>
+                <Th>Bias</Th>
+                <Th>C/P</Th>
+                <Th>Strike</Th>
+                <Th>Exp</Th>
+                <Th align="right">DTE</Th>
+                <Th align="right">Premium</Th>
+                <Th align="right">Size</Th>
+                <Th align="right">Vol/OI</Th>
+                <Th align="right">IV</Th>
+                <Th>Type</Th>
+                <Th>Flags</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.length === 0 && (
+                <tr>
+                  <td colSpan={14} className="empty-state">
+                    No options flow matched this scanner. Try lowering the premium filter or clearing the ticker.
+                  </td>
+                </tr>
+              )}
+              {displayRows.map((row, index) => {
+                const key = row.id ?? `${row.timestamp}-${index}`;
+                const open = expanded === (row.id ?? index);
+                return (
+                  <React.Fragment key={key}>
+                    <tr
+                      style={rowStyle(row)}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={open}
+                      onClick={() => setExpanded(open ? null : row.id ?? index)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setExpanded(open ? null : row.id ?? index);
+                        }
+                      }}
+                    >
+                      <td>{fmtDateShort(row.timestamp)}</td>
+                      <td>{fmtTime(row.timestamp)}</td>
+                      <td style={{ color: "var(--cyan)", fontWeight: 700 }}>{row.ticker}</td>
+                      <td style={{ color: sentimentColor(row.sentiment), fontWeight: 700 }}>{row.sentiment.toUpperCase()}</td>
+                      <td style={{ color: rightColor(row.right), fontWeight: 700 }}>{row.right}</td>
+                      <td>{row.strike}</td>
+                      <td>{fmtDate(row.expiry)}</td>
+                      <td style={{ textAlign: "right" }}>{row.dte}</td>
+                      <td style={{ textAlign: "right", color: row.premium >= 500000 ? "var(--amber)" : "var(--ink)" }}>
+                        {fmtUsd(row.premium)}
+                      </td>
+                      <td style={{ textAlign: "right" }}>{fmtShort(row.size)}</td>
+                      <td style={{ textAlign: "right", color: "var(--amber)" }}>
+                        {row.relative_volume != null ? `${row.relative_volume.toFixed(1)}x` : "—"}
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        {row.iv != null ? `${Math.round(row.iv * 100)}%` : "—"}
+                      </td>
+                      <td style={{ textTransform: "uppercase", color: row.trade_type === "sweep" ? "var(--amber)" : "var(--ink-dim)" }}>
+                        {row.trade_type}
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {row.large_sweep && <span className="mode-badge aggressive">large</span>}
+                          {row.sweep_confirmed && <span className="mode-badge balanced">sweep</span>}
+                          {!row.large_sweep && !row.sweep_confirmed && <span style={{ color: "var(--ink-faint)" }}>-</span>}
+                        </div>
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr style={{ background: "var(--bg-4)" }}>
+                        <td colSpan={14} style={{ padding: "10px 14px" }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 18, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                            <span>Delta {row.delta != null ? row.delta.toFixed(2) : "—"}</span>
+                            <span>Exchange {row.exchange || "—"}</span>
+                            <span>Premium / contract {row.size ? fmtUsd(row.premium / row.size) : "—"}</span>
+                            <span>
+                              Narrative{" "}
+                              <span style={{ color: sentimentColor(row.sentiment) }}>
+                                {row.sentiment === "bullish"
+                                  ? "upside appetite"
+                                  : row.sentiment === "bearish"
+                                    ? "downside hedge or speculative pressure"
+                                    : "neutral / structure-driven"}
+                              </span>
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
     </div>
   );
 }

@@ -424,10 +424,10 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Active mode */}
+          {/* Active risk profile */}
           <div style={{ borderBottom: "1px solid var(--line-dim)" }}>
             <div className="panel-head">
-              <span className="panel-title">Active Mode</span>
+              <span className="panel-title">Active Risk Profile</span>
             </div>
             <div style={{ padding: "12px 14px" }}>
               <span className={`mode-badge ${guardrailStatus?.trading_mode || "balanced"}`}

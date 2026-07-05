@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import MarketBiasPanel from "../components/MarketBiasPanel";
+import MarketStructurePanel from "../components/MarketStructurePanel";
+import SignalDetailDrawer from "../components/SignalDetailDrawer";
 import SetupScannerPanel from "../components/SetupScannerPanel";
+import TimeframeAlignmentPanel from "../components/TimeframeAlignmentPanel";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk } from "../hooks/useRisk";
 
@@ -297,6 +300,7 @@ export default function ChartWorkstation() {
   const [chartBars, setChartBars] = useState<ChartBar[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [signalDrawerOpen, setSignalDrawerOpen] = useState(false);
 
   const loadWatchlist = async () => {
     const entries = await Promise.all(
@@ -375,7 +379,7 @@ export default function ChartWorkstation() {
         gap: 10,
       }} className="workstation-top-strip">
         {[
-          { label: "Mode", value: killSwitch?.active ? "HALTED" : "AUTOPILOT READY", tone: killSwitch?.active ? "var(--red)" : "var(--amber)" },
+          { label: "Exec Mode", value: killSwitch?.active ? "HALTED" : "AUTOPILOT READY", tone: killSwitch?.active ? "var(--red)" : "var(--amber)" },
           { label: "Day P&L", value: fmtSigned(dayPnl), tone: dayPnl >= 0 ? "var(--green)" : "var(--red)" },
           { label: "Portfolio", value: fmtMoney(netLiq, 2), tone: "var(--cyan)" },
           { label: "Reconciliation", value: reconciliation?.clean ? "CLEAN" : "WATCH", tone: reconciliation?.clean ? "var(--green)" : "var(--amber)" },
@@ -478,6 +482,12 @@ export default function ChartWorkstation() {
                     {item.label}
                   </button>
                 ))}
+                <button
+                  className="btn-t"
+                  onClick={() => setSignalDrawerOpen(true)}
+                >
+                  Signal Detail
+                </button>
               </div>
             </div>
 
@@ -527,6 +537,12 @@ export default function ChartWorkstation() {
             </div>
           </section>
 
+          <section className="chart-intel-grid">
+            <MarketBiasPanel symbol={symbol} />
+            <TimeframeAlignmentPanel symbol={symbol} />
+            <MarketStructurePanel symbol={symbol} timeframe="1d" />
+          </section>
+
           <div className="workstation-bottom-grid">
             <InfoCard title="TA Trade Plan">
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }} className="workstation-plan-grid">
@@ -562,7 +578,6 @@ export default function ChartWorkstation() {
         </div>
 
         <div className="workstation-col workstation-right">
-          <MarketBiasPanel symbol={symbol} />
           <SetupScannerPanel />
           <InfoCard
             title="Research & Execution"
@@ -637,6 +652,14 @@ export default function ChartWorkstation() {
           </InfoCard>
         </div>
       </div>
+      <SignalDetailDrawer
+        open={signalDrawerOpen}
+        onClose={() => setSignalDrawerOpen(false)}
+        signal={selectedSignal}
+        symbol={symbol}
+        timeframe={timeframe}
+        latestBar={latestBar}
+      />
     </div>
   );
 }

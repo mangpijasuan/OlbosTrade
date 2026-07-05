@@ -163,7 +163,7 @@ export default function CspScreener() {
         margin: "10px 0",
       }}>
         <StatChip label="Env" value={(ctx?.environment || "—").toUpperCase()} tone="var(--amber)" />
-        <StatChip label="Mode" value={(ctx?.trading_mode || "—").toUpperCase()} tone="var(--cyan)" />
+        <StatChip label="Risk Profile" value={(ctx?.trading_mode || "—").toUpperCase()} tone="var(--cyan)" />
         <StatChip label="Profile" value={profile.toUpperCase()} />
         <StatChip label="Buying power" value={ctx ? fmtUsd(ctx.buying_power) : "—"} />
         <StatChip label="Heat" value={ctx ? `${ctx.portfolio_heat_pct}%` : "—"}
@@ -334,7 +334,7 @@ function CandidateCard({ c, expanded, onToggle }: {
               </button>
             )}
             <span style={{ fontSize: 11, color: "var(--ink-dim)", alignSelf: "center" }}>
-              Modes: {elig.modes_allowed.join(", ") || "none"}
+              Automation: {elig.modes_allowed.join(", ") || "none"}
             </span>
           </div>
         </div>

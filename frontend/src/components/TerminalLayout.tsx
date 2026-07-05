@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import NotificationBell from "./NotificationBell";
+import KillSwitchButton from "./KillSwitchButton";
 
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -241,7 +242,7 @@ function TickerStrip({
           borderLeft: "1px solid var(--line-dim)",
         }} className="terminal-operator-strip">
           {[
-            { label: "Mode", value: execMode.charAt(0).toUpperCase() + execMode.slice(1), tone: execMode === "autopilot" ? "var(--amber)" : execMode === "copilot" ? "var(--accent)" : "var(--ink)", num: false },
+            { label: "Exec Mode", value: execMode.charAt(0).toUpperCase() + execMode.slice(1), tone: execMode === "autopilot" ? "var(--amber)" : execMode === "copilot" ? "var(--accent)" : "var(--ink)", num: false },
             { label: "Day P&L", value: portfolio?.total_pnl != null ? `${portfolio.total_pnl >= 0 ? "+" : "-"}$${Math.abs(portfolio.total_pnl).toFixed(2)}` : "—", tone: (portfolio?.total_pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)", num: true },
             { label: "Portfolio", value: portfolio?.account_value != null ? `$${Number(portfolio.account_value).toLocaleString()}` : "—", tone: "var(--ink)", num: true },
             { label: marketOpen ? "Market" : "Session", value: marketOpen ? "Open" : "Closed", tone: marketOpen ? "var(--green)" : "var(--red)", num: false },
@@ -435,11 +436,8 @@ function Sidebar({
         ))}
       </div>
 
-      <div style={{ marginTop: "auto", borderTop: "1px solid var(--line-dim)", padding: expanded ? "12px 12px" : "12px 0", display: "flex", justifyContent: expanded ? "space-between" : "center", alignItems: "center" }}>
-        {expanded && <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)", letterSpacing: "0.08em" }}>Kill Switch</span>}
-        <span style={{ color: "var(--red)" }}>
-          <Icon d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" size={16} />
-        </span>
+      <div style={{ marginTop: "auto", borderTop: "1px solid var(--line-dim)", padding: expanded ? "12px 12px" : "12px 8px" }}>
+        <KillSwitchButton variant="sidebar" expanded={expanded} />
       </div>
     </aside>
   );

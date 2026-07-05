@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { useRisk } from "../hooks/useRisk";
 import Guardrails from "./Guardrails";
+import KillSwitchButton from "../components/KillSwitchButton";
 
 export default function RiskMonitor() {
-  const { guardrailStatus, riskState } = useRisk();
+  const { guardrailStatus, riskState, killSwitch, refresh } = useRisk();
   const [view, setView] = useState<"monitor" | "rules">("monitor");
 
   const Section = ({ title, children }: any) => (
@@ -75,8 +76,8 @@ export default function RiskMonitor() {
           color={daily_pnl >= 0 ? "var(--green)" : "var(--red)"} />
         <Stat label="Open Positions" value={riskState?.state?.open_positions || 0} />
         <Stat label="Status"
-          value={guardrailStatus?.trading_allowed ? "ACTIVE" : "SUSPENDED"}
-          color={guardrailStatus?.trading_allowed ? "var(--green)" : "var(--red)"} />
+          value={killSwitch?.engaged ? "HALTED" : guardrailStatus?.trading_allowed ? "ACTIVE" : "SUSPENDED"}
+          color={killSwitch?.engaged ? "var(--red)" : guardrailStatus?.trading_allowed ? "var(--green)" : "var(--red)"} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -116,9 +117,7 @@ export default function RiskMonitor() {
                 Immediately cancel all open orders, flatten all positions,
                 and halt the signal cycle. Cannot be undone without manual reset.
               </p>
-              <button className="btn-t danger" style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}>
-                ⚡ ENGAGE KILL SWITCH
-              </button>
+              <KillSwitchButton onEngaged={refresh} />
             </div>
           </Section>
         </div>

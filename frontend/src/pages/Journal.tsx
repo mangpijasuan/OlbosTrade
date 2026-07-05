@@ -190,7 +190,7 @@ export default function Journal() {
         padding: "6px 14px", borderBottom: "1px solid var(--line-dim)",
         background: "var(--bg-2)", display: "flex", alignItems: "center", gap: 8,
       }}>
-        {([["entries", "Entries"], ["analysis", "Analysis"], ["mode", "Mode"]] as const).map(([t, label]) => (
+        {([["entries", "Entries"], ["analysis", "Analysis"], ["mode", "Risk Profile"]] as const).map(([t, label]) => (
           <button key={t} className={`btn-t ${tab === t ? "active" : ""}`}
             onClick={() => setTab(t)}>{label}</button>
         ))}
@@ -294,7 +294,7 @@ export default function Journal() {
           </div>
         )}
 
-        {/* ── Mode analytics tab ── */}
+        {/* ── Risk profile analytics tab ── */}
         {tab === "mode" && <ModeAnalytics />}
       </div>
 

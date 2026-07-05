@@ -537,13 +537,13 @@ export default function Research() {
                     <div>
                       <div className="kicker" style={{ marginBottom: 4 }}>Equity</div>
                       <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: regime.equity_allowed ? "var(--green)" : "var(--red)" }}>
-                        {regime.equity_allowed ? "✓ ALLOWED" : "✗ PAUSED"}
+                        {regime.equity_allowed ? "ALLOWED" : "PAUSED"}
                       </div>
                     </div>
                     <div>
                       <div className="kicker" style={{ marginBottom: 4 }}>Options</div>
                       <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: regime.options_allowed ? "var(--green)" : "var(--red)" }}>
-                        {regime.options_allowed ? "✓ ALLOWED" : "✗ PAUSED"}
+                        {regime.options_allowed ? "ALLOWED" : "PAUSED"}
                       </div>
                     </div>
                   </div>

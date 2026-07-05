@@ -76,6 +76,7 @@ export const api = {
   // ── Chart Intelligence ────────────────────────────────────────────────────
   getMarketBias: (symbol: string, strategy = "default") => request(`/api/chart/bias/${symbol}?strategy=${strategy}`),
   getTimeframeAlignment: (symbol: string, strategy = "default") => request(`/api/chart/alignment/${symbol}?strategy=${strategy}`),
+  getMarketStructure: (symbol: string, timeframe = "1d") => request(`/api/chart/structure/${symbol}?timeframe=${timeframe}`),
   getConfirmation: (symbol: string, strategy = "default") => request(`/api/chart/confirmation/${symbol}?strategy=${strategy}`),
   getSetupScanner: (watchlist?: string, strategy = "default") =>
     request(`/api/chart/scanner?strategy=${strategy}${watchlist ? `&watchlist=${watchlist}` : ""}`),

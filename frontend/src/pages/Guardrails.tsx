@@ -118,7 +118,7 @@ export default function Guardrails() {
         {tab === "status" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-            {/* Active Mode Banner */}
+            {/* Active risk profile banner */}
             <div style={{
               border: `1px solid ${badgeColor}`,
               background: "var(--bg-2)",
@@ -126,7 +126,7 @@ export default function Guardrails() {
               display: "flex", alignItems: "center", justifyContent: "space-between",
             }}>
               <div>
-                <div className="kicker" style={{ marginBottom: 4 }}>Active Trading Mode</div>
+                <div className="kicker" style={{ marginBottom: 4 }}>Active Risk Profile</div>
                 <div style={{ fontFamily: "var(--mono)", fontSize: 20, fontWeight: 700, color: badgeColor, textTransform: "uppercase" }}>
                   {modeName}
                 </div>

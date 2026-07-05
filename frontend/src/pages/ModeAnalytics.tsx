@@ -179,7 +179,7 @@ export default function ModeAnalytics() {
         </div>
       )}
 
-      {/* Mode cards */}
+      {/* Risk profile cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16 }}>
         {active.map(key => (
           <ModeCard key={key} modeKey={key} s={data.modes[key]} isBest={key === data.best_mode} />
@@ -193,7 +193,7 @@ export default function ModeAnalytics() {
         </div>
         <table className="t-table">
           <thead><tr>
-            {["Mode","Trades","Win %","Avg/Trade","Total P&L","Sharpe","Expectancy","Hold"].map(h => <th key={h}>{h}</th>)}
+            {["Risk Profile","Trades","Win %","Avg/Trade","Total P&L","Sharpe","Expectancy","Hold"].map(h => <th key={h}>{h}</th>)}
           </tr></thead>
           <tbody>
             {active.map(key => {
