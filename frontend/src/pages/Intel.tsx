@@ -7,8 +7,9 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import AlertsManager from "../components/AlertsManager";
 
-type Tab = "calendar" | "watchlists" | "why";
+type Tab = "calendar" | "watchlists" | "why" | "alerts";
 
 interface CalEvent {
   name: string; date: string; days_away: number;
@@ -197,6 +198,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "calendar", label: "Event Calendar" },
   { key: "watchlists", label: "Smart Watchlists" },
   { key: "why", label: "Why Is It Moving?" },
+  { key: "alerts", label: "Alerts" },
 ];
 
 export default function Intel() {
@@ -215,6 +217,7 @@ export default function Intel() {
       {tab === "calendar" && <CalendarTab />}
       {tab === "watchlists" && <WatchlistsTab />}
       {tab === "why" && <WhyTab />}
+      {tab === "alerts" && <AlertsManager />}
     </div>
   );
 }

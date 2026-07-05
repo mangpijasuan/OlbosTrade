@@ -78,6 +78,16 @@ export const api = {
   getSetupScanner: (watchlist?: string, strategy = "default") =>
     request(`/api/chart/scanner?strategy=${strategy}${watchlist ? `&watchlist=${watchlist}` : ""}`),
 
+  // ── Smart Alerts + Notifications ──────────────────────────────────────────
+  getAlertRules: () => request("/api/alerts/rules"),
+  createAlertRule: (body: object) => request("/api/alerts/rules", { method: "POST", body: JSON.stringify(body) }),
+  deleteAlertRule: (id: string) => request(`/api/alerts/rules/${id}`, { method: "DELETE" }),
+  toggleAlertRule: (id: string, enabled: boolean) => request(`/api/alerts/rules/${id}/toggle?enabled=${enabled}`, { method: "POST" }),
+  getNotifications: (unreadOnly = false) => request(`/api/notifications?unread_only=${unreadOnly}`),
+  getUnreadCount: () => request("/api/notifications/unread-count"),
+  markNotificationRead: (id: string) => request(`/api/notifications/${id}/read`, { method: "POST" }),
+  markAllNotificationsRead: () => request("/api/notifications/read-all", { method: "POST" }),
+
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),
   getGuardrailHistory: () => request("/api/guardrails/history"),

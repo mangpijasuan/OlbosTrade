@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import NotificationBell from "./NotificationBell";
 
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -266,6 +267,10 @@ function TickerStrip({
           }}>
             {time.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hourCycle: "h23" })} CDT
           </span>
+          {/* Notification Center bell. */}
+          <div style={{ padding: "0 4px 0 12px", borderLeft: "1px solid var(--line-dim)", display: "flex", alignItems: "center" }}>
+            <NotificationBell />
+          </div>
           {/* Profile menu — account dropdown. */}
           <div style={{ position: "relative", margin: "0 10px 0 14px" }}>
             <button
