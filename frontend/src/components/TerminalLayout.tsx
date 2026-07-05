@@ -48,7 +48,6 @@ const NAV_ITEMS = [
   { key: "risk",       label: "Risk",         icon: "risk"       },
   { key: "journal",    label: "Journal",      icon: "journal"    },
   { key: "analytics",  label: "Performance",  icon: "analytics"  },
-  { key: "intel",      label: "Intel",        icon: "lab"        },
   { key: "csp",        label: "CSP Screener", icon: "equity"     },
 ];
 

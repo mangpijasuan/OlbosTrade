@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import "./index.css";
 import TerminalLayout  from "./components/TerminalLayout";
-import ChartWorkstation from "./pages/ChartWorkstation";
 import Dashboard       from "./pages/Dashboard";
 import TradeDesk       from "./pages/TradeDesk";
 import Journal         from "./pages/Journal";
@@ -9,9 +8,8 @@ import ModeAnalytics   from "./pages/ModeAnalytics";
 // Consolidated hubs (each folds two former pages behind tabs)
 import RiskCenter      from "./pages/RiskCenter";          // Risk Monitor + Guardrails
 import SignalsCenter   from "./pages/SignalsCenter";       // Equity Signals + Strategy
-import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab + Market/Regime
+import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab: Strategy Lab + Market/Regime + Chart + Intel
 import BacktestCenter  from "./pages/BacktestCenter";      // Backtest + Symphony
-import Intel           from "./pages/Intel";               // News & Catalyst Intelligence Hub
 import CspScreener     from "./pages/CspScreener";          // Wheel & Income Lab
 
 const PAGES: Record<string, React.ComponentType> = {
@@ -23,12 +21,11 @@ const PAGES: Record<string, React.ComponentType> = {
   risk:      RiskCenter,
   journal:   Journal,
   analytics: ModeAnalytics,
-  intel:     Intel,
   csp:       CspScreener,
 };
 
 export default function App() {
-  const [page, setPage] = useState("chart");
+  const [page, setPage] = useState("dashboard");
   const Page = PAGES[page] || Dashboard;
 
   return (
