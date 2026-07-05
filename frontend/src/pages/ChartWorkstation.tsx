@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import MarketBiasPanel from "../components/MarketBiasPanel";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk } from "../hooks/useRisk";
 
@@ -560,6 +561,7 @@ export default function ChartWorkstation() {
         </div>
 
         <div className="workstation-col workstation-right">
+          <MarketBiasPanel symbol={symbol} />
           <InfoCard
             title="Research & Execution"
             action={(

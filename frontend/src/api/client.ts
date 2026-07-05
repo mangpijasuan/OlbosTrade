@@ -71,6 +71,10 @@ export const api = {
   getSymbolNews: (symbol: string, limit = 15) => request(`/api/intel/news/${symbol}?limit=${limit}`),
   getSymbolFilings: (symbol: string, limit = 15) => request(`/api/intel/filings/${symbol}?limit=${limit}`),
 
+  // ── Chart Intelligence ────────────────────────────────────────────────────
+  getMarketBias: (symbol: string, strategy = "default") => request(`/api/chart/bias/${symbol}?strategy=${strategy}`),
+  getTimeframeAlignment: (symbol: string, strategy = "default") => request(`/api/chart/alignment/${symbol}?strategy=${strategy}`),
+
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),
   getGuardrailHistory: () => request("/api/guardrails/history"),

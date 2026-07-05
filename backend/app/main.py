@@ -66,6 +66,7 @@ from app.api.routes import trade_desk
 from app.api.routes import options_flow
 from app.api.routes import options_csp
 from app.api.routes import intel
+from app.api.routes import chart
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -110,6 +111,7 @@ app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade 
 app.include_router(options_flow.router,prefix="/api/options-flow",  tags=["Options Flow"])
 app.include_router(options_csp.router, prefix="/api/options/csp",   tags=["Options Income"])
 app.include_router(intel.router,       prefix="/api/intel",        tags=["Intelligence Hub"])
+app.include_router(chart.router,       prefix="/api/chart",        tags=["Chart Intelligence"])
 
 # Nightly archive scheduler (Options Flow data retention)
 _flow_scheduler: Optional[object] = None
