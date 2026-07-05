@@ -253,3 +253,59 @@ select:focus-visible {
 
 /* Panel title gets a faint gold glow to lift the hierarchy */
 .panel-title { text-shadow: 0 0 10px var(--cyan-glow); }
+
+/* ── Chart Workstation layout ─────────────────────────────────────────────
+   Three columns: compact Market Watch / Positions on the left, the chart
+   pulled up to the top in the center, Setup Scanner / Research on the right.
+   align-items:start keeps the chart at the top instead of stretching to the
+   tallest column. Collapses to a single column on narrow viewports. */
+.workstation-grid {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: start;
+}
+.workstation-col,
+.workstation-center {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.chart-intel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.workstation-bottom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+/* Market Watch — compact boxes for the narrow side column */
+.watch-item {
+  border: 1px solid var(--line-dim);
+  background: var(--bg-2);
+  padding: 6px 9px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+  border-radius: 3px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.watch-item:hover { border-color: var(--line); }
+.watch-item.active {
+  border-color: var(--accent);
+  background: var(--cyan-dim);
+}
+
+@media (max-width: 1280px) {
+  .workstation-grid { grid-template-columns: 190px minmax(0, 1fr); }
+  .workstation-right { grid-column: 1 / -1; }
+  .chart-intel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .workstation-grid { grid-template-columns: 1fr; }
+  .chart-intel-grid,
+  .workstation-bottom-grid { grid-template-columns: 1fr; }
+}

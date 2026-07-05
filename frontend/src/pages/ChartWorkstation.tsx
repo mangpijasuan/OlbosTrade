@@ -394,7 +394,7 @@ export default function ChartWorkstation() {
       <div className="workstation-grid">
         <div className="workstation-col">
           <InfoCard title="Market Watch">
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
               {WATCHLIST.map((ticker) => {
                 const snap = watchSnapshots[ticker];
                 const active = ticker === symbol;
@@ -402,26 +402,19 @@ export default function ChartWorkstation() {
                   <button
                     key={ticker}
                     onClick={() => setSymbol(ticker)}
-                    style={{
-                      border: active ? "1px solid rgba(244,198,79,0.5)" : "1px solid var(--line-dim)",
-                      background: active ? "rgba(244,198,79,0.08)" : "var(--bg-2)",
-                      padding: "10px 12px",
-                      textAlign: "left",
-                      cursor: "pointer",
-                      color: "var(--ink)",
-                    }}
+                    className={`watch-item ${active ? "active" : ""}`}
                   >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700 }}>{ticker}</span>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>{ticker}</span>
                       <span style={{
                         fontFamily: "var(--mono)",
-                        fontSize: 11,
+                        fontSize: 10,
                         color: (snap?.change_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)",
                       }}>
                         {fmtPct(snap?.change_pct, 2)}
                       </span>
                     </div>
-                    <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
                       {fmtMoney(snap?.last_close, 2)}
                     </div>
                   </button>
