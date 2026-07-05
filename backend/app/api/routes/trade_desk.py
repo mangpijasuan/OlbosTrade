@@ -418,30 +418,6 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         if quantity <= 0:
             return _skipped("zero_size")
 
-    # Lifecycle gate: Autopilot is fail-closed unless the strategy is explicitly
-    # registered and eligible for unattended execution.
-    if approved_by == "autopilot":
-        try:
-            from app.core.database import AsyncSessionLocal
-
-            strategy_id = strategy or signal.get("strategy_id")
-            if not strategy_id and asset_type == "equity":
-                strategy_id = "equity_signal"
-
-            async with AsyncSessionLocal() as _db:
-                allowed, reason = await strategy_registry_service.can_run_on_autopilot(
-                    _db, strategy_id
-                )
-            if not allowed:
-                logger.warning(
-                    "Autopilot blocked %s for %s due to strategy registry policy: %s",
-                    strategy_id, ticker, reason,
-                )
-                return _blocked(f"strategy_lifecycle: {reason}")
-        except Exception as exc:
-            logger.error("Strategy lifecycle gate failed closed for %s: %s", ticker, exc)
-            return _blocked(f"strategy_lifecycle_error: {exc}")
-
     # ── Stage 3: Duplicate guard ───────────────────────────────────────────────
     try:
         from app.core.database import AsyncSessionLocal

@@ -11,6 +11,8 @@ import RiskCenter      from "./pages/RiskCenter";          // Risk Monitor + Gua
 import SignalsCenter   from "./pages/SignalsCenter";       // Equity Signals + Strategy
 import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab + Market/Regime
 import BacktestCenter  from "./pages/BacktestCenter";      // Backtest + Symphony
+import Intel           from "./pages/Intel";               // News & Catalyst Intelligence Hub
+import CspScreener     from "./pages/CspScreener";          // Wheel & Income Lab
 
 const PAGES: Record<string, React.ComponentType> = {
   dashboard: Dashboard,
@@ -21,6 +23,8 @@ const PAGES: Record<string, React.ComponentType> = {
   risk:      RiskCenter,
   journal:   Journal,
   analytics: ModeAnalytics,
+  intel:     Intel,
+  csp:       CspScreener,
 };
 
 export default function App() {
