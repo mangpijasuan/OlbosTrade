@@ -264,13 +264,13 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
           fontFamily: "'Georgia', 'Times New Roman', serif",
           fontWeight: 700, fontSize: 17, letterSpacing: "0.06em", lineHeight: 1,
         }}>
-          <span style={{ color: "#D4AF37", textShadow: "0 0 12px rgba(212,175,55,0.55)" }}>OLBOS</span>
-          <span style={{ color: "#D4AF37", textShadow: "0 0 12px rgba(212,175,55,0.55)" }}>&nbsp;</span>
-          <span style={{ color: "#c8d0dc", fontWeight: 400 }}>QUANT</span>
+          <span style={{ color: "var(--brand)" }}>OLBOS</span>
+          <span style={{ color: "var(--brand)" }}>&nbsp;</span>
+          <span style={{ color: "var(--ink)", fontWeight: 400 }}>QUANT</span>
         </span>
         <span style={{
           fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
-          letterSpacing: "0.55em", color: "rgba(212,175,55,0.5)", lineHeight: 1, paddingLeft: 1,
+          letterSpacing: "0.55em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1,
         }}>TERMINAL</span>
       </div>
 
@@ -499,7 +499,7 @@ function StatusBar({ page }: { page: string }) {
       <span id="broker-status-bar">IBKR GATEWAY</span>
       <span>SPY · QQQ · IWM · NVDA · AAPL</span>
       <div style={{ flex: 1 }} />
-      <span style={{ color: "#D4AF37", fontWeight: 700 }}>OlbosQuant v5.0</span>
+      <span style={{ color: "var(--brand)", fontWeight: 700 }}>OlbosQuant v5.0</span>
     </div>
   );
 }
