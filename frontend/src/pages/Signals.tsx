@@ -313,7 +313,7 @@ export default function Signals() {
   const [optionsView, setOptionsView] = useState<"flow" | "csp">("flow");
 
   return (
-    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, maxWidth: 1280 }}>
+    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, maxWidth: asset === "options" ? "none" : 1280 }}>
       <div>
         <h2 style={{ margin: 0, color: "var(--ink)", fontSize: 16, fontWeight: 600 }}>Signals</h2>
         <p style={{ margin: "2px 0 0", color: "var(--ink-dim)", fontSize: 12 }}>Multi-asset signal engine</p>
