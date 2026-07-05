@@ -13,9 +13,11 @@ from sqlalchemy import select, func, and_, case
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.models.reconciliation_snapshot import ReconciliationSnapshot
 from app.models.trade import Trade
 from app.models.risk_state import PortfolioSnapshot
 from app.services.kill_switch import kill_switch_service
+from app.services.position_reconciler import PositionReconciler, ReconciliationError
 
 
 def _require_api_key(x_api_key: str = Header(default="")) -> None:
@@ -29,6 +31,24 @@ router = APIRouter()
 
 class KillSwitchResetRequest(BaseModel):
     authorization_code: str
+
+
+def _serialize_reconciliation_snapshot(snapshot: ReconciliationSnapshot) -> dict:
+    return {
+        "status": snapshot.status,
+        "clean": snapshot.clean,
+        "source": snapshot.source,
+        "broker_name": snapshot.broker_name,
+        "broker_position_count": snapshot.broker_position_count,
+        "db_open_trade_count": snapshot.db_open_trade_count,
+        "untracked_at_broker": snapshot.untracked_at_broker or [],
+        "phantom_in_db": snapshot.phantom_in_db or [],
+        "quantity_mismatches": snapshot.quantity_mismatches or [],
+        "warnings": snapshot.warnings or [],
+        "error_message": snapshot.error_message,
+        "checked_at": snapshot.checked_at.isoformat(),
+        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+    }
 
 
 @router.get("/portfolio-state")
@@ -159,6 +179,79 @@ async def get_trade_approval(trade_id: str):
         return {"trade_id": trade_id, "approved": False, "reason": "not found"}
     except Exception as exc:
         return {"trade_id": trade_id, "approved": False, "error": str(exc)}
+
+
+@router.get("/reconciliation/latest")
+async def get_latest_reconciliation():
+    """Return the most recent persisted reconciliation snapshot."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ReconciliationSnapshot)
+            .order_by(ReconciliationSnapshot.checked_at.desc())
+            .limit(1)
+        )
+        snapshot = result.scalar_one_or_none()
+
+    return {
+        "snapshot": _serialize_reconciliation_snapshot(snapshot) if snapshot else None
+    }
+
+
+@router.get("/reconciliation/history")
+async def get_reconciliation_history(limit: int = 20):
+    """Return recent reconciliation snapshots for operator review."""
+    limit = max(1, min(limit, 100))
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ReconciliationSnapshot)
+            .order_by(ReconciliationSnapshot.checked_at.desc())
+            .limit(limit)
+        )
+        rows = result.scalars().all()
+
+    return {
+        "snapshots": [_serialize_reconciliation_snapshot(row) for row in rows]
+    }
+
+
+@router.post("/reconciliation/run")
+async def run_reconciliation():
+    """
+    Force a fresh reconciliation against the active broker and persist the result.
+    """
+    from app.broker.broker_factory import get_broker
+
+    reconciler = PositionReconciler(get_broker())
+    try:
+        result = await reconciler.reconcile_and_record(source="operator")
+        return {
+            "status": "clean" if not result.warnings else "warning",
+            "result": {
+                "clean": result.clean,
+                "broker_position_count": result.broker_position_count,
+                "db_open_trade_count": result.db_open_trade_count,
+                "untracked_at_broker": result.untracked_at_broker,
+                "phantom_in_db": result.phantom_in_db,
+                "quantity_mismatches": result.quantity_mismatches,
+                "warnings": result.warnings,
+                "checked_at": result.checked_at.isoformat(),
+            },
+        }
+    except ReconciliationError as exc:
+        return {
+            "status": "error",
+            "error": str(exc),
+            "result": {
+                "clean": False,
+                "broker_position_count": exc.result.broker_position_count if exc.result else 0,
+                "db_open_trade_count": exc.result.db_open_trade_count if exc.result else 0,
+                "untracked_at_broker": exc.result.untracked_at_broker if exc.result else [],
+                "phantom_in_db": exc.result.phantom_in_db if exc.result else [],
+                "quantity_mismatches": exc.result.quantity_mismatches if exc.result else [],
+                "warnings": exc.result.warnings if exc.result else [],
+                "checked_at": exc.result.checked_at.isoformat() if exc.result else None,
+            },
+        }
 
 
 @router.get("/kill-switch/status")

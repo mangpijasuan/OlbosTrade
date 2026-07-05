@@ -425,7 +425,7 @@ class RegimeClassifier:
     ) -> RegimeState:
         config = REGIME_CONFIG[regime]
         from app.core.config import settings
-        default_threshold = settings.signal_score_threshold
+        default_threshold = settings.effective_signal_score_threshold
 
         state = RegimeState(
             regime=regime,

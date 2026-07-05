@@ -1145,8 +1145,16 @@ async def _update_portfolio_greeks() -> None:
         return
     try:
         from app.broker.broker_factory import get_broker
+        from app.services.trade_excursion_tracker import trade_excursion_tracker
         broker = get_broker()
         positions = await broker.get_positions()
+
+        excursion_result = await trade_excursion_tracker.update_from_broker_positions(positions)
+        if excursion_result.updated_trades > 0:
+            logger.debug(
+                "Trade excursion tracker updated %d trade(s)",
+                excursion_result.updated_trades,
+            )
 
         # Rebuild the tracker from live positions on every tick
         _greeks_tracker._positions.clear()
@@ -1285,6 +1293,8 @@ async def guardrail_status():
         "trading_mode":          status.trading_mode,
         "reason":                status.reason,
         "flags":                 status.flags,
+        "paper_mode":            settings.is_paper_trading,
+        "paper_visibility_mode": settings.paper_visibility_active,
         "daily_pnl":             daily_pnl,
         "weekly_pnl":            weekly_pnl,
         "monthly_pnl":           monthly_pnl,
@@ -1294,6 +1304,13 @@ async def guardrail_status():
         "consecutive_losses":    consecutive_losses,
         "trades_today":          trades_today,
         "capital_pct_remaining": status.capital_pct_remaining,
+        "max_daily_loss_pct":    _guardrail_engine.max_daily_loss_pct,
+        "max_weekly_loss_pct":   _guardrail_engine.max_weekly_loss_pct,
+        "max_monthly_loss_pct":  _guardrail_engine.max_monthly_loss_pct,
+        "max_trades_per_day":    _guardrail_engine.max_trades_per_day,
+        "max_consecutive_losses": _guardrail_engine.max_consecutive_losses,
+        "capital_preservation_threshold": _guardrail_engine.preservation_threshold,
+        "signal_threshold":      _guardrail_engine.get_signal_threshold(status),
     }
 
 

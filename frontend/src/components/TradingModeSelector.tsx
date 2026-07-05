@@ -8,7 +8,7 @@ interface ModeInfo {
 }
 
 const COLOR: Record<string, string> = {
-  green: "var(--green)", blue: "var(--cyan)", orange: "var(--orange)", red: "var(--red)",
+  green: "var(--green)", blue: "var(--accent)", orange: "var(--orange)", red: "var(--red)",
 };
 
 export default function TradingModeSelector() {
@@ -40,51 +40,52 @@ export default function TradingModeSelector() {
     } finally { setSwitching(null); setWarning(null); }
   };
 
-  const ORDER = ["conservative","balanced","aggressive","scalper"];
+  const ORDER = ["conservative", "balanced", "aggressive", "scalper"];
 
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
         {ORDER.map(key => {
           const info = modes[key]; if (!info) return null;
-          const color = COLOR[info.ui_color] || "var(--cyan)";
+          const color = COLOR[info.ui_color] || "var(--accent)";
           const active = info.is_active;
           return (
             <button key={key} onClick={() => handleSelect(key, info)}
               disabled={!!switching}
               style={{
-                textAlign: "left", padding: 14, cursor: active ? "default" : "pointer",
-                background: active ? `${color}12` : "var(--bg-3)",
+                textAlign: "left", padding: 12, cursor: active ? "default" : "pointer",
+                borderRadius: 6,
+                background: active ? "var(--fill-active)" : "var(--bg-3)",
                 border: `1px solid ${active ? color + "50" : "var(--line-dim)"}`,
                 borderLeft: `2px solid ${active ? color : "transparent"}`,
                 transition: "all 0.12s",
               }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 600, color: active ? color : "var(--ink)" }}>
-                  {info.display_name.toUpperCase()}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: active ? color : "var(--ink)" }}>
+                  {info.display_name}
                 </span>
                 {active && (
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+                  <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 3,
                     background: `${color}20`, color, border: `1px solid ${color}40` }}>
-                    ACTIVE
+                    Active
                   </span>
                 )}
               </div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginBottom: 6 }}>
+              <div className="tnum" style={{ fontSize: 12, color: "var(--ink-dim)", marginBottom: 5 }}>
                 {info.dte_range}
               </div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", lineHeight: 1.6, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-faint)", lineHeight: 1.6, marginBottom: 8 }}>
                 {info.description}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+              <div style={{ display: "flex", gap: 6 }}>
+                <span className="tnum" style={{ fontSize: 11, padding: "1px 7px", borderRadius: 3,
                   border: "1px solid var(--line-dim)", color: "var(--ink-dim)" }}>
-                  {info.risk_per_trade}/TRADE
+                  {info.risk_per_trade}/trade
                 </span>
                 {info.requires_monitoring && (
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+                  <span style={{ fontSize: 11, padding: "1px 7px", borderRadius: 3,
                     border: "1px solid rgba(239,68,68,0.4)", color: "var(--red)" }}>
-                    ⚠ MONITOR
+                    Monitor
                   </span>
                 )}
               </div>
@@ -94,11 +95,10 @@ export default function TradingModeSelector() {
       </div>
 
       {message && (
-        <div style={{ padding: "10px 14px", marginBottom: 10,
+        <div style={{ padding: "10px 14px", marginBottom: 10, borderRadius: 4,
           background: message.ok ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
           border: `1px solid ${message.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
-          fontFamily: "var(--mono)", fontSize: 11,
-          color: message.ok ? "var(--green)" : "var(--red)" }}>
+          fontSize: 12, color: message.ok ? "var(--green)" : "var(--red)" }}>
           {message.text}
         </div>
       )}
@@ -108,21 +108,21 @@ export default function TradingModeSelector() {
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
           display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
         }}>
-          <div style={{ background: "var(--bg-2)", border: "1px solid rgba(239,68,68,0.5)", maxWidth: 440, width: "100%", padding: 24 }}>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)", fontWeight: 600, marginBottom: 14, letterSpacing: "0.1em" }}>
-              ⚡ SCALPER MODE WARNING
+          <div style={{ background: "var(--bg-2)", border: "1px solid rgba(239,68,68,0.5)", borderRadius: 8, maxWidth: 440, width: "100%", padding: 24 }}>
+            <div style={{ fontSize: 14, color: "var(--red)", fontWeight: 600, marginBottom: 14 }}>
+              Scalper mode warning
             </div>
-            <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", padding: 14, marginBottom: 16 }}>
-              <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", whiteSpace: "pre-line", lineHeight: 1.7 }}>
+            <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 4, padding: 14, marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: "var(--ink-dim)", whiteSpace: "pre-line", lineHeight: 1.7 }}>
                 {warning.text}
               </p>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button className="btn-t" onClick={() => setWarning(null)} style={{ flex: 1 }}>
-                CANCEL
+                Cancel
               </button>
               <button className="btn-t danger" onClick={() => activate(warning.mode, true)} style={{ flex: 1 }}>
-                CONFIRM SCALPER
+                Confirm scalper
               </button>
             </div>
           </div>

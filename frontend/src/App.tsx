@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import "./index.css";
 import TerminalLayout  from "./components/TerminalLayout";
+import ChartWorkstation from "./pages/ChartWorkstation";
 import Dashboard       from "./pages/Dashboard";
 import TradeDesk       from "./pages/TradeDesk";
 import Journal         from "./pages/Journal";
@@ -23,7 +24,7 @@ const PAGES: Record<string, React.ComponentType> = {
 };
 
 export default function App() {
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState("chart");
   const Page = PAGES[page] || Dashboard;
 
   return (

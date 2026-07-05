@@ -14,7 +14,8 @@ interface MarginInfo {
 }
 
 export default function RiskMonitor() {
-  const { guardrailStatus, riskState } = useRisk();
+  const { guardrailStatus, riskState, killSwitch, refresh } = useRisk();
+  const [view, setView] = useState<"monitor" | "rules">("monitor");
 
   const [margin, setMargin] = useState<MarginInfo | null>(null);
   const [recon, setRecon] = useState<any>(null);
@@ -98,18 +99,31 @@ export default function RiskMonitor() {
   const daily_pnl   = riskState?.state?.daily_pnl ?? 0;
 
   return (
-    <div style={{ padding: 16, overflowY: "auto", height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* View switch — Monitor (real-time dials + kill switch) / Rules (audit). */}
+      <div style={{
+        padding: "6px 14px", borderBottom: "1px solid var(--line-dim)",
+        background: "var(--bg-2)", display: "flex", alignItems: "center", gap: 8,
+      }}>
+        <button className={`btn-t ${view === "monitor" ? "active" : ""}`} onClick={() => setView("monitor")}>Monitor</button>
+        <button className={`btn-t ${view === "rules" ? "active" : ""}`} onClick={() => setView("rules")}>Rules</button>
+      </div>
+
+      {view === "rules" ? (
+        <div style={{ flex: 1, overflowY: "auto" }}><Guardrails /></div>
+      ) : (
+      <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>
 
       {/* Header stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16, background: "var(--bg-2)", border: "1px solid var(--line-dim)" }}>
-        <Stat label="Portfolio Value" value={`$${(pv/1000).toFixed(2)}k`} color="var(--cyan)" />
+        <Stat label="Portfolio Value" value={`$${(pv/1000).toFixed(2)}k`} />
         <Stat label="Daily P&L"
           value={`${daily_pnl >= 0 ? "+" : ""}$${Math.abs(daily_pnl).toFixed(0)}`}
           color={daily_pnl >= 0 ? "var(--green)" : "var(--red)"} />
         <Stat label="Open Positions" value={riskState?.state?.open_positions || 0} />
         <Stat label="Status"
-          value={guardrailStatus?.trading_allowed ? "ACTIVE" : "SUSPENDED"}
-          color={guardrailStatus?.trading_allowed ? "var(--green)" : "var(--red)"} />
+          value={killSwitch?.engaged ? "HALTED" : guardrailStatus?.trading_allowed ? "ACTIVE" : "SUSPENDED"}
+          color={killSwitch?.engaged ? "var(--red)" : guardrailStatus?.trading_allowed ? "var(--green)" : "var(--red)"} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -248,6 +262,8 @@ export default function RiskMonitor() {
           </Section>
         </div>
       </div>
+      </div>
+      )}
     </div>
   );
 }

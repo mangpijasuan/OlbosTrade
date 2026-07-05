@@ -23,7 +23,10 @@ logger = get_logger(__name__)
 
 class ReconciliationError(Exception):
     """Raised when broker positions don't match DB state — halts trading."""
-    pass
+
+    def __init__(self, message: str, result: Optional["ReconciliationResult"] = None):
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass
@@ -34,6 +37,7 @@ class ReconciliationResult:
     db_open_trade_count: int
     untracked_at_broker: list[str]   # in broker, not in DB — ghost positions
     phantom_in_db: list[str]         # in DB as open, not at broker — orphaned records
+    quantity_mismatches: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     checked_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -150,7 +154,8 @@ class PositionReconciler:
         untracked = broker_underlyings - db_underlyings
         phantom   = db_underlyings - broker_underlyings
 
-        warnings = []
+        warnings: list[str] = []
+        quantity_mismatches: list[str] = []
 
         # Quantity mismatches on known underlyings (e.g. doubled position)
         common = broker_underlyings & db_underlyings
@@ -162,6 +167,17 @@ class PositionReconciler:
                 )
                 logger.critical(warn)
                 warnings.append(warn)
+                quantity_mismatches.append(warn)
+
+        result = ReconciliationResult(
+            clean=len(untracked) == 0 and not quantity_mismatches,
+            broker_position_count=len(broker_positions),
+            db_open_trade_count=len(db_open_trades),
+            untracked_at_broker=list(untracked),
+            phantom_in_db=list(phantom),
+            quantity_mismatches=quantity_mismatches,
+            warnings=warnings,
+        )
 
         # Untracked broker positions — halt trading
         if untracked:
@@ -172,13 +188,13 @@ class PositionReconciler:
                 f"Trading halted until manual review."
             )
             logger.critical(msg)
-            raise ReconciliationError(msg)
+            raise ReconciliationError(msg, result=result)
 
         # Quantity mismatches are also a hard halt
-        qty_mismatches = [w for w in warnings if "QUANTITY MISMATCH" in w]
-        if qty_mismatches:
+        if quantity_mismatches:
             raise ReconciliationError(
-                f"Position quantity mismatch detected — trading halted: {qty_mismatches}"
+                f"Position quantity mismatch detected — trading halted: {quantity_mismatches}",
+                result=result,
             )
 
         if phantom:
@@ -188,15 +204,6 @@ class PositionReconciler:
             )
             logger.warning(warning)
             warnings.append(warning)
-
-        result = ReconciliationResult(
-            clean=len(untracked) == 0 and not qty_mismatches,
-            broker_position_count=len(broker_positions),
-            db_open_trade_count=len(db_open_trades),
-            untracked_at_broker=list(untracked),
-            phantom_in_db=list(phantom),
-            warnings=warnings,
-        )
 
         if result.clean:
             logger.info(
@@ -209,6 +216,69 @@ class PositionReconciler:
             )
 
         return result
+
+    async def reconcile_and_record(self, source: str = "system") -> ReconciliationResult:
+        """
+        Run reconciliation and persist the latest broker-vs-DB state.
+
+        This provides a canonical, queryable status record for the operator
+        terminal without changing the existing fail-closed behavior.
+        """
+        try:
+            result = await self.reconcile()
+        except ReconciliationError as exc:
+            await self._persist_snapshot(
+                result=exc.result,
+                source=source,
+                status="error",
+                error_message=str(exc),
+            )
+            raise
+
+        status = "warning" if result.warnings else "clean"
+        await self._persist_snapshot(result=result, source=source, status=status)
+        return result
+
+    async def _persist_snapshot(
+        self,
+        *,
+        result: Optional[ReconciliationResult],
+        source: str,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """
+        Best-effort persistence of reconciliation state.
+
+        Operational status should be visible in the terminal even when no one is
+        tailing logs, but persistence failure must never mask the original drift.
+        """
+        try:
+            from app.core.config import settings
+            from app.models.reconciliation_snapshot import ReconciliationSnapshot
+
+            checked_at = result.checked_at if result is not None else datetime.now(timezone.utc)
+
+            snapshot = ReconciliationSnapshot(
+                status=status,
+                clean=bool(result.clean) if result is not None else False,
+                source=source,
+                broker_name=settings.broker,
+                broker_position_count=result.broker_position_count if result is not None else 0,
+                db_open_trade_count=result.db_open_trade_count if result is not None else 0,
+                untracked_at_broker=list(result.untracked_at_broker) if result is not None else [],
+                phantom_in_db=list(result.phantom_in_db) if result is not None else [],
+                quantity_mismatches=list(result.quantity_mismatches) if result is not None else [],
+                warnings=list(result.warnings) if result is not None else [],
+                error_message=error_message,
+                checked_at=checked_at,
+            )
+
+            async with AsyncSessionLocal() as session:
+                session.add(snapshot)
+                await session.commit()
+        except Exception as exc:
+            logger.error("Could not persist reconciliation snapshot: %s", exc)
 
     async def load_guardrail_state_from_db(self) -> dict:
         """

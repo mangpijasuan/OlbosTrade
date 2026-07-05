@@ -125,8 +125,9 @@ async def get_positions():
 
     for pos in broker_positions:
         sym = getattr(pos, "symbol", str(pos))
+        underlying = getattr(pos, "underlying", sym)
         seen.add(sym)
-        db = db_trades.get(sym)
+        db = db_trades.get(underlying)
         qty      = getattr(pos, "quantity", 0)
         avg_cost = float(getattr(pos, "avg_cost", 0) or 0)
         cur_price = price_map.get(sym)
@@ -159,7 +160,11 @@ async def get_positions():
                 "symbol":          sym,
                 "strategy":        t.strategy,
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
+                "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,
+                "trading_mode":    t.trading_mode_at_entry,
                 "credit_received": float(t.credit_received or 0),
+                "mfe_pnl":         float(t.mfe_pnl or 0),
+                "mae_pnl":         float(t.mae_pnl or 0),
                 "source":          "db_only",
                 "tracked":         True,
             })
@@ -216,6 +221,7 @@ async def get_trade_history(
                     "mae":             float(t.mae) if t.mae is not None else None,
                     "exit_reason":     t.exit_reason,
                     "signal_score":    float(t.signal_score or 0),
+                    "hold_days":       max(((t.exit_date or date.today()) - t.entry_date).days, 0) if t.entry_date else None,
                 }
                 for t in trades
             ],

@@ -15,13 +15,13 @@ services:
       VNC_SERVER_PASSWORD:  ${VNC_PASSWORD:-localdev}
       TWOFA_TIMEOUT_ACTION: restart
     ports:
-      - "4002:4002"   # paper gateway socket (ib_insync connects here)
-      - "4001:4001"   # live gateway socket
+      - "4002:4004"   # paper — gnzsnz socat publishes API on container :4004
+      - "4001:4003"   # live  — gnzsnz socat publishes API on container :4003
       - "5900:5900"   # VNC — open with any VNC viewer to see IB Gateway GUI
     volumes:
       - ib_gateway_data:/home/ibgateway/Jts
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 4002 || exit 1"]
+      test: ["CMD-SHELL", "nc -z localhost 4004 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

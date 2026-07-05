@@ -111,6 +111,7 @@ services:
 
 volumes:
   olbosquant_pgdata:
+  olbosquant_archive:
 
 networks:
   olbosquant_internal:

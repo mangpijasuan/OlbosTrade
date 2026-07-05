@@ -407,6 +407,41 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         )
         return _blocked(f"capital_preservation: strategy {strategy!r} not allowed in {guardrail_status.trading_mode} mode")
 
+    # Fast no-op exits should not hit lifecycle or DB gates.
+    if asset_type == "equity":
+        trade_plan = signal.get("trade_plan", {})
+        shares = trade_plan.get("shares", 1)
+        if not shares or shares <= 0:
+            return _skipped("zero_size")
+    elif asset_type == "options":
+        quantity = int(signal.get("quantity", 1) or 0)
+        if quantity <= 0:
+            return _skipped("zero_size")
+
+    # Lifecycle gate: Autopilot is fail-closed unless the strategy is explicitly
+    # registered and eligible for unattended execution.
+    if approved_by == "autopilot":
+        try:
+            from app.core.database import AsyncSessionLocal
+
+            strategy_id = strategy or signal.get("strategy_id")
+            if not strategy_id and asset_type == "equity":
+                strategy_id = "equity_signal"
+
+            async with AsyncSessionLocal() as _db:
+                allowed, reason = await strategy_registry_service.can_run_on_autopilot(
+                    _db, strategy_id
+                )
+            if not allowed:
+                logger.warning(
+                    "Autopilot blocked %s for %s due to strategy registry policy: %s",
+                    strategy_id, ticker, reason,
+                )
+                return _blocked(f"strategy_lifecycle: {reason}")
+        except Exception as exc:
+            logger.error("Strategy lifecycle gate failed closed for %s: %s", ticker, exc)
+            return _blocked(f"strategy_lifecycle_error: {exc}")
+
     # ── Stage 3: Duplicate guard ───────────────────────────────────────────────
     try:
         from app.core.database import AsyncSessionLocal
@@ -469,10 +504,6 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         if asset_type == "equity":
             trade_plan = signal.get("trade_plan", {})
             shares     = trade_plan.get("shares", 1)
-
-            # Stage 3b: sizing — zero shares = skip
-            if not shares or shares <= 0:
-                return _skipped("zero_size")
 
             result = await broker.place_equity_order(
                 ticker=ticker,
@@ -554,10 +585,6 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             credit      = spread_data.get("net_credit", 0)
             strategy    = signal.get("strategy", "bull_put_spread")
             quantity    = int(signal.get("quantity", 1))
-
-            # Stage 3b: sizing — zero contracts = skip
-            if quantity <= 0:
-                return _skipped("zero_size")
 
             expiry_date = date.fromisoformat(expiry_str) if expiry_str else date.today()
             if "bear_call" in strategy:

@@ -3,9 +3,9 @@
   "configurations": [
     {
       "name": "frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
-      "port": 3000
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd frontend && BACKEND_URL=http://127.0.0.1:8001 npm run dev -- --port 3010 --host"],
+      "port": 3010
     }
   ]
 }

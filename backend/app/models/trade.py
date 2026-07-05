@@ -45,6 +45,18 @@ class Trade(Base):
     cost_to_close: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4), nullable=True)
     pnl_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6), nullable=True)
+    mfe_pnl: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(12, 4), nullable=True,
+        comment="Maximum favorable excursion in dollars while the trade was open"
+    )
+    mae_pnl: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(12, 4), nullable=True,
+        comment="Maximum adverse excursion in dollars while the trade was open"
+    )
+    pnl_capture_pct: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(8, 6), nullable=True,
+        comment="Closed P&L divided by MFE, when MFE was positive"
+    )
 
     # Excursions — best/worst unrealized P&L ($) seen while the trade was open.
     # Used to refine take-profit / stop-loss (how much was left on the table vs
@@ -76,6 +88,10 @@ class Trade(Base):
     dispatch_id: Mapped[Optional[str]] = mapped_column(
         String(100), nullable=True, unique=True, index=True,
         comment="Broker dispatch correlation ID — UNIQUE ensures idempotent fill recording"
+    )
+    strategy_snapshot_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        comment="Configuration snapshot used when this trade was entered"
     )
 
     created_at: Mapped[datetime] = mapped_column(
