@@ -30,9 +30,14 @@ function trendTone(t: string): string {
   return t === "bullish" ? "var(--green)" : t === "bearish" ? "var(--red)" : "var(--ink-dim)";
 }
 
+interface Confirmation {
+  confirmation: { score: number; supporting: string[]; risk_factors: string[] };
+}
+
 export default function MarketBiasPanel({ symbol }: { symbol: string }) {
   const [bias, setBias] = useState<Bias | null>(null);
   const [align, setAlign] = useState<Alignment | null>(null);
+  const [conf, setConf] = useState<Confirmation["confirmation"] | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -43,7 +48,8 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
     Promise.all([
       api.getMarketBias(symbol) as Promise<Bias>,
       (api.getTimeframeAlignment(symbol) as Promise<Alignment>).catch(() => null),
-    ]).then(([b, a]) => { if (alive) { setBias(b); setAlign(a); } })
+      (api.getConfirmation(symbol) as Promise<Confirmation>).catch(() => null),
+    ]).then(([b, a, c]) => { if (alive) { setBias(b); setAlign(a); setConf(c ? c.confirmation : null); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [symbol]);
@@ -80,6 +86,21 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
             <div style={{ fontSize: 12, color: "var(--amber)", marginBottom: 8 }}>
               <span className="kicker" style={{ color: "var(--amber)" }}>Main risk</span> {bias.main_risk}
             </div>
+
+            {conf && (
+              <div style={{ borderTop: "1px solid var(--line-dim)", paddingTop: 8, marginBottom: 4 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                  <span className="kicker">Confirmation</span>
+                  <span className="tnum" style={{ fontSize: 15, fontWeight: 600, color: conf.score >= 60 ? "var(--green)" : "var(--ink-dim)" }}>{conf.score}/100</span>
+                </div>
+                {conf.supporting.slice(0, 3).map((s, i) => (
+                  <div key={i} style={{ fontSize: 12, color: "var(--ink-dim)" }}>+ {s}</div>
+                ))}
+                {conf.risk_factors.slice(0, 2).map((s, i) => (
+                  <div key={i} style={{ fontSize: 12, color: "var(--amber)" }}>− {s}</div>
+                ))}
+              </div>
+            )}
 
             {align && (
               <>

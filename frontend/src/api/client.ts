@@ -74,6 +74,9 @@ export const api = {
   // ── Chart Intelligence ────────────────────────────────────────────────────
   getMarketBias: (symbol: string, strategy = "default") => request(`/api/chart/bias/${symbol}?strategy=${strategy}`),
   getTimeframeAlignment: (symbol: string, strategy = "default") => request(`/api/chart/alignment/${symbol}?strategy=${strategy}`),
+  getConfirmation: (symbol: string, strategy = "default") => request(`/api/chart/confirmation/${symbol}?strategy=${strategy}`),
+  getSetupScanner: (watchlist?: string, strategy = "default") =>
+    request(`/api/chart/scanner?strategy=${strategy}${watchlist ? `&watchlist=${watchlist}` : ""}`),
 
   // ── Guardrails ────────────────────────────────────────────────────────────
   getGuardrailStatus: () => request("/api/guardrails/status"),

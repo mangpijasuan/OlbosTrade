@@ -136,6 +136,96 @@ async def bias(symbol: str, strategy: str = "default"):
     return result.to_dict()
 
 
+async def _confirmation_for(symbol: str, strategy: str) -> dict:
+    """Assemble the trade-confirmation score for one symbol (read-only)."""
+    from app.services.chart.breakout_confirmation import BreakoutInputs, assess_breakout
+    from app.services.chart.confirmation_score import ScoreInputs, compute_confirmation_score
+    from app.services.chart.setup_scanner import strategy_fit_for
+
+    sym = symbol.upper()
+    states = [classify_timeframe(tf, await _bars(sym, tf)) for tf in _ALIGN_TFS]
+    align_res = align(states, strategy)
+
+    daily = await _bars(sym, "1d")
+    struct = analyze_structure(daily)
+    closes = [b["close"] for b in daily]
+    price = closes[-1] if closes else None
+    rvol = _rel_volume(daily)
+    atrp = _atr_pct(daily)
+    macro = await _macro_risk()
+
+    structure_agrees = (
+        (align_res.dominant == "bullish" and struct.state == "uptrend")
+        or (align_res.dominant == "bearish" and struct.state == "downtrend")
+    )
+
+    # Breakout vs nearest resistance from structure (closed daily bar).
+    breakout_confirmed = False
+    if price is not None and struct.resistance and align_res.dominant == "bullish":
+        level = min(r for r in struct.resistance)
+        bo = assess_breakout(BreakoutInputs(
+            kind="breakout", close=price, level=level, closed_bar=True,
+            relative_volume=rvol, above_vwap=True,
+            mtf_agrees=(align_res.dominant == "bullish"),
+            event_clear=(macro not in ("high", "very_high")),
+        ))
+        breakout_confirmed = bo.status == "confirmed"
+
+    regime = await _current_regime()
+    regime_fit = bool(regime and "trend" in regime and align_res.dominant != "neutral")
+
+    dq = None
+    try:
+        from app.services.intel.provider_registry import registry
+        dq = registry.data_quality(sym).score
+    except Exception:
+        pass
+
+    score = compute_confirmation_score(ScoreInputs(
+        alignment_score=align_res.score, alignment_max=align_res.max_score,
+        dominant=align_res.dominant, structure_agrees=structure_agrees,
+        breakout_confirmed=breakout_confirmed, relative_volume=rvol,
+        above_vwap=None, atr_pct=atrp, regime_fit=regime_fit, macro_risk=macro,
+        portfolio_overlap_pct=None, data_quality=dq,
+    ))
+
+    return {
+        "symbol": sym,
+        "bias": align_res.dominant,
+        "structure_state": struct.state,
+        "timeframe_alignment": f"{align_res.bullish_count} of {align_res.total} bullish",
+        "macro_risk": macro,
+        "strategy_fit": strategy_fit_for(align_res.dominant, struct.state),
+        "confirmation": score.to_dict(),
+    }
+
+
+@router.get("/confirmation/{symbol}")
+async def confirmation(symbol: str, strategy: str = "default"):
+    return await _confirmation_for(symbol, strategy)
+
+
+@router.get("/scanner")
+async def scanner(watchlist: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMD", strategy: str = "default",
+                  min_confirmation: int = 60):
+    from app.services.chart.setup_scanner import SetupCandidate, rank_setups
+
+    symbols = [s.strip().upper() for s in watchlist.split(",") if s.strip()][:12]
+    assessments = await asyncio.gather(*[_confirmation_for(s, strategy) for s in symbols])
+    candidates = [
+        SetupCandidate(
+            symbol=a["symbol"], bias=a["bias"],
+            confirmation_score=a["confirmation"]["score"],
+            structure_state=a["structure_state"],
+            timeframe_alignment=a["timeframe_alignment"],
+            macro_risk=a["macro_risk"], portfolio_overlap_pct=None,
+            min_confirmation=min_confirmation, strategy_fit=a["strategy_fit"],
+        )
+        for a in assessments
+    ]
+    return {"strategy": strategy, "results": [r.to_dict() for r in rank_setups(candidates)]}
+
+
 async def _current_regime() -> str | None:
     try:
         from app.api.routes import market_data  # regime endpoint source
