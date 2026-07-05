@@ -70,6 +70,8 @@ export const api = {
   getWhyMoving: (symbol: string) => request(`/api/intel/why-moving/${symbol}`),
   getSymbolNews: (symbol: string, limit = 15) => request(`/api/intel/news/${symbol}?limit=${limit}`),
   getSymbolFilings: (symbol: string, limit = 15) => request(`/api/intel/filings/${symbol}?limit=${limit}`),
+  getClassifiedNews: (symbol: string, limit = 15) => request(`/api/intel/classify/${symbol}?limit=${limit}`),
+  getInsiderIntel: (symbol: string) => request(`/api/intel/insider/${symbol}`),
 
   // ── Chart Intelligence ────────────────────────────────────────────────────
   getMarketBias: (symbol: string, strategy = "default") => request(`/api/chart/bias/${symbol}?strategy=${strategy}`),
@@ -145,6 +147,9 @@ export const api = {
   getExecutionMode:   () => request("/api/trade-desk/execution-mode"),
   setExecutionMode:   (mode: string) =>
     request("/api/trade-desk/execution-mode", { method: "POST", body: JSON.stringify({ mode }) }),
+  getTradeDeskKillSwitch: () => request("/api/trade-desk/kill-switch"),
+  setTradeDeskKillSwitch: (engaged: boolean) =>
+    request("/api/trade-desk/kill-switch", { method: "POST", body: JSON.stringify({ engaged }) }),
   getPendingApprovals: () => request("/api/trade-desk/pending"),
   approveSignal:       (id: string) =>
     request(`/api/trade-desk/approve/${id}`, { method: "POST" }),

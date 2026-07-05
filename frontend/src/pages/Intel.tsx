@@ -132,24 +132,50 @@ function FeedList({ title, items, render }: { title: string; items: FeedItem[]; 
   );
 }
 
+interface Classification {
+  category: string; direction: string; impact: string; risk_action: string;
+}
+interface ClassifiedItem extends FeedItem { type: string; classification: Classification; }
+interface Insider {
+  insider_filings: number; cluster: boolean; most_recent: string | null;
+  context: string; limitations: string[];
+}
+
+const DIR_TONE: Record<string, string> = {
+  bullish: "var(--green)", bearish: "var(--red)", mixed: "var(--amber)", uncertain: "var(--ink-dim)",
+};
+const IMPACT_TONE: Record<string, string> = { high: "var(--red)", moderate: "var(--amber)", low: "var(--ink-dim)" };
+
+function ClassBadges({ c }: { c: Classification }) {
+  return (
+    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 3 }}>
+      <span style={{ fontSize: 10, color: "var(--ink-dim)", border: "1px solid var(--line-dim)", borderRadius: 3, padding: "0 5px" }}>{c.category}</span>
+      <span style={{ fontSize: 10, color: DIR_TONE[c.direction], border: `1px solid ${DIR_TONE[c.direction]}`, borderRadius: 3, padding: "0 5px" }}>{c.direction}</span>
+      <span style={{ fontSize: 10, color: IMPACT_TONE[c.impact], border: `1px solid ${IMPACT_TONE[c.impact]}`, borderRadius: 3, padding: "0 5px" }}>{c.impact} impact</span>
+    </div>
+  );
+}
+
 function WhyTab() {
   const [sym, setSym] = useState("NVDA");
   const [data, setData] = useState<WhyMoving | null>(null);
   const [quality, setQuality] = useState<any>(null);
-  const [news, setNews] = useState<FeedItem[]>([]);
-  const [filings, setFilings] = useState<FeedItem[]>([]);
+  const [items, setItems] = useState<ClassifiedItem[]>([]);
+  const [insider, setInsider] = useState<Insider | null>(null);
   const [loading, setLoading] = useState(false);
   const run = (s: string) => {
     setLoading(true);
     Promise.all([
       api.getWhyMoving(s) as Promise<WhyMoving>,
       api.getDataQuality(s).catch(() => null),
-      (api.getSymbolNews(s) as Promise<{ items: FeedItem[] }>).catch(() => ({ items: [] })),
-      (api.getSymbolFilings(s) as Promise<{ items: FeedItem[] }>).catch(() => ({ items: [] })),
-    ]).then(([w, q, n, f]) => { setData(w); setQuality(q); setNews(n.items || []); setFilings(f.items || []); })
+      (api.getClassifiedNews(s) as Promise<{ items: ClassifiedItem[] }>).catch(() => ({ items: [] })),
+      (api.getInsiderIntel(s) as Promise<Insider>).catch(() => null),
+    ]).then(([w, q, c, ins]) => { setData(w); setQuality(q); setItems(c.items || []); setInsider(ins); })
       .finally(() => setLoading(false));
   };
   useEffect(() => { run("NVDA"); }, []);
+  const news = items.filter(i => i.type === "news");
+  const filings = items.filter(i => i.type === "filing");
   return (
     <div style={{ maxWidth: 1000 }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 14, maxWidth: 640 }}>
@@ -177,16 +203,34 @@ function WhyTab() {
           </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <FeedList title="News (delayed)" items={news} render={it => (
-            it.payload.link
-              ? <a href={it.payload.link} style={{ fontSize: 13, color: "var(--accent)", textDecoration: "none" }}>{it.payload.title}</a>
-              : <span style={{ fontSize: 13, color: "var(--ink)" }}>{it.payload.title}</span>
+          {insider && (
+            <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span className="kicker">Insider activity</span>
+                {insider.cluster && <span style={{ fontSize: 10, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 3, padding: "0 6px" }}>cluster</span>}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--ink)" }}>
+                <span className="tnum" style={{ fontWeight: 600 }}>{insider.insider_filings}</span> Form 3/4/5 filings
+                {insider.most_recent && <span style={{ color: "var(--ink-faint)" }}> · latest {insider.most_recent}</span>}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-dim)", marginTop: 4 }}>{insider.context}</div>
+              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6 }}>{insider.limitations[0]}</div>
+            </div>
+          )}
+          <FeedList title="News (classified · delayed)" items={news} render={(it: any) => (
+            <div>
+              {it.payload.link
+                ? <a href={it.payload.link} style={{ fontSize: 13, color: "var(--accent)", textDecoration: "none" }}>{it.payload.title}</a>
+                : <span style={{ fontSize: 13, color: "var(--ink)" }}>{it.payload.title}</span>}
+              {it.classification && <ClassBadges c={it.classification} />}
+            </div>
           )} />
-          <FeedList title="SEC filings" items={filings} render={it => (
-            <span style={{ fontSize: 13 }}>
-              <span className="mono" style={{ color: it.payload.is_insider ? "var(--amber)" : "var(--ink)" }}>{it.payload.form_type}</span>
-              <span style={{ color: "var(--ink-dim)", marginLeft: 8 }}>{it.payload.category}</span>
-            </span>
+          <FeedList title="SEC filings" items={filings} render={(it: any) => (
+            <div>
+              <span className="mono" style={{ fontSize: 13, color: it.payload.is_insider ? "var(--amber)" : "var(--ink)" }}>{it.payload.form_type}</span>
+              <span style={{ color: "var(--ink-dim)", marginLeft: 8, fontSize: 13 }}>{it.payload.category}</span>
+              {it.classification && <ClassBadges c={it.classification} />}
+            </div>
           )} />
         </div>
       </div>

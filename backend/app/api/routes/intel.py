@@ -112,6 +112,40 @@ async def filings(symbol: str, limit: int = 20):
     return {"symbol": symbol.upper(), "items": items, "count": len(items)}
 
 
+# ── News-to-Risk classification ──────────────────────────────────────────────
+@router.get("/classify/{symbol}")
+async def classify_symbol(symbol: str, limit: int = 15):
+    """Fetch news + filings and attach a deterministic risk classification to
+    each. Classification is advisory only — it changes no gate."""
+    from app.services.intel.news_classifier import classify
+
+    sym = symbol.upper()
+    news = await _gather(registry._news, "fetch_news", sym, limit)
+    filings = await _gather(registry._filings, "fetch_filings", sym, limit)
+
+    items = []
+    for n in news:
+        c = classify(title=n["payload"].get("title", ""))
+        items.append({"type": "news", **n, "classification": c.to_dict()})
+    for f in filings:
+        p = f["payload"]
+        c = classify(title=p.get("title", ""), form_type=p.get("form_type"), is_filing=True)
+        items.append({"type": "filing", **f, "classification": c.to_dict()})
+
+    items.sort(key=lambda d: d["as_of"], reverse=True)
+    return {"symbol": sym, "items": items[:limit], "count": len(items)}
+
+
+# ── Insider & filing intelligence ────────────────────────────────────────────
+@router.get("/insider/{symbol}")
+async def insider(symbol: str, limit: int = 40):
+    from app.services.intel.insider_intel import summarize_insider
+
+    sym = symbol.upper()
+    filings = await _gather(registry._filings, "fetch_filings", sym, limit)
+    return summarize_insider(sym, filings).to_dict()
+
+
 # ── Data quality ─────────────────────────────────────────────────────────────
 @router.get("/data-quality/{symbol}")
 async def data_quality(symbol: str):
