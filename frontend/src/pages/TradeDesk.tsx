@@ -1,6 +1,6 @@
 /**
  * Trade Desk — unified execution hub covering paper + live trading.
- * Tabs: SIGNALS | POSITIONS | APPROVALS | P&L BREAKDOWN | MODE
+ * Tabs: SIGNALS | POSITIONS | APPROVALS | P&L BREAKDOWN | RISK PROFILE
  * Execution modes: MANUAL (signals only) · COPILOT (you approve) · AUTOPILOT (auto-execute)
  */
 import React, { useState, useEffect, useCallback } from "react";
@@ -48,9 +48,9 @@ function ExecModeBar() {
   };
 
   const modes: { key: ExecMode; label: string; desc: string; color: string }[] = [
-    { key: "manual",    label: "MANUAL",    desc: "Signals displayed only — you decide when to trade",  color: "var(--ink-dim)" },
-    { key: "copilot",   label: "COPILOT",   desc: "System queues trades — you approve each one first",   color: "var(--cyan)" },
-    { key: "autopilot", label: "AUTOPILOT", desc: "Fully automatic — executes within guardrail limits",  color: "var(--orange)" },
+    { key: "manual",    label: "Manual",    desc: "Signals displayed only — you decide when to trade",  color: "var(--ink-dim)" },
+    { key: "copilot",   label: "Copilot",   desc: "System queues trades — you approve each one first",   color: "var(--accent)" },
+    { key: "autopilot", label: "Autopilot", desc: "Fully automatic — executes within guardrail limits",  color: "var(--orange)" },
   ];
 
   return (
@@ -59,13 +59,13 @@ function ExecModeBar() {
       padding: "6px 16px", background: "var(--bg-3)",
       borderBottom: "1px solid var(--line-dim)",
     }}>
-      <span className="kicker" style={{ marginRight: 4 }}>EXECUTION:</span>
+      <span className="kicker" style={{ marginRight: 4 }}>Execution</span>
       {modes.map(m => (
         <button
           key={m.key}
           className={`btn-t ${mode === m.key ? "active" : ""}`}
           style={{
-            borderRadius: 0, fontSize: 10,
+            fontSize: 12,
             ...(mode === m.key ? { borderColor: m.color, color: m.color, background: `${m.color}15` } : {}),
           }}
           onClick={() => select(m.key)}
@@ -78,32 +78,29 @@ function ExecModeBar() {
       ))}
       {mode === "autopilot" && (
         <span style={{
-          fontFamily: "var(--mono)", fontSize: 10, color: "var(--orange)",
-          padding: "2px 8px", border: "1px solid rgba(249,115,22,0.4)",
+          fontSize: 11, color: "var(--orange)",
+          padding: "2px 8px", borderRadius: 3, border: "1px solid rgba(249,115,22,0.4)",
           background: "rgba(249,115,22,0.08)", marginLeft: 8,
         }}>
-          ⚡ AUTO-EXECUTING WITHIN GUARDRAILS
+          Auto-executing within guardrails
         </span>
       )}
       {mode === "copilot" && (
         <span style={{
-          fontFamily: "var(--mono)", fontSize: 10, color: "var(--cyan)",
-          padding: "2px 8px", border: "1px solid rgba(212,175,55,0.4)",
-          background: "rgba(212,175,55,0.08)", marginLeft: 8,
+          fontSize: 11, color: "var(--accent)",
+          padding: "2px 8px", borderRadius: 3, border: "1px solid rgba(59,130,246,0.4)",
+          background: "rgba(59,130,246,0.08)", marginLeft: 8,
         }}>
-          👁 APPROVAL REQUIRED PER TRADE
+          Approval required per trade
         </span>
       )}
       {mode === "manual" && (
-        <span style={{
-          fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
-          marginLeft: 8,
-        }}>
-          SIGNALS ONLY — NO AUTO EXECUTION
+        <span style={{ fontSize: 11, color: "var(--ink-dim)", marginLeft: 8 }}>
+          Signals only — no auto execution
         </span>
       )}
       <div style={{ flex: 1 }} />
-      {saving && <span className="kicker">SAVING…</span>}
+      {saving && <span className="kicker">Saving…</span>}
     </div>
   );
 }
@@ -160,12 +157,12 @@ function ApprovalsQueue() {
       </div>
 
       {loading ? (
-        <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", color: "var(--ink-faint)", fontSize: 11 }}>LOADING…</div>
+        <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", color: "var(--ink-faint)", fontSize: 11 }}>Loading…</div>
       ) : pending.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", color: "var(--ink-faint)", fontSize: 11 }}>
-          NO PENDING APPROVALS — QUEUE IS CLEAR
+          No pending approvals — queue is clear
           <div style={{ marginTop: 8, color: "var(--ink-faint)", fontSize: 10 }}>
-            Switch to COPILOT mode to route new signals here for approval.
+            Switch to Copilot mode to route new signals here for approval.
           </div>
         </div>
       ) : (
@@ -181,7 +178,7 @@ function ApprovalsQueue() {
                   <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                     {s.ticker}
                   </span>
-                  <Badge text={s.asset_type?.toUpperCase() || "EQUITY"} color="var(--cyan)" />
+                  <Badge text={s.asset_type?.toUpperCase() || "EQUITY"} color="var(--ink-dim)" />
                   <Badge text={s.action || s.strategy?.toUpperCase() || "BUY"} color={
                     (s.action === "BUY" || s.action === "SELL_SPREAD") ? "var(--green)" : "var(--red)"
                   } />
@@ -211,7 +208,7 @@ function ApprovalsQueue() {
                   onClick={() => act(s.id, "approve")}
                   style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
                 >
-                  ✓ APPROVE
+                  APPROVE
                 </button>
                 <button
                   className="btn-t danger"
@@ -219,7 +216,7 @@ function ApprovalsQueue() {
                   onClick={() => act(s.id, "reject")}
                   style={{ fontSize: 11 }}
                 >
-                  ✗ REJECT
+                  REJECT
                 </button>
               </div>
             </div>
@@ -247,8 +244,8 @@ function ApprovalsQueue() {
                   <td className="mono" style={{ fontSize: 10, color: "var(--ink-dim)" }}>
                     {e.executed_at ? new Date(e.executed_at).toLocaleTimeString() : "—"}
                   </td>
-                  <td className="mono" style={{ color: "var(--cyan)" }}>{e.ticker || "—"}</td>
-                  <td><Badge text={e.asset_type?.toUpperCase() || "EQ"} color="var(--cyan)" /></td>
+                  <td className="mono" style={{ color: "var(--ink)" }}>{e.ticker || "—"}</td>
+                  <td><Badge text={e.asset_type?.toUpperCase() || "EQ"} color="var(--ink-dim)" /></td>
                   <td className="mono" style={{ fontSize: 10 }}>{e.action || e.strategy || "—"}</td>
                   <td className="mono">{((e.confidence || 0) * 100).toFixed(1)}%</td>
                   <td className="mono" style={{ fontSize: 10, color: "var(--amber)" }}>{e.executed_by || "—"}</td>
@@ -341,7 +338,7 @@ function PnLBreakdown() {
         <div style={{ textAlign: "center", padding: 40, fontFamily: "var(--mono)", color: "var(--ink-faint)", fontSize: 11 }}>LOADING...</div>
       ) : sorted.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, fontFamily: "var(--mono)", color: "var(--ink-faint)", fontSize: 11 }}>
-          NO CLOSED TRADES YET — P&L BREAKDOWN APPEARS AFTER FIRST TRADE CLOSES
+          No closed trades yet — P&L breakdown appears after the first trade closes
         </div>
       ) : (
         <table className="t-table">
@@ -357,7 +354,7 @@ function PnLBreakdown() {
               const slip = Math.abs((t.credit_received || 0) * 100 * 0.15);
               return (
                 <tr key={i}>
-                  <td className="mono" style={{ color: "var(--cyan)" }}>{t.underlying || t.symbol || "—"}</td>
+                  <td className="mono" style={{ color: "var(--ink)" }}>{t.underlying || t.symbol || "—"}</td>
                   <td className="mono" style={{ fontSize: 10 }}>{t.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
                   <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{t.entry_date?.slice(0,10) || "—"}</td>
                   <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{t.exit_date?.slice(0,10) || "—"}</td>
@@ -409,11 +406,11 @@ export default function TradeDesk() {
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "signals",   label: "SIGNALS" },
-    { key: "positions", label: "POSITIONS" },
-    { key: "approvals", label: "APPROVALS" },
-    { key: "pnl",       label: "P&L BREAKDOWN" },
-    { key: "mode",      label: "TRADING MODE" },
+    { key: "signals",   label: "Signals" },
+    { key: "positions", label: "Positions" },
+    { key: "approvals", label: "Approvals" },
+    { key: "pnl",       label: "P&L breakdown" },
+    { key: "mode",      label: "Risk profile" },
   ];
 
   return (
@@ -428,18 +425,17 @@ export default function TradeDesk() {
         padding: "6px 16px", borderBottom: "1px solid var(--line-dim)",
         background: "var(--bg-2)",
       }}>
-        <div style={{ display: "flex", gap: 1 }}>
+        <div style={{ display: "flex", gap: 4 }}>
           {tabs.map(t => (
             <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`}
-              onClick={() => setTab(t.key)} style={{ borderRadius: 0 }}>
+              onClick={() => setTab(t.key)}>
               {t.label}
             </button>
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn-t" onClick={runCycle}
-          style={{ color: "var(--cyan)", borderColor: "var(--cyan)" }}>
-          {loading ? "RUNNING..." : "▶ RUN SIGNAL CYCLE"}
+        <button className="btn-t active" onClick={runCycle}>
+          {loading ? "Running…" : "▶ Run signal cycle"}
         </button>
       </div>
 
@@ -453,7 +449,7 @@ export default function TradeDesk() {
                 background: "var(--bg-3)", display: "flex", gap: 24, alignItems: "center",
               }}>
                 <span className="panel-title">LAST SIGNAL</span>
-                <Badge text={lastSignal.strategy?.toUpperCase() || "—"} color="var(--cyan)" />
+                <Badge text={lastSignal.strategy?.toUpperCase() || "—"} color="var(--ink-dim)" />
                 <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
                   Score: <span style={{ color: "var(--ink)" }}>{lastSignal.signal_score?.toFixed(3) || "—"}</span>
                 </span>
@@ -472,7 +468,7 @@ export default function TradeDesk() {
                   </td></tr>
                 ) : trades.length === 0 ? (
                   <tr><td colSpan={12} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
-                    NO TRADE HISTORY — RUN A CYCLE OR WAIT FOR NEXT SCAN
+                    No trade history — run a cycle or wait for the next scan
                   </td></tr>
                 ) : trades.map((t: any, i: number) => {
                   const pnl  = t.pnl || 0;
@@ -480,7 +476,7 @@ export default function TradeDesk() {
                   return (
                     <tr key={i}>
                       <td className="mono" style={{ color: "var(--ink-dim)", fontSize: 10 }}>{t.entry_date?.slice(0,10) || "—"}</td>
-                      <td className="mono" style={{ color: "var(--cyan)" }}>{t.underlying || t.symbol || "—"}</td>
+                      <td className="mono" style={{ color: "var(--ink)" }}>{t.underlying || t.symbol || "—"}</td>
                       <td className="mono" style={{ color: t.quantity > 0 ? "var(--green)" : t.quantity < 0 ? "var(--red)" : "var(--ink-dim)", fontWeight: 600 }}>
                         {t.quantity > 0 ? `+${t.quantity}` : t.quantity < 0 ? `${t.quantity}` : "—"}
                         <span style={{ fontSize: 9, marginLeft: 3, opacity: 0.7 }}>
@@ -517,15 +513,15 @@ export default function TradeDesk() {
             </tr></thead>
             <tbody>
               {(positions || []).length === 0 ? (
-                <tr><td colSpan={10} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
-                  NO OPEN POSITIONS
+                <tr><td colSpan={10} style={{ textAlign: "center", padding: 40, color: "var(--ink-dim)", fontSize: 12 }}>
+                  No open positions
                 </td></tr>
               ) : (positions || []).map((p: any, i: number) => {
                 const pnl = p.unrealized_pnl || 0;
                 return (
                   <tr key={i}>
-                    <td className="mono" style={{ color: "var(--cyan)" }}>{p.symbol || p.underlying || "—"}</td>
-                    <td><Badge text={p.asset_type?.toUpperCase() || "OPTIONS"} color="var(--cyan)" /></td>
+                    <td className="mono" style={{ color: "var(--ink)" }}>{p.symbol || p.underlying || "—"}</td>
+                    <td><Badge text={p.asset_type?.toUpperCase() || "OPTIONS"} color="var(--ink-dim)" /></td>
                     <td className="mono" style={{ fontSize: 10 }}>{p.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
                     <td className="mono">${(p.credit_received || p.entry_credit || 0).toFixed(2)}</td>
                     <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
@@ -534,7 +530,7 @@ export default function TradeDesk() {
                     <td className="mono" style={{ color: "var(--green)" }}>{fmtDollars(p.mfe_pnl)}</td>
                     <td className="mono" style={{ color: "var(--red)" }}>{fmtDollars(p.mae_pnl)}</td>
                     <td className="mono">{p.hold_days != null ? `${p.hold_days}d` : "—"}</td>
-                    <td><Badge text="OPEN" color="var(--cyan)" /></td>
+                    <td><Badge text="OPEN" color="var(--ink-dim)" /></td>
                     <td><span className={`mode-badge ${p.trading_mode || "balanced"}`}>{p.trading_mode || "balanced"}</span></td>
                   </tr>
                 );
@@ -549,16 +545,16 @@ export default function TradeDesk() {
         {/* P&L BREAKDOWN */}
         {tab === "pnl" && <PnLBreakdown />}
 
-        {/* TRADING MODE */}
+        {/* RISK PROFILE */}
         {tab === "mode" && (
           <div style={{ padding: 20, maxWidth: 720 }}>
-            <div className="panel-title" style={{ marginBottom: 16 }}>Market Regime & Risk Mode</div>
+            <div className="panel-title" style={{ marginBottom: 16 }}>Market Regime & Risk Profile</div>
             <div style={{
               fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
               padding: "8px 12px", background: "var(--bg-3)", marginBottom: 20,
               border: "1px solid var(--line-dim)", lineHeight: 1.7,
             }}>
-              Trading Mode controls position sizing, strategy selection, and risk budget.<br />
+              Risk Profile controls position sizing, strategy selection, and risk budget.<br />
               Execution Mode (bar above) controls whether trades need your approval.<br />
               In AUTOPILOT, both must be set — the system will trade within your guardrail limits.
             </div>
