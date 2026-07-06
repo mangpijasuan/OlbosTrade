@@ -11,6 +11,7 @@ import SignalsCenter   from "./pages/SignalsCenter";       // Equity Signals + S
 import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab: Strategy Lab + Market/Regime + Chart + Intel
 import BacktestCenter  from "./pages/BacktestCenter";      // Backtest + Symphony
 import CspScreener     from "./pages/CspScreener";          // Wheel & Income Lab
+import Settings        from "./pages/Settings";             // Account, brokers, billing
 
 const PAGES: Record<string, React.ComponentType> = {
   dashboard: Dashboard,
@@ -22,6 +23,7 @@ const PAGES: Record<string, React.ComponentType> = {
   journal:   Journal,
   analytics: ModeAnalytics,
   csp:       CspScreener,
+  settings:  Settings,
 };
 
 export default function App() {

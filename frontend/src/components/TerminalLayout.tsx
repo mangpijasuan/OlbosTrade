@@ -412,8 +412,47 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         );
       })}
 
-      {/* Kill switch at bottom */}
+      {/* Settings / account — pinned bottom, above kill switch */}
       <div style={{ flex: 1 }} />
+      <div
+        onMouseEnter={() => setHovered("settings")}
+        onMouseLeave={() => setHovered(null)}
+        style={{ position: "relative", width: "100%" }}
+      >
+        <button
+          onClick={() => onNav("settings")}
+          style={{
+            width: "100%", height: 38, display: "flex", alignItems: "center",
+            justifyContent: showLabels ? "flex-start" : "center",
+            paddingLeft: showLabels ? 14 : 0, gap: showLabels ? 10 : 0,
+            background: active === "settings" ? "var(--cyan-dim)" : hovered === "settings" ? "var(--bg-3)" : "transparent",
+            border: "none",
+            borderLeft: active === "settings" ? "2px solid var(--cyan)" : "2px solid transparent",
+            borderTop: "1px solid var(--line-dim)",
+            color: active === "settings" ? "var(--cyan)" : hovered === "settings" ? "var(--ink)" : "var(--ink-faint)",
+            cursor: "pointer", overflow: "hidden", whiteSpace: "nowrap", transition: "all 0.1s",
+          }}
+        >
+          <span style={{ flexShrink: 0 }}><Icon d={ICONS.settings} size={15} /></span>
+          {showLabels && (
+            <span style={{ fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              Settings
+            </span>
+          )}
+        </button>
+        {!showLabels && hovered === "settings" && (
+          <div style={{
+            position: "absolute", left: 52, top: "50%", transform: "translateY(-50%)",
+            background: "var(--bg-4)", border: "1px solid var(--line-dim)", padding: "4px 10px",
+            whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em",
+            textTransform: "uppercase", color: "var(--ink)", zIndex: 100, pointerEvents: "none",
+          }}>
+            Settings
+          </div>
+        )}
+      </div>
+
+      {/* Kill switch at bottom */}
       <div
         onMouseEnter={() => setHovered("kill")}
         onMouseLeave={() => setHovered(null)}
