@@ -294,8 +294,10 @@ export default function ExecutiveSummary() {
         </div>
       </div>
 
+      {/* Strategy · Meta · Allocation · Stress — 2-column grid to use the width */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14, alignItems: "start" }}>
       {/* Strategy health */}
-      <div className="exec-card" style={{ marginBottom: 14 }}>
+      <div className="exec-card">
         <PanelHead icon="check" title="Strategy Health"
           right={strat && <span className="mono" style={{ fontSize: 10.5,
             color: (strat.suspended?.length ?? 0) === 0 ? "var(--green)" : "var(--red)" }}>
@@ -311,7 +313,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Meta-strategy — which strategies are active given regime + health */}
-      <div className="exec-card" style={{ marginBottom: 14 }}>
+      <div className="exec-card">
         <PanelHead icon="strategy" title="Meta-Strategy"
           right={meta && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             regime: <b style={{ color: "var(--cyan)" }}>{meta.regime || "—"}</b> · {meta.active_strategies?.length ?? 0} active
@@ -336,7 +338,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Capital allocation — target weights per strategy */}
-      <div className="exec-card" style={{ marginBottom: 14 }}>
+      <div className="exec-card">
         <PanelHead icon="gauge" title="Capital Allocation"
           right={alloc && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             {alloc.method} · cash <b style={{ color: "var(--ink)" }}>{((alloc.cash_weight ?? 0) * 100).toFixed(0)}%</b>
@@ -361,7 +363,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Stress scenarios + parametric VaR */}
-      <div className="exec-card" style={{ marginBottom: 14 }}>
+      <div className="exec-card">
         <PanelHead icon="risk" title="Stress & VaR"
           right={varRep && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             VaR {Math.round((varRep.confidence ?? 0) * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var ?? 0).toLocaleString()}</b>
@@ -383,8 +385,9 @@ export default function ExecutiveSummary() {
               {scen ? "No open positions to stress." : "Loading…"}
             </div>}
       </div>
+      </div>{/* end 2-col grid */}
 
-      {/* System health */}
+      {/* System health — full width (dense checklist) */}
       <div className="exec-card">
         <PanelHead icon="activity" title="System Health"
           right={s && <span className="mono" style={{ fontSize: 10.5,
