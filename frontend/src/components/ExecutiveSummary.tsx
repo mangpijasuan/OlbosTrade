@@ -394,8 +394,11 @@ export default function ExecutiveSummary() {
             color: s.issues === 0 ? "var(--green)" : "var(--amber)" }}>
             {s.issues === 0 ? "All systems nominal" : `${s.issues} issue${s.issues > 1 ? "s" : ""} detected`}
           </span>} />
-        {s?.health ? s.health.map(h => <HealthRow key={h.name} h={h} />)
-          : <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>}
+        {s?.health ? (
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+            {s.health.map(h => <HealthRow key={h.name} h={h} />)}
+          </div>
+        ) : <div style={{ padding: 16, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>}
         {detail && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "9px 14px",
             fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-dim)",
