@@ -1,0 +1,159 @@
+# OlbosQuant — Trading Policy & Charter
+
+OlbosQuant is an institutional-grade AI quantitative options trading system.
+
+**Objective:** maximize long-term *risk-adjusted* returns while minimizing
+drawdowns. **Not** to maximize the number of trades. **Capital preservation
+comes before profit.**
+
+> Trade ONLY when a statistical edge exists. If no high-quality trade exists,
+> remain in **CASH**. Never force trades. Cash is a valid position. One
+> excellent trade beats ten mediocre ones. The goal is to maximize expected
+> value over thousands of trades — not to win every trade.
+
+This document is the system's charter. Each section notes **how it is enforced
+today**, so the policy is auditable rather than aspirational.
+
+---
+
+## System rules (always in force)
+Never chase · never FOMO · never revenge-trade · never violate risk rules ·
+never average down a loser · no naked options · no unlimited-risk strategies ·
+no martingale · always preserve capital · consistency over excitement.
+
+*Enforced by:* kill switch, guardrails (`guardrails.py`), the trade-frequency
+controller's EV/POP/quality gates, the paper/account guard, and the
+duplicate-position guard. Averaging-down and naked/unlimited strategies are not
+implemented.
+
+## Supported assets
+- **ETFs:** SPY, QQQ, DIA, IWM
+- **Mag-7:** AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA
+- **Future expansion:** GLD, TLT, XLE, XLF, SMH, SOXX
+
+*Status:* the **equity** watchlist covers these. **Options spreads are SPY-only**
+today (the options spread engine is SPY-hardwired); the **CSP/covered-call
+screener runs across multiple underlyings**. Multi-underlying options *spreads*
+remain a roadmap item.
+
+## Supported strategies
+Bull put spread · bull call (debit) spread · bear call spread · bear put spread ·
+cash-secured put · covered call. **No** naked / unlimited / martingale.
+
+*Status:* bull-put, bear-call, iron-condor, bull-call-debit live. **Cash-secured
+put / covered call (wheel)** now live via the CSP module + `/api/options/csp` +
+CSP screener. **Bear-put spread** not yet implemented (roadmap).
+
+## Trading modes
+- **Manual** — generate only, never execute.
+- **Copilot** — generate, wait for human approval, allow modification.
+- **Autopilot** — auto-execute **only if ALL risk filters pass**.
+
+*Status:* ✅ implemented (`execution_mode`).
+
+## Brokerage & account management
+- **Broker abstraction:** all trading goes through `BrokerInterface`.
+- **Live implementation:** IBKR (paper). Account management UI scaffold exists
+  (`Settings.tsx` → Profile / **Broker Integrations** / Billing).
+
+*Status / roadmap:* single-broker (IBKR) today. **Multi-broker execution +
+real broker-integration backend** (route equity vs options to the best venue;
+wire the Settings → Broker Integrations tab to a live `/api/brokers` status) is
+the current active roadmap — additive, IBKR stays the default.
+
+## Risk management (hard limits — enforced)
+| Limit | Charter | Enforced default | Config key |
+|---|---|---|---|
+| Max account risk / trade | 2% | 1–2% (mode-based) | `risk_per_trade_pct` |
+| Max daily loss | 3% | **2%** (tighter) | `max_daily_loss_pct` |
+| Max weekly loss | 8% | **5%** (tighter) | `max_weekly_loss_pct` |
+| Max monthly drawdown | 10% | 10% | `max_monthly_loss_pct` |
+| Max concurrent positions | 5 | 5 | `max_concurrent_positions` |
+| Max exposure | 30% | (via sizing/heat) | — |
+
+> Current daily/weekly caps are **tighter** than the charter (more
+> conservative). They are configurable to the charter values; we keep the
+> tighter defaults unless deliberately changed.
+
+## Position sizing
+Fractional Kelly · volatility (ATR) sizing · portfolio heat · correlation
+adjustment. *Status:* `volatility_sizing`, `risk_manager`, `allocation_engine`
+(Kelly option), portfolio-heat endpoint. Correlation adjustment: partial.
+
+## Signals, indicators & market context
+Entry only if: trend aligns · momentum confirms · volume confirms · regime
+favorable · liquidity acceptable · **POP > threshold** · **EV positive**.
+
+*Status:* ✅ equity scanner + options scorer + regime classifier + POP/EV gates.
+**Chart Intelligence** (`services/chart/`) adds market bias, **multi-timeframe
+alignment**, market-structure, breakout confirmation, and a setup scanner.
+**Intel Hub** (`services/intel/`) adds news classification, catalyst/econ
+calendar, and insider intelligence. **Smart Alerts** (`services/alerts/`) adds a
+rule engine + Notification Center.
+
+## Options analysis
+IV / IV rank / greeks / POP / expected move / EV / breakeven. *Status:* ✅
+(`options_intelligence`, signal scorer).
+
+## Exit conditions
+Profit target (50 / 75 / 100%) · ATR trailing stop · time stop · technical stop ·
+max loss · early exit before major news. *Status:* profit targets, stop
+multiplier, DTE time-stop live; ATR-trailing and news-exit are roadmap.
+
+## AI confidence score & decision
+Confidence 0–100 from trend, momentum, volatility, flow, liquidity, regime,
+risk/reward, POP, EV. **Trade only above a configurable threshold.**
+
+> **Charter default: 85%. Evaluation-phase override: lower.** OlbosQuant has no
+> validated track record yet — an 85% bar would prevent nearly all trades and
+> starve the system of the data needed to *prove* an edge. During the initial
+> paper-evaluation phase we run a **lower threshold to gather a track record**,
+> then **ratchet up toward 85%** as the edge is validated.
+
+Decision output: `BUY | SELL | HOLD | CASH`. If confidence < threshold, risk
+exceeds limits, liquidity is poor, or no edge is present → **stay in cash.**
+
+## Learning engine
+Store every trade with entry, exit, indicators, greeks, regime, win/loss,
+duration, **MFE/MAE**, POP, EV; update the performance DB; retrain the ranking
+model periodically. *Status:* ✅ trade recorder + MFE/MAE + Research Lab +
+strategy-health + signal-scorer retrain schedule.
+
+## Standard trade report / output (JSON)
+```json
+{
+  "ticker": "", "strategy": "", "expiration": "", "entry": "", "exit": "",
+  "stop_loss": "", "max_profit": "", "max_loss": "",
+  "probability_of_profit": 0, "expected_value": 0, "confidence": 0,
+  "market_regime": "", "position_size": "", "risk_level": "",
+  "decision": "BUY | SELL | HOLD | CASH", "reasoning": []
+}
+```
+
+---
+
+## Focus & roadmap (the profit-first path)
+The guiding priority is a **robust, profitable, consistent automated execution
+system** — not feature breadth. In priority order:
+
+1. **Validate:** paper-run the core loop and measure win rate / profit /
+   drawdown per strategy & timeframe. *This is the gate for "does it make money."*
+2. **Multi-broker execution + account management** (active): a broker registry,
+   an Alpaca implementation behind `BrokerInterface`, asset-class routing, and a
+   live `/api/brokers` status wired into Settings → Broker Integrations.
+3. **Bear-put spread** and **multi-underlying options spreads.**
+4. **ATR trailing / news-aware exits.**
+
+### Frozen (built, but not on the profit-critical path)
+Kept and maintained, but **not actively expanded** until the core loop is proven:
+Options Flow / Unusual Activity / Flow Recommender / Income Matrix (free-data
+discovery), News/Intel Hub, Smart Alerts, Symphony, Chart Workstation cosmetics.
+
+## Requires paid real-time data (out of scope until a feed is added)
+Not honestly implementable on delayed daily yfinance data:
+- True intraday 1-minute confirmation on live ticks.
+- Dark-pool activity, dealer positioning, gamma exposure (GEX), gamma-squeeze,
+  real-time institutional flow, liquidity sweeps.
+
+*(Free approximations exist for some — the Unusual Options Activity tab and Flow
+Recommender derive from yfinance option chains, not a real OPRA tape.)*
