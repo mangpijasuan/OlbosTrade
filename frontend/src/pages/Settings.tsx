@@ -8,7 +8,7 @@
  * client-side.
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 type Tab = "profile" | "brokers" | "billing";
 
@@ -168,9 +168,93 @@ function BrokerCard({ b }: { b: BrokerRow }) {
   );
 }
 
+// ── Live broker connection status (read-only, from /api/market/broker) ────────
+interface BrokerLive {
+  broker: string;
+  status: "connected" | "disconnected" | "error";
+  paper_mode?: boolean;
+  supports_options?: boolean;
+  supports_equities?: boolean;
+  error?: string;
+}
+
+function LiveBrokerStatus() {
+  const [info, setInfo] = useState<BrokerLive | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = () =>
+    fetch("/api/market/broker")
+      .then(r => r.json())
+      .then((d: BrokerLive) => setInfo(d))
+      .catch(() => setInfo(null))
+      .finally(() => setLoading(false));
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const connected = info?.status === "connected";
+  const errored = info?.status === "error";
+  const tone = connected ? "var(--green)" : errored ? "var(--red)" : "var(--ink-dim)";
+  const label = loading ? "Checking…"
+    : connected ? "Connected"
+    : errored ? "Error"
+    : "Disconnected";
+
+  const cells: { k: string; v: string; tone?: string }[] = [
+    { k: "Broker", v: info ? info.broker.toUpperCase() : "—" },
+    { k: "Session", v: label, tone },
+    { k: "Mode", v: info?.paper_mode == null ? "—" : info.paper_mode ? "Paper" : "Live",
+      tone: info?.paper_mode === false ? "var(--amber)" : "var(--ink)" },
+    { k: "Capabilities", v: info ? [info.supports_equities && "Equities", info.supports_options && "Options"].filter(Boolean).join(" · ") || "—" : "—" },
+  ];
+
+  return (
+    <Panel
+      title="Connection status"
+      desc="Live state of the trading engine's link to Interactive Brokers"
+      actions={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: tone }}>
+          <span className={`dot ${connected ? "live" : "dead"}`} />
+          {label}
+        </span>
+      }
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+        {cells.map(c => (
+          <div key={c.k} style={{ background: "var(--bg-3)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="kicker" style={{ marginBottom: 3 }}>{c.k}</div>
+            <div className="tnum" style={{ fontSize: 13, fontWeight: 600, color: c.tone || "var(--ink)" }}>{c.v}</div>
+          </div>
+        ))}
+      </div>
+      {errored && info?.error && (
+        <div style={{ marginTop: 10, fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>{info.error}</div>
+      )}
+    </Panel>
+  );
+}
+
 function BrokersTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <LiveBrokerStatus />
+
+      {/* Secondary-username tip — the fix for the single-session lockout */}
+      <div style={{
+        border: "1px solid var(--line-dim)", background: "var(--bg-2)", borderRadius: 6,
+        padding: "11px 14px", fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.7,
+      }}>
+        <span style={{ color: "var(--ink)", fontWeight: 600 }}>Locked out of IBKR web/mobile while trading?</span>{" "}
+        The IB Gateway holds one login per username, so the browser Client Portal gets kicked. Fix it once:
+        in IBKR <span style={{ color: "var(--ink)" }}>Client Portal → Settings → Users &amp; Access Rights</span>,
+        add a <b style={{ color: "var(--ink)" }}>second username</b> and use it for the Gateway (in{" "}
+        <span style={{ fontFamily: "var(--mono)" }}>backend/.env.prod</span>). Keep your primary username free for
+        web/mobile — both can then stay logged in at once.
+      </div>
+
       <div style={{ fontSize: 12, color: "var(--ink-dim)", display: "flex", alignItems: "center", gap: 7 }}>
         <i /> Keys are stored server-side and never displayed. Existing values show the last 4 characters only.
       </div>
