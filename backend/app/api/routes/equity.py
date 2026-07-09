@@ -55,14 +55,24 @@ async def _yf_bars_route(ticker: str, limit: int = 120):
 
 
 @router.post("/scan")
-async def scan_equity_signals():
+async def scan_equity_signals(tickers: list[str] = None, limit: int = 10):
     """
-    Run equity signal scan across the configured watchlist.
-    Uses yfinance for historical bars — no broker connection required.
-    Orderflow and IV boost are attempted from IBKR but degrade gracefully to 0.0.
+    A-grade multi-asset equity scan with EV ranking.
+
+    Integrates:
+    - Multi-asset scanning (tickers param overrides watchlist)
+    - Expected Value ranking (POP × max_profit − (1−POP) × max_loss)
+    - Entry ladder logic (kelly-scaled tranches)
+    - IV rank + implied move awareness
+    - Earnings gate + NO-TRADE gate status
+
+    Returns high-EV candidates ranked by edge, ready for autopilot or manual execution.
     """
-    watchlist = settings.get_equity_watchlist()
-    results = []
+    from app.services.equity_scan_engine import scan_options
+
+    # Use provided tickers or fall back to configured watchlist
+    if tickers is None:
+        tickers = settings.get_equity_watchlist()
 
     # Broker is optional — only needed for orderflow/IV boost
     try:
@@ -70,107 +80,22 @@ async def scan_equity_signals():
     except Exception:
         broker = None
 
-    for ticker in watchlist:
-        try:
-            # Earnings gate check
-            if earnings_gate(ticker, settings.earnings_gate_days):
-                results.append({
-                    "ticker": ticker,
-                    "action": "HOLD",
-                    "reason": "earnings_gate",
-                    "earnings_gated": True,
-                })
-                continue
+    result = await scan_options(
+        tickers=tickers,
+        limit=limit,
+        broker=broker,
+    )
 
-            # Fetch bars via yfinance — never requires IBKR
-            bars = await _yf_bars_route(ticker, limit=120)
-            if len(bars) < 30:
-                results.append({"ticker": ticker, "action": "HOLD", "reason": "insufficient_data"})
-                continue
-
-            import pandas as pd
-            df = pd.DataFrame([{
-                "open":   float(b.open),
-                "high":   float(b.high),
-                "low":    float(b.low),
-                "close":  float(b.close),
-                "volume": b.volume,
-            } for b in bars])
-
-            ind = compute_indicators(df)
-            if not ind:
-                results.append({"ticker": ticker, "action": "HOLD", "reason": "indicator_error"})
-                continue
-
-            # Orderflow score — gracefully skip if IBKR not connected
-            orderflow = 0.0
-            if broker is not None:
-                try:
-                    orderflow = await get_orderflow_score(ticker, broker)
-                except Exception:
-                    pass  # IBKR offline — use neutral orderflow
-
-            # IV overlay boost — gracefully skip if IBKR not connected
-            iv_boost = 0.0
-            if broker is not None:
-                try:
-                    iv_data = await get_iv_signal_boost(ticker, broker)
-                    iv_boost = iv_data.get("boost", 0.0)
-                except Exception:
-                    pass  # IBKR offline — no IV boost
-
-            action, confidence, reasons = score_equity_signal(
-                ind,
-                sentiment_score=0.0,
-                orderflow_score=orderflow,
-            )
-            confidence = min(1.0, confidence + iv_boost)
-
-            trade_plan = {}
-            if action in ("BUY", "SELL") and confidence >= settings.effective_equity_min_confidence:
-                # Use live account value for position sizing; fall back to config
-                portfolio_value = settings.starting_capital
-                if broker is not None:
-                    try:
-                        acct = await broker.get_account_summary()
-                        portfolio_value = float(acct.net_liquidation or portfolio_value)
-                    except Exception:
-                        pass
-                trade_plan = compute_equity_trade_plan(
-                    ind, action,
-                    portfolio_value=portfolio_value,
-                    sentiment_score=0.0,
-                )
-
-            signal = {
-                "id":              str(uuid.uuid4()),
-                "ticker":          ticker,
-                "generated_at":    datetime.now(timezone.utc).isoformat(),
-                "action":          action,
-                "confidence":      round(confidence, 4),
-                "orderflow_score": round(orderflow, 4),
-                "iv_overlay_boost": round(iv_boost, 4),
-                "earnings_gated":  False,
-                "reasons":         reasons,
-                "trade_plan":      trade_plan,
-                "indicators": {
-                    "rsi":         ind.get("rsi"),
-                    "macd":        ind.get("macd"),
-                    "bb_pct_b":    ind.get("bb_pct_b"),
-                    "atr":         ind.get("atr"),
-                    "volume_ratio": ind.get("volume_ratio"),
-                },
-            }
-            _recent_signals.insert(0, signal)
-            results.append(signal)
-
-        except Exception as exc:
-            results.append({"ticker": ticker, "action": "HOLD", "reason": f"error: {exc}"})
-
-    # Keep only last 200 signals in memory
-    del _recent_signals[200:]
-
-    return {"scanned": len(watchlist), "signals": results}
+    return {
+        "scanned": len(result.tickers_scanned or []),
+        "candidates": [c.as_dict() for c in result.candidates],
+        "gate_blocked": result.gate_blocked,
+        "gate_reason": result.gate_reason,
+        "iv_rank": result.iv_rank,
+        "realized_vol": result.realized_vol,
+        "error": result.error,
+        "tickers_scanned": result.tickers_scanned or [],
+    }
 
 
 @router.get("/signals")
