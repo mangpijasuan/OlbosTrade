@@ -20,6 +20,8 @@ class SpreadAnalyzeRequest(BaseModel):
     r: float = 0.05
 
 
+
+
 @router.post("/analyze")
 async def analyze(req: SpreadAnalyzeRequest):
     """Return POP / prob-touch / expected move / Greeks / EV / Kelly for a spread."""
@@ -32,3 +34,26 @@ async def analyze(req: SpreadAnalyzeRequest):
         return intel.as_dict()
     except ValueError as exc:
         return {"error": str(exc)}
+
+
+@router.post("/scan")
+async def scan_options_spreads():
+    """
+    Scan available options spreads and rank by Expected Value (EV).
+    Applies NO-TRADE gates before returning candidates.
+    Returns high-EV spreads ready for autopilot decision logic.
+    """
+    from app.services.options_scan_engine import scan_options
+
+    result = await scan_options(ticker="SPY", strategy="bull_put_spread", limit=10)
+
+    return {
+        "scanned": 1,
+        "candidates": [c.as_dict() for c in result.candidates],
+        "gate_blocked": result.gate_blocked,
+        "gate_reason": result.gate_reason,
+        "spot": result.spot,
+        "vix_estimate": result.vix_estimate,
+        "realized_vol": result.realized_vol,
+        "error": result.error,
+    }

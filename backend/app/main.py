@@ -679,120 +679,48 @@ async def _yf_options_quote(
 
 async def _run_options_scan() -> None:
     """
-    Generate options spread signals based on current regime and SPY bars.
-    Uses Black-Scholes to select ~0.30 delta short strike, 5pt wide spread, then
-    prices the spread off the live IBKR chain when available (Black-Scholes mid is
-    the fallback when there is no options market-data subscription).
-    Routes through execution handler (manual/copilot/autopilot).
+    Generate options spread signals using the options scan engine.
+    The engine ranks candidates by Expected Value (EV), applies NO-TRADE gates,
+    and generates high-quality spreads. Autopilot then scores, sizes, and routes.
     """
     if _current_regime is None or not getattr(_current_regime, "options_allowed", False):
         return
     try:
-        import uuid, calendar as _cal
-        import numpy as np
-        from datetime import datetime, timezone, timedelta, date
-        from decimal import Decimal
+        from app.services.options_scan_engine import scan_options
+        import uuid
+        from datetime import datetime, timezone
         from app.broker.broker_factory import get_broker
-        from app.services.options_pricer import BlackScholesPricer
         from app.services.trading_mode import trading_mode_manager
+        from app.api.routes.trade_desk import handle_signal
 
-        pricer   = BlackScholesPricer()
         strategy = (_current_regime.strategies_allowed or ["bull_put_spread"])[0]
         dte_target = trading_mode_manager.config.dte_target or 30
-        RISK_FREE  = 0.05
 
-        # Get SPY bars via yfinance — no broker subscription needed
-        spy_bars = await _yf_bars("SPY", limit=30)
-        if len(spy_bars) < 20:
+        scan_result = await scan_options(ticker="SPY", strategy=strategy, dte_target=dte_target, limit=1)
+
+        if scan_result.gate_blocked:
+            logger.info("Options scan blocked by gate: %s", scan_result.gate_reason)
             return
 
-        closes  = [float(b.close) for b in spy_bars]
-        spot    = closes[-1]
-        log_rets = np.diff(np.log(closes))
-        sigma   = float(np.std(log_rets) * np.sqrt(252))
-        vix_est = _current_regime.features_used.vix / 100.0 if _current_regime.features_used else sigma
+        if scan_result.error:
+            logger.warning("Options scan error: %s", scan_result.error)
+            return
 
-        # Target expiry ~dte_target days out, on a Friday
-        today       = date.today()
-        target_exp  = today + timedelta(days=dte_target)
-        while target_exp.weekday() != 4:   # roll to Friday
-            target_exp += timedelta(days=1)
-        T = max((target_exp - today).days / 365, 0.01)
+        if not scan_result.candidates:
+            logger.info("Options scan: no candidates generated")
+            return
 
-        # Select short strike nearest 0.30 delta, long strike 5 pts away
-        opt_type   = "put"  if "put" in strategy  else "call"
-        is_call    = opt_type == "call"
-        target_delta = 0.30
-
-        best_short, best_delta_diff = spot, 1.0
-        best_short_delta = target_delta
-        for offset in range(-60, 61, 5):
-            s = round(spot + offset)
-            try:
-                d = pricer.delta(spot, s, T, RISK_FREE, vix_est, opt_type)
-                d_abs = abs(d)
-                if abs(d_abs - target_delta) < best_delta_diff:
-                    best_delta_diff = abs(d_abs - target_delta)
-                    best_short = s
-                    best_short_delta = d_abs
-            except Exception:
-                continue
-
-        short_strike = float(best_short)
-        long_strike  = short_strike - 5.0 if not is_call else short_strike + 5.0
-        spread_width = abs(short_strike - long_strike)
-
-        # Black-Scholes estimate (fallback / no-subscription path)
-        try:
-            short_px = pricer.put_price(spot, short_strike, T, RISK_FREE, vix_est) if not is_call \
-                       else pricer.call_price(spot, short_strike, T, RISK_FREE, vix_est)
-            long_px  = pricer.put_price(spot, long_strike,  T, RISK_FREE, vix_est) if not is_call \
-                       else pricer.call_price(spot, long_strike,  T, RISK_FREE, vix_est)
-            net_credit = round((short_px - long_px) * 100, 2)  # per contract $
-        except Exception:
-            net_credit = 0.0
-
-        # Prefer the LIVE chain price when a quote is available — the limit then
-        # tracks where the spread can actually fill instead of a theoretical mid.
-        credit_source = "black_scholes"
-        broker = get_broker()
-        live = await _live_spread_quote(
-            broker, "SPY", target_exp.isoformat(), short_strike, long_strike, opt_type,
+        candidate = scan_result.candidates[0]
+        logger.info(
+            "Options scan: top candidate SPY %s %s/%s EV=$%.2f POP=%.2f%%",
+            candidate.option_type, candidate.short_strike, candidate.long_strike,
+            candidate.expected_value, candidate.pop * 100,
         )
-        if live and live["net_credit"] > 0:
-            short_strike = live["short_strike"]
-            long_strike  = live["long_strike"]
-            spread_width = abs(short_strike - long_strike)
-            net_credit   = live["net_credit"]
-            if live["short_delta"] is not None:
-                best_short_delta = live["short_delta"]
-            credit_source = "live_chain"
-        else:
-            # Free fallback: price off yfinance's (delayed) option chain before
-            # falling back to the Black-Scholes theoretical mid.
-            yq = await _yf_options_quote(
-                "SPY", target_exp.isoformat(), short_strike, long_strike, opt_type,
-            )
-            if yq and yq["net_credit"] > 0:
-                short_strike = yq["short_strike"]
-                long_strike  = yq["long_strike"]
-                spread_width = abs(short_strike - long_strike)
-                net_credit   = yq["net_credit"]
-                target_exp   = date.fromisoformat(yq["expiration"])
-                credit_source = "yfinance_chain"
 
-        if spread_width <= 0 or net_credit <= 0:
-            logger.info("Options scan: no usable spread (width=%.1f credit=%.2f) — skipping",
-                        spread_width, net_credit)
-            return
-
-        credit_per_share = net_credit / 100.0
-        max_loss_dollars = round((spread_width - credit_per_share) * 100, 2)
+        vix_est = scan_result.vix_estimate / 100.0 if scan_result.vix_estimate else 0.20
+        sigma = scan_result.realized_vol / 100.0 if scan_result.realized_vol else 0.15
 
         # ── AI signal scoring gate ──────────────────────────────────────────
-        # Mirror the equity path: an options spread must pass the scorer before
-        # it is routed to execution. Previously options bypassed the scorer with
-        # signal_score=0, so every spread that the regime allowed was traded.
         global _signal_scorer
         if _signal_scorer is None:
             from app.services.signal_scorer import SignalScorer
@@ -800,62 +728,69 @@ async def _run_options_scan() -> None:
         from app.services.signal_scorer import SignalFeatures
 
         feat = _current_regime.features_used
+        spread_width = candidate.long_strike if candidate.option_type == "put" \
+                       else candidate.short_strike - candidate.long_strike
+        credit_per_share = candidate.credit / 100.0
+        max_loss_dollars = candidate.max_loss
+
         features = SignalFeatures(
             iv_rank=float(getattr(feat, "iv_rank", 0.0)) if feat else 0.0,
             iv_percentile=float(getattr(feat, "iv_percentile", 0.0)) if feat else 0.0,
-            vix_level=float(getattr(feat, "vix", vix_est * 100)) if feat else vix_est * 100,
+            vix_level=scan_result.vix_estimate or (vix_est * 100),
             spy_rsi_14=float(getattr(feat, "rsi_14", 50.0)) if feat else 50.0,
             spy_adx_14=float(getattr(feat, "adx_14", 20.0)) if feat else 20.0,
             spy_trend_direction=1.0 if (feat and getattr(feat, "spy_return_20d", 0.0) >= 0) else -1.0,
-            days_to_expiry=float(dte_target),
-            short_strike_delta=float(best_short_delta),
-            spread_width=float(spread_width),
-            credit_to_width_ratio=(credit_per_share / spread_width) if spread_width else 0.0,
-            earnings_days_away=60.0,   # SPY (ETF) — no single-name earnings event
-            spy_realized_vol_20d=float(sigma),
+            days_to_expiry=float(candidate.dte),
+            short_strike_delta=float(candidate.short_delta),
+            spread_width=abs(spread_width),
+            credit_to_width_ratio=(credit_per_share / abs(spread_width)) if spread_width else 0.0,
+            earnings_days_away=60.0,
+            spy_realized_vol_20d=sigma,
             iv_minus_rv=float(vix_est - sigma),
         )
         score_result = await _signal_scorer.score_async(features)
         signal_score = float(score_result.score)
+
         if not score_result.approved and not settings.execution_test_mode:
             logger.info(
-                "Options signal rejected by AI scorer: SPY %s score=%.3f — %s",
-                strategy, signal_score, score_result.rejection_reason,
+                "Options signal rejected by AI scorer: SPY %s EV=$%.2f score=%.3f — %s",
+                strategy, candidate.expected_value, signal_score, score_result.rejection_reason,
             )
             return
+
         if not score_result.approved:
             logger.warning(
-                "EXECUTION_TEST_MODE: routing options signal SPY %s despite AI score=%.3f",
-                strategy, signal_score,
+                "EXECUTION_TEST_MODE: routing options signal SPY %s EV=$%.2f despite score=%.3f",
+                strategy, candidate.expected_value, signal_score,
             )
 
         # ── Position sizing via RiskManager ─────────────────────────────────
-        # Previously every spread was quantity=1. Size off portfolio value, the
-        # spread's max loss, the active trading mode's risk-per-trade %, and the
-        # regime's options size multiplier — same machinery the equity path uses.
         from app.services.risk_manager import RiskManager
         try:
+            broker = get_broker()
             acct = await broker.get_account_summary()
             portfolio_value = float(acct.net_liquidation or settings.starting_capital)
         except Exception:
             portfolio_value = settings.starting_capital
-        risk_pct  = trading_mode_manager.config.risk_per_trade_pct
+
+        risk_pct = trading_mode_manager.config.risk_per_trade_pct
         regime_mult = float(getattr(_current_regime, "options_size_multiplier", 1.0))
-        # Volatility-based sizing: scale the regime budget inversely with vol so
-        # dollar risk stays steady across calm/fearful tape (Batch C).
+
         from app.services.volatility_sizing import vol_adjusted_multiplier, describe as _vol_desc
-        _vix_for_sizing = float(getattr(feat, "vix", vix_est * 100)) if feat else vix_est * 100
+        _vix_for_sizing = scan_result.vix_estimate or (vix_est * 100)
         _ivr_for_sizing = float(getattr(feat, "iv_rank", 30.0)) if feat else 30.0
         size_mult = vol_adjusted_multiplier(regime_mult, _ivr_for_sizing, _vix_for_sizing)
         logger.info("Vol sizing: %s → mult %.2f×%.2f=%.2f",
                     _vol_desc(_ivr_for_sizing, _vix_for_sizing)["stance"],
                     regime_mult, size_mult / max(regime_mult, 1e-9), size_mult)
-        quantity  = RiskManager().calculate_position_size(
+
+        quantity = RiskManager().calculate_position_size(
             portfolio_value=portfolio_value,
             max_loss_per_spread=max_loss_dollars,
             risk_pct=risk_pct,
             size_multiplier=size_mult,
         )
+
         if quantity <= 0:
             logger.info(
                 "Options signal skipped — sized to 0 contracts "
@@ -864,64 +799,51 @@ async def _run_options_scan() -> None:
             )
             return
 
-        # ── Options Intelligence: real POP / EV / Kelly for this spread ─────────
-        # Drives the frequency controller's quality filter with the true
-        # probability of profit instead of a proxy.
-        intel = None
-        try:
-            from app.services.options_intelligence import analyze_spread
-            intel = analyze_spread(
-                spot=spot, short_strike=short_strike, long_strike=long_strike,
-                option_type=opt_type, dte=float(dte_target), iv=vix_est,
-                credit_per_share=credit_per_share, r=RISK_FREE,
-            )
-        except Exception as _intel_exc:
-            logger.debug("Options intelligence failed: %s", _intel_exc)
-
+        # ── Build and route signal ──────────────────────────────────────────
         signal = {
-            "id":           str(uuid.uuid4()),
-            "ticker":       "SPY",
-            "asset_type":   "options",
-            "strategy":     strategy,
+            "id": str(uuid.uuid4()),
+            "ticker": "SPY",
+            "asset_type": "options",
+            "strategy": strategy,
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "action":       "SELL_SPREAD",
-            # Confidence = real probability of profit when available; the frequency
-            # controller then computes EV = POP·reward − (1−POP) directly.
-            "confidence":   round(intel.pop, 4) if intel else round(getattr(_current_regime, "confidence", 0.5), 4),
-            "pop":          round(intel.pop, 4) if intel else None,
-            "kelly_fraction": intel.kelly_fraction if intel else None,
-            "intelligence": intel.as_dict() if intel else None,
+            "action": "SELL_SPREAD",
+            "confidence": round(candidate.pop, 4),
+            "pop": round(candidate.pop, 4),
+            "kelly_fraction": round(candidate.kelly_fraction, 4),
             "signal_score": round(signal_score, 4),
-            "quantity":     int(quantity),
-            "iv_rank":      round(features.iv_rank, 2),
-            "regime":       _current_regime.regime.value,
+            "quantity": int(quantity),
+            "iv_rank": round(features.iv_rank, 2),
+            "regime": _current_regime.regime.value,
             "spread": {
-                "option_type":   opt_type,
-                "short_strike":  short_strike,
-                "long_strike":   long_strike,
-                "expiration":    target_exp.isoformat(),
-                "dte":           dte_target,
-                "net_credit":    net_credit,
-                "max_loss":      max_loss_dollars,
-                "breakeven":     round(short_strike - credit_per_share, 2) if not is_call
-                                 else round(short_strike + credit_per_share, 2),
+                "option_type": candidate.option_type,
+                "short_strike": candidate.short_strike,
+                "long_strike": candidate.long_strike,
+                "expiration": candidate.expiration,
+                "dte": candidate.dte,
+                "net_credit": candidate.credit,
+                "max_loss": candidate.max_loss,
+                "breakeven": round(candidate.short_strike - credit_per_share, 2)
+                            if candidate.option_type == "put"
+                            else round(candidate.short_strike + credit_per_share, 2),
             },
-            "sigma":         round(sigma, 4),
-            "vix_used":      round(vix_est * 100, 1),
-            "credit_source": credit_source,
+            "expected_value": candidate.expected_value,
+            "ev_per_risk": round(candidate.ev_per_risk, 4),
+            "reward_risk": round(candidate.reward_risk, 4),
+            "sigma": round(sigma, 4),
+            "vix_used": scan_result.vix_estimate or (vix_est * 100),
+            "credit_source": "options_scan_engine",
         }
 
         logger.info(
-            "Options signal: %s SPY %s %s/%s exp %s credit $%.2f (%s) score=%.3f qty=%d",
-            strategy, opt_type, short_strike, long_strike, target_exp, net_credit,
-            credit_source, signal_score, quantity,
+            "Options signal: %s SPY %s %s/%s EV=$%.2f POP=%.2f%% score=%.3f qty=%d",
+            strategy, candidate.option_type, candidate.short_strike, candidate.long_strike,
+            candidate.expected_value, candidate.pop * 100, signal_score, quantity,
         )
 
-        from app.api.routes.trade_desk import handle_signal
         await handle_signal(signal)
 
     except Exception as exc:
-        logger.warning("Options scan failed: %s", exc)
+        logger.warning("Options scan failed: %s", exc, exc_info=True)
 
 
 def _fill_after_entry(fill_time, entry_dt) -> bool:
