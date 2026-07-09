@@ -679,9 +679,9 @@ async def _yf_options_quote(
 
 async def _run_options_scan() -> None:
     """
-    Generate options spread signals using the options scan engine.
-    The engine ranks candidates by Expected Value (EV), applies NO-TRADE gates,
-    and generates high-quality spreads. Autopilot then scores, sizes, and routes.
+    A-grade multi-ticker options scan with institutional decision logic.
+    Ranks candidates by EV, applies NO-TRADE gates, integrates entry ladder logic.
+    Routes best candidate through autopilot with full kelly-based position sizing.
     """
     if _current_regime is None or not getattr(_current_regime, "options_allowed", False):
         return
@@ -696,7 +696,13 @@ async def _run_options_scan() -> None:
         strategy = (_current_regime.strategies_allowed or ["bull_put_spread"])[0]
         dte_target = trading_mode_manager.config.dte_target or 30
 
-        scan_result = await scan_options(ticker="SPY", strategy=strategy, dte_target=dte_target, limit=1)
+        scan_result = await scan_options(
+            tickers=["SPY", "ES", "QQQ"],
+            strategy=strategy,
+            dte_target=dte_target,
+            limit=3,  # Get top 3 for better selection
+            base_quantity=1,
+        )
 
         if scan_result.gate_blocked:
             logger.info("Options scan blocked by gate: %s", scan_result.gate_reason)
@@ -712,9 +718,9 @@ async def _run_options_scan() -> None:
 
         candidate = scan_result.candidates[0]
         logger.info(
-            "Options scan: top candidate SPY %s %s/%s EV=$%.2f POP=%.2f%%",
-            candidate.option_type, candidate.short_strike, candidate.long_strike,
-            candidate.expected_value, candidate.pop * 100,
+            "Options scan: top candidate %s %s %s/%s EV=$%.2f POP=%.2f%% kelly=%.2f%%",
+            candidate.ticker, candidate.option_type, candidate.short_strike, candidate.long_strike,
+            candidate.expected_value, candidate.pop * 100, candidate.kelly_fraction * 100,
         )
 
         vix_est = scan_result.vix_estimate / 100.0 if scan_result.vix_estimate else 0.20
@@ -728,22 +734,21 @@ async def _run_options_scan() -> None:
         from app.services.signal_scorer import SignalFeatures
 
         feat = _current_regime.features_used
-        spread_width = candidate.long_strike if candidate.option_type == "put" \
-                       else candidate.short_strike - candidate.long_strike
+        spread_width = abs(candidate.short_strike - candidate.long_strike)
         credit_per_share = candidate.credit / 100.0
         max_loss_dollars = candidate.max_loss
 
         features = SignalFeatures(
-            iv_rank=float(getattr(feat, "iv_rank", 0.0)) if feat else 0.0,
-            iv_percentile=float(getattr(feat, "iv_percentile", 0.0)) if feat else 0.0,
+            iv_rank=float(getattr(feat, "iv_rank", 0.0)) if feat else scan_result.iv_rank or 0.0,
+            iv_percentile=float(getattr(feat, "iv_percentile", 0.0)) if feat else scan_result.iv_rank or 0.0,
             vix_level=scan_result.vix_estimate or (vix_est * 100),
             spy_rsi_14=float(getattr(feat, "rsi_14", 50.0)) if feat else 50.0,
             spy_adx_14=float(getattr(feat, "adx_14", 20.0)) if feat else 20.0,
             spy_trend_direction=1.0 if (feat and getattr(feat, "spy_return_20d", 0.0) >= 0) else -1.0,
             days_to_expiry=float(candidate.dte),
             short_strike_delta=float(candidate.short_delta),
-            spread_width=abs(spread_width),
-            credit_to_width_ratio=(credit_per_share / abs(spread_width)) if spread_width else 0.0,
+            spread_width=spread_width,
+            credit_to_width_ratio=(credit_per_share / spread_width) if spread_width else 0.0,
             earnings_days_away=60.0,
             spy_realized_vol_20d=sigma,
             iv_minus_rv=float(vix_est - sigma),
@@ -753,18 +758,19 @@ async def _run_options_scan() -> None:
 
         if not score_result.approved and not settings.execution_test_mode:
             logger.info(
-                "Options signal rejected by AI scorer: SPY %s EV=$%.2f score=%.3f — %s",
-                strategy, candidate.expected_value, signal_score, score_result.rejection_reason,
+                "Options signal rejected by AI scorer: %s %s EV=$%.2f score=%.3f — %s",
+                candidate.ticker, strategy, candidate.expected_value, signal_score,
+                score_result.rejection_reason,
             )
             return
 
         if not score_result.approved:
             logger.warning(
-                "EXECUTION_TEST_MODE: routing options signal SPY %s EV=$%.2f despite score=%.3f",
-                strategy, candidate.expected_value, signal_score,
+                "EXECUTION_TEST_MODE: routing options signal %s %s EV=$%.2f despite score=%.3f",
+                candidate.ticker, strategy, candidate.expected_value, signal_score,
             )
 
-        # ── Position sizing via RiskManager ─────────────────────────────────
+        # ── Position sizing via RiskManager + Kelly scaling ─────────────────
         from app.services.risk_manager import RiskManager
         try:
             broker = get_broker()
@@ -778,31 +784,35 @@ async def _run_options_scan() -> None:
 
         from app.services.volatility_sizing import vol_adjusted_multiplier, describe as _vol_desc
         _vix_for_sizing = scan_result.vix_estimate or (vix_est * 100)
-        _ivr_for_sizing = float(getattr(feat, "iv_rank", 30.0)) if feat else 30.0
+        _ivr_for_sizing = scan_result.iv_rank or 30.0
         size_mult = vol_adjusted_multiplier(regime_mult, _ivr_for_sizing, _vix_for_sizing)
-        logger.info("Vol sizing: %s → mult %.2f×%.2f=%.2f",
+
+        # Scale multiplier by kelly fraction for true edge-aware sizing
+        kelly_size_mult = size_mult * max(0.5, min(1.5, 1.0 / max(candidate.kelly_fraction, 0.2)))
+
+        logger.info("Vol sizing: %s → mult %.2f (kelly %.2f%%→%.2f)",
                     _vol_desc(_ivr_for_sizing, _vix_for_sizing)["stance"],
-                    regime_mult, size_mult / max(regime_mult, 1e-9), size_mult)
+                    size_mult, candidate.kelly_fraction * 100, kelly_size_mult)
 
         quantity = RiskManager().calculate_position_size(
             portfolio_value=portfolio_value,
             max_loss_per_spread=max_loss_dollars,
             risk_pct=risk_pct,
-            size_multiplier=size_mult,
+            size_multiplier=kelly_size_mult,
         )
 
         if quantity <= 0:
             logger.info(
                 "Options signal skipped — sized to 0 contracts "
-                "(portfolio=$%.0f max_loss=$%.0f risk_pct=%.3f mult=%.2f)",
-                portfolio_value, max_loss_dollars, risk_pct, size_mult,
+                "(portfolio=$%.0f max_loss=$%.0f risk_pct=%.3f kelly=%.2f)",
+                portfolio_value, max_loss_dollars, risk_pct, candidate.kelly_fraction,
             )
             return
 
-        # ── Build and route signal ──────────────────────────────────────────
+        # ── Build and route signal with entry ladder ────────────────────────
         signal = {
             "id": str(uuid.uuid4()),
-            "ticker": "SPY",
+            "ticker": candidate.ticker,
             "asset_type": "options",
             "strategy": strategy,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -812,7 +822,7 @@ async def _run_options_scan() -> None:
             "kelly_fraction": round(candidate.kelly_fraction, 4),
             "signal_score": round(signal_score, 4),
             "quantity": int(quantity),
-            "iv_rank": round(features.iv_rank, 2),
+            "iv_rank": round(scan_result.iv_rank or 0.0, 2),
             "regime": _current_regime.regime.value,
             "spread": {
                 "option_type": candidate.option_type,
@@ -831,13 +841,25 @@ async def _run_options_scan() -> None:
             "reward_risk": round(candidate.reward_risk, 4),
             "sigma": round(sigma, 4),
             "vix_used": scan_result.vix_estimate or (vix_est * 100),
-            "credit_source": "options_scan_engine",
+            "credit_source": candidate.pricing_source,
+            "entry_ladder": [
+                {
+                    "tranche_id": t.tranche_id,
+                    "quantity": t.quantity,
+                    "kelly_fraction": round(t.kelly_fraction, 4),
+                    "entry_note": t.entry_note,
+                }
+                for t in (candidate.entry_ladder or [])
+            ],
+            "iv_rank_engine": round(scan_result.iv_rank or 0.0, 1),
         }
 
         logger.info(
-            "Options signal: %s SPY %s %s/%s EV=$%.2f POP=%.2f%% score=%.3f qty=%d",
-            strategy, candidate.option_type, candidate.short_strike, candidate.long_strike,
+            "Options signal: %s %s %s %s/%s EV=$%.2f POP=%.2f%% score=%.3f qty=%d (kelly ladder: %d tranches)",
+            strategy, candidate.pricing_source, candidate.ticker,
+            candidate.option_type, candidate.short_strike, candidate.long_strike,
             candidate.expected_value, candidate.pop * 100, signal_score, quantity,
+            len(candidate.entry_ladder or []),
         )
 
         await handle_signal(signal)
