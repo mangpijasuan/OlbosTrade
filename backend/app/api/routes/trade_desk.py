@@ -697,3 +697,103 @@ async def handle_signal(signal: dict) -> None:
             )
         _execution_log.insert(0, result)
         del _execution_log[200:]
+
+
+# ── Scan panel signal submission ────────────────────────────────────────────────
+
+class ScanSignalRequest(BaseModel):
+    """Signal from options/equity scan panel for execution routing."""
+    ticker: str
+    action: str
+    entry_price: float
+    stop_price: float
+    target_price: float
+    entry_ladder: list = []
+    kelly_fraction: float = 0.1
+    expected_value: float = 0.0
+    pop: float = 0.0
+    confidence: float = 0.0
+    source: str = "scan_engine"  # "options_scan_engine" or "equity_scan_engine"
+
+
+@router.post("/signal")
+async def submit_scan_signal(req: ScanSignalRequest):
+    """
+    Submit a signal from scan panel (options/equity) for execution.
+
+    Routes through execution mode:
+    - MANUAL: queues for manual approval
+    - COPILOT: asks user
+    - AUTOPILOT: auto-executes with guardrails
+
+    Returns execution result with order ID, status, or rejection reason.
+    """
+    signal_id = str(uuid.uuid4())
+
+    # Build signal compatible with _execute_signal()
+    signal = {
+        "id": signal_id,
+        "ticker": req.ticker.upper(),
+        "action": req.action,
+        "entry_price": req.entry_price,
+        "stop_price": req.stop_price,
+        "target_price": req.target_price,
+        "confidence": req.confidence,
+        "kelly_fraction": req.kelly_fraction,
+        "expected_value": req.expected_value,
+        "pop": req.pop,
+        "entry_ladder": req.entry_ladder,
+        "source": req.source,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "approved_by": "scan_panel",
+    }
+
+    mode = execution_mode_manager.mode
+
+    if mode == ExecutionMode.MANUAL:
+        # Queue for user approval
+        signal["status"] = "pending_approval"
+        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
+        _pending_approvals[signal_id] = signal
+        return {
+            "signal_id": signal_id,
+            "ticker": req.ticker,
+            "status": "pending_approval",
+            "message": f"Signal queued for manual approval (execution mode: MANUAL)",
+        }
+
+    elif mode == ExecutionMode.COPILOT:
+        # Copilot decides
+        signal["status"] = "pending_approval"
+        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
+        _pending_approvals[signal_id] = signal
+        return {
+            "signal_id": signal_id,
+            "ticker": req.ticker,
+            "status": "pending_copilot",
+            "message": f"Signal submitted to Copilot (execution mode: COPILOT)",
+        }
+
+    elif mode == ExecutionMode.AUTOPILOT:
+        # SAFETY: scan-driven autopilot auto-execution is intentionally disabled
+        # until the scan execution path has test coverage. The scan engine and
+        # panels are live for MANUAL/COPILOT; autopilot placing trades directly
+        # from scans is gated off. To re-enable, restore the _execute_signal call
+        # below and add tests for the scan → _execute_signal path.
+        #   result = await _execute_signal(signal, approved_by="scan_autopilot")
+        signal["status"] = "pending_approval"
+        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
+        _pending_approvals[signal_id] = signal
+        logger.info(
+            "Scan signal %s for %s queued (autopilot scan-execute disabled pending tests)",
+            signal_id, req.ticker,
+        )
+        return {
+            "signal_id": signal_id,
+            "ticker": req.ticker,
+            "status": "pending_approval",
+            "message": "Autopilot scan-execute is disabled pending tests — queued for approval.",
+        }
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown execution mode: {mode}")

@@ -11,6 +11,7 @@ import SignalsCenter   from "./pages/SignalsCenter";       // Equity Signals + S
 import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab: Strategy Lab + Market/Regime + Chart + Intel
 import BacktestCenter  from "./pages/BacktestCenter";      // Backtest + Symphony
 import CspScreener     from "./pages/CspScreener";          // Wheel & Income Lab
+import ScanCenter      from "./pages/ScanCenter";           // Options + Equity EV scan engines
 import Settings        from "./pages/Settings";             // Account, brokers, billing
 
 const PAGES: Record<string, React.ComponentType> = {
@@ -23,6 +24,7 @@ const PAGES: Record<string, React.ComponentType> = {
   journal:   Journal,
   analytics: ModeAnalytics,
   csp:       CspScreener,
+  scan:      ScanCenter,
   settings:  Settings,
 };
 

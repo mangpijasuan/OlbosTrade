@@ -49,6 +49,7 @@ const NAV_ITEMS = [
   { key: "journal",    label: "Journal",      icon: "journal"    },
   { key: "analytics",  label: "Performance",  icon: "analytics"  },
   { key: "csp",        label: "CSP Screener", icon: "equity"     },
+  { key: "scan",       label: "Scanner",      icon: "backtest"   },
 ];
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────

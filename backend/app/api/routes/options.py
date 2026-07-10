@@ -20,6 +20,8 @@ class SpreadAnalyzeRequest(BaseModel):
     r: float = 0.05
 
 
+
+
 @router.post("/analyze")
 async def analyze(req: SpreadAnalyzeRequest):
     """Return POP / prob-touch / expected move / Greeks / EV / Kelly for a spread."""
@@ -32,3 +34,46 @@ async def analyze(req: SpreadAnalyzeRequest):
         return intel.as_dict()
     except ValueError as exc:
         return {"error": str(exc)}
+
+
+@router.post("/scan")
+async def scan_options_spreads(
+    tickers: list[str] = None,
+    strategy: str = "bull_put_spread",
+    limit: int = 10,
+):
+    """
+    A-grade multi-ticker options scan with live chain pricing + entry ladder logic.
+
+    Ranks spreads by Expected Value (EV) with:
+    - Live IBKR chain pricing (fallback: yfinance → Black-Scholes)
+    - Entry ladder logic (kelly-scaled tranches)
+    - IV rank + skew adjustments
+    - NO-TRADE gates (kill switch, market hours)
+
+    Returns high-EV candidates ready for autopilot or manual execution.
+    """
+    from app.services.options_scan_engine import scan_options
+
+    if tickers is None:
+        tickers = ["SPY", "ES", "QQQ"]
+
+    result = await scan_options(
+        tickers=tickers,
+        strategy=strategy,
+        limit=limit,
+        base_quantity=1,
+    )
+
+    return {
+        "scanned": len(result.tickers_scanned or []),
+        "candidates": [c.as_dict() for c in result.candidates],
+        "gate_blocked": result.gate_blocked,
+        "gate_reason": result.gate_reason,
+        "spot": result.spot,
+        "vix_estimate": result.vix_estimate,
+        "realized_vol": result.realized_vol,
+        "iv_rank": result.iv_rank,
+        "error": result.error,
+        "tickers_scanned": result.tickers_scanned or [],
+    }
