@@ -50,15 +50,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function HealthDot({ ok }: { ok: boolean }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: ok ? "var(--green)" : "var(--ink-dim)" }}>
-      <span className={`dot ${ok ? "live" : "dead"}`} />
-      {ok ? "Connected" : "Not connected"}
-    </span>
-  );
-}
-
 // ── Profile & Security ───────────────────────────────────────────────────────
 function ProfileTab() {
   const [twoFA, setTwoFA] = useState(false);
@@ -118,24 +109,19 @@ function ProfileTab() {
 }
 
 // ── Broker Integrations ──────────────────────────────────────────────────────
+// Credential-entry scaffold. Live connection state is shown by LiveBrokerStatus
+// above — these cards intentionally carry no status badge to avoid contradicting
+// it. The platform is IBKR-only today (Alpaca/Tradier were consolidated out).
 interface BrokerRow {
   name: string;
   fields: { label: string; masked?: string; placeholder?: string }[];
-  connected: boolean;
   env?: string;
 }
 
 const BROKERS: BrokerRow[] = [
-  { name: "Interactive Brokers", connected: true, env: "Paper", fields: [
+  { name: "Interactive Brokers", env: "Paper", fields: [
     { label: "Username", placeholder: "ib_username" },
     { label: "API password", masked: "••••••••2305" },
-  ]},
-  { name: "Alpaca", connected: true, env: "Paper", fields: [
-    { label: "API key ID", masked: "••••••••OK3R" },
-    { label: "Secret key", masked: "••••••••FCBt" },
-  ]},
-  { name: "Tradier", connected: false, env: "Sandbox", fields: [
-    { label: "Access token", placeholder: "Add token to connect" },
   ]},
 ];
 
@@ -145,7 +131,6 @@ function BrokerCard({ b }: { b: BrokerRow }) {
     <Panel
       title={b.name}
       desc={b.env ? `${b.env} environment` : undefined}
-      actions={<HealthDot ok={b.connected} />}
     >
       {b.fields.map(f => (
         <Field key={f.label} label={f.label}>
@@ -160,9 +145,7 @@ function BrokerCard({ b }: { b: BrokerRow }) {
         </Field>
       ))}
       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-        <button className="btn-t active">{b.connected ? "Save keys" : "Connect"}</button>
-        {b.connected && <button className="btn-t">Test connection</button>}
-        {b.connected && <button className="btn-t danger">Disconnect</button>}
+        <button className="btn-t active">Save keys</button>
       </div>
     </Panel>
   );
