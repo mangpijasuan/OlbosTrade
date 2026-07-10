@@ -41,6 +41,7 @@ class IBKRLiveDataBroker:
         self.subscriptions: dict[str, Set[WebSocket]] = {}
         self.active_connections: Set[WebSocket] = set()
         self.update_task = None
+        self.is_paused = False
 
     async def connect(self, websocket: WebSocket):
         """Register a new WebSocket connection."""
@@ -98,6 +99,11 @@ class IBKRLiveDataBroker:
         try:
             while True:
                 await asyncio.sleep(2)
+
+                if self.is_paused:
+                    # Skip broadcasting while paused
+                    continue
+
                 tick += 1
 
                 # Broadcast to all active subscriptions
@@ -113,6 +119,31 @@ class IBKRLiveDataBroker:
             logger.info("IBKR Live update loop stopped")
         except Exception as exc:
             logger.error(f"IBKR Live update loop error: {exc}")
+
+    def pause(self) -> bool:
+        """Pause live data updates. Returns True if state changed."""
+        if not self.is_paused:
+            self.is_paused = True
+            logger.info("IBKR Live data paused (disconnecting from other devices)")
+            return True
+        return False
+
+    def resume(self) -> bool:
+        """Resume live data updates. Returns True if state changed."""
+        if self.is_paused:
+            self.is_paused = False
+            logger.info("IBKR Live data resumed")
+            return True
+        return False
+
+    def get_status(self) -> dict[str, Any]:
+        """Get current broker status."""
+        return {
+            "is_paused": self.is_paused,
+            "active_connections": len(self.active_connections),
+            "subscriptions": len(self.subscriptions),
+            "subscription_keys": list(self.subscriptions.keys()),
+        }
 
     def _simulate_update(self, key: str, tick: int) -> dict[str, Any] | None:
         """
@@ -178,6 +209,57 @@ class IBKRLiveDataBroker:
 
 # Global broker instance
 _live_broker = IBKRLiveDataBroker()
+
+
+@router.get("/live/status")
+async def get_live_status() -> dict:
+    """
+    Get current status of IBKR live data broker.
+
+    Returns:
+    - is_paused: Whether live data updates are paused
+    - active_connections: Number of active WebSocket clients
+    - subscriptions: Number of active subscriptions (ticker/chain keys)
+    - subscription_keys: List of all subscription keys
+    """
+    return _live_broker.get_status()
+
+
+@router.post("/live/pause")
+async def pause_live_data() -> dict:
+    """
+    Pause live data updates.
+    Use this when you need to login to IBKR on another device.
+    WebSocket clients remain connected but won't receive updates.
+
+    Returns:
+    - paused: Whether pause was successful (true if state changed, false if already paused)
+    - message: Status message
+    """
+    was_paused = _live_broker.is_paused
+    _live_broker.pause()
+    return {
+        "paused": True,
+        "message": "IBKR live data paused — you can now login on other devices" if not was_paused else "Already paused"
+    }
+
+
+@router.post("/live/resume")
+async def resume_live_data() -> dict:
+    """
+    Resume live data updates after pausing.
+    WebSocket clients will receive live updates again.
+
+    Returns:
+    - resumed: Whether resume was successful (true if state changed, false if already running)
+    - message: Status message
+    """
+    was_paused = _live_broker.is_paused
+    _live_broker.resume()
+    return {
+        "resumed": True,
+        "message": "IBKR live data resumed" if was_paused else "Already running"
+    }
 
 
 @router.websocket("/live")

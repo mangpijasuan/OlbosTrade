@@ -11,6 +11,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import WatchlistManager from "./WatchlistManager";
+import IBKRLiveControl from "./IBKRLiveControl";
 import { useLiveData } from "../hooks/useLiveData";
 
 interface Candidate {
@@ -772,37 +773,46 @@ export default function OptionsScanPanel() {
           </span>
         )}
 
-        {/* Live data indicator */}
+        {/* Live data indicator and control */}
         {result && result.candidates.length > 0 && (
-          <span
+          <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              fontSize: 10,
-              fontFamily: "var(--mono)",
-              color: liveConnected ? "var(--green)" : "var(--ink-faint)",
-              padding: "4px 8px",
-              background: "var(--bg-2)",
-              borderRadius: 3,
+              gap: 8,
             }}
           >
             <span
               style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: liveConnected ? "var(--green)" : "var(--ink-faint)",
-                animation: liveConnected ? "pulse 1.5s infinite" : "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 10,
+                fontFamily: "var(--mono)",
+                color: liveConnected ? "var(--green)" : "var(--ink-faint)",
+                padding: "4px 8px",
+                background: "var(--bg-2)",
+                borderRadius: 3,
               }}
-            />
-            {liveConnected ? "LIVE IBKR" : "No live"}
-            {lastLiveUpdate && (
-              <span style={{ color: "var(--ink-faint)" }}>
-                {lastLiveUpdate.toLocaleTimeString()}
-              </span>
-            )}
-          </span>
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: liveConnected ? "var(--green)" : "var(--ink-faint)",
+                  animation: liveConnected ? "pulse 1.5s infinite" : "none",
+                }}
+              />
+              {liveConnected ? "LIVE IBKR" : "No live"}
+              {lastLiveUpdate && (
+                <span style={{ color: "var(--ink-faint)" }}>
+                  {lastLiveUpdate.toLocaleTimeString()}
+                </span>
+              )}
+            </span>
+            <IBKRLiveControl compact={true} />
+          </div>
         )}
 
         <span style={{ flex: 1 }} />
