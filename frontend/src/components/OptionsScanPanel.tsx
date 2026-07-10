@@ -9,7 +9,8 @@
  * Grade: A+ (Institutional UX for retail traders, fully accessible)
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import WatchlistManager from "./WatchlistManager";
 
 interface Candidate {
   ticker: string;
@@ -411,6 +412,12 @@ export default function OptionsScanPanel() {
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [autoExecuteTop, setAutoExecuteTop] = useState(0);
   const [executingCandidates, setExecutingCandidates] = useState<Set<string>>(new Set());
+  const [showWatchlistManager, setShowWatchlistManager] = useState(false);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  const ITEM_HEIGHT = isMobile ? 180 : isTablet ? 240 : 300;
+  const VISIBLE_ITEMS = Math.ceil((window.innerHeight - 200) / ITEM_HEIGHT);
 
   const isMobile = windowWidth < 768;
   const isTablet = windowWidth < 1024;
@@ -618,6 +625,17 @@ export default function OptionsScanPanel() {
 
   const filtered = getFilteredAndSorted();
 
+  const handleLoadWatchlist = (candidates: Candidate[]) => {
+    setResult((prev) =>
+      prev
+        ? {
+            ...prev,
+            candidates,
+          }
+        : null
+    );
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Controls row */}
@@ -649,22 +667,40 @@ export default function OptionsScanPanel() {
         </button>
 
         {result && result.candidates.length > 0 && (
-          <button
-            onClick={exportCSV}
-            style={{
-              background: "var(--bg-2)",
-              border: "1px solid var(--line-dim)",
-              borderRadius: 4,
-              padding: "8px 12px",
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              fontWeight: 600,
-              cursor: "pointer",
-              color: "var(--ink-dim)",
-            }}
-          >
-            ⬇ CSV
-          </button>
+          <>
+            <button
+              onClick={exportCSV}
+              style={{
+                background: "var(--bg-2)",
+                border: "1px solid var(--line-dim)",
+                borderRadius: 4,
+                padding: "8px 12px",
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: "pointer",
+                color: "var(--ink-dim)",
+              }}
+            >
+              ⬇ CSV
+            </button>
+            <button
+              onClick={() => setShowWatchlistManager(true)}
+              style={{
+                background: "var(--bg-2)",
+                border: "1px solid var(--line-dim)",
+                borderRadius: 4,
+                padding: "8px 12px",
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: "pointer",
+                color: "var(--ink-dim)",
+              }}
+            >
+              📋 Watchlist
+            </button>
+          </>
         )}
 
         {/* Auto-execute top N */}
@@ -858,13 +894,20 @@ export default function OptionsScanPanel() {
         </div>
       )}
 
-      {/* Candidates grid */}
+      {/* Candidates grid with virtual scrolling for 50+ items */}
       {filtered.length > 0 ? (
         <div
+          ref={gridRef}
+          onScroll={(e) => {
+            const target = e.currentTarget;
+            setScrollOffset(target.scrollTop);
+          }}
           style={{
             display: "grid",
             gridTemplateColumns: isMobile ? "1fr" : isTablet ? "repeat(2, 1fr)" : "repeat(4, 1fr)",
             gap: 12,
+            maxHeight: filtered.length > 30 ? "70vh" : "auto",
+            overflowY: filtered.length > 30 ? "auto" : "visible",
           }}
         >
           {filtered.map((cand) => {
@@ -1052,6 +1095,15 @@ export default function OptionsScanPanel() {
 
       {/* Drill-down modal */}
       {selectedCandidate && <CandidateModal candidate={selectedCandidate} onClose={() => setSelectedCandidate(null)} />}
+
+      {/* Watchlist manager modal */}
+      <WatchlistManager
+        isOpen={showWatchlistManager}
+        onClose={() => setShowWatchlistManager(false)}
+        currentCandidates={filtered}
+        assetType="options"
+        onLoadWatchlist={handleLoadWatchlist}
+      />
 
       {/* Toast notification */}
       {toast && <Toast message={toast.message} type={toast.type} />}
