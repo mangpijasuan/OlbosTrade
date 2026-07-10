@@ -11,6 +11,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import WatchlistManager from "./WatchlistManager";
+import { useLiveData } from "../hooks/useLiveData";
 
 interface Candidate {
   ticker: string;
@@ -662,6 +663,12 @@ export default function EquityScanPanel() {
 
   const filtered = getFilteredAndSorted();
 
+  // Live IBKR data integration
+  const { isConnected: liveConnected, lastUpdate: lastLiveUpdate } = useLiveData(
+    result?.candidates || [],
+    { enabled: true, updateInterval: 2000 }
+  );
+
   const handleLoadWatchlist = (candidates: Candidate[]) => {
     setResult((prev) =>
       prev
@@ -798,6 +805,39 @@ export default function EquityScanPanel() {
         {lastRefresh && (
           <span style={{ fontSize: 10, color: "var(--ink-faint)", fontFamily: "var(--mono)" }}>
             Last refresh: {lastRefresh.toLocaleTimeString()}
+          </span>
+        )}
+
+        {/* Live data indicator */}
+        {result && result.candidates.length > 0 && (
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 10,
+              fontFamily: "var(--mono)",
+              color: liveConnected ? "var(--green)" : "var(--ink-faint)",
+              padding: "4px 8px",
+              background: "var(--bg-2)",
+              borderRadius: 3,
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: liveConnected ? "var(--green)" : "var(--ink-faint)",
+                animation: liveConnected ? "pulse 1.5s infinite" : "none",
+              }}
+            />
+            {liveConnected ? "LIVE IBKR" : "No live"}
+            {lastLiveUpdate && (
+              <span style={{ color: "var(--ink-faint)" }}>
+                {lastLiveUpdate.toLocaleTimeString()}
+              </span>
+            )}
           </span>
         )}
 
