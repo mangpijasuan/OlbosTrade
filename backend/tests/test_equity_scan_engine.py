@@ -1,0 +1,80 @@
+"""Unit coverage for the equity scan engine's pure math: probability-of-profit,
+Kelly sizing, and the entry ladder."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.services.equity_scan_engine import (
+    _build_entry_ladder,
+    _compute_kelly_fraction,
+    _compute_pop_from_distance,
+)
+
+
+# ── _compute_pop_from_distance ───────────────────────────────────────────────
+def test_pop_neutral_without_volatility():
+    assert _compute_pop_from_distance(100, 110, 95, 0) == 0.5
+    assert _compute_pop_from_distance(0, 110, 95, 2) == 0.5
+
+
+def test_pop_equidistant_target_and_stop_is_even():
+    # target +5, stop -5 → 50/50
+    assert _compute_pop_from_distance(100, 105, 95, 2) == pytest.approx(0.5)
+
+
+def test_pop_higher_when_stop_has_more_room_than_target():
+    # POP = dist_to_stop / (dist_to_target + dist_to_stop): a wider stop (more
+    # room before stopping out) raises the probability of reaching target first.
+    pop = _compute_pop_from_distance(100, 110, 85, 2)  # target 10 away, stop 15 away
+    assert pop > 0.5
+    # and a tight stop (easily hit) lowers it
+    assert _compute_pop_from_distance(100, 110, 98, 2) < 0.5
+
+
+def test_pop_clamped_to_bounds():
+    val = _compute_pop_from_distance(100, 100.0001, 1, 2)  # tiny target dist
+    assert 0.01 <= val <= 0.99
+
+
+# ── _compute_kelly_fraction ──────────────────────────────────────────────────
+def test_kelly_floor_when_no_edge_inputs():
+    assert _compute_kelly_fraction(0.6, 0, 100) == 0.05
+    assert _compute_kelly_fraction(0.6, 100, 0) == 0.05
+
+
+def test_kelly_clamped_to_50_percent_ceiling():
+    # very favourable odds should still cap at 0.50
+    assert _compute_kelly_fraction(0.95, 500, 100) == 0.50
+
+
+def test_kelly_positive_edge_between_bounds():
+    k = _compute_kelly_fraction(0.6, 150, 100)
+    assert 0.01 <= k <= 0.50
+
+
+def test_kelly_floor_on_negative_edge():
+    # coin-flip odds with symmetric payoff → no edge → floored, never negative
+    k = _compute_kelly_fraction(0.4, 100, 100)
+    assert k == 0.01
+
+
+# ── _build_entry_ladder (equity) ─────────────────────────────────────────────
+def test_equity_ladder_full_entry_low_kelly():
+    ladder = _build_entry_ladder(0.10, 50.0, 45.0, 60.0)
+    assert len(ladder) == 1
+    assert ladder[0]["pct_position"] == 100
+
+
+def test_equity_ladder_two_tranches_medium_kelly():
+    ladder = _build_entry_ladder(0.20, 50.0, 45.0, 60.0)
+    assert len(ladder) == 2
+    assert sum(t["pct_position"] for t in ladder) == 100
+
+
+def test_equity_ladder_three_tranches_high_kelly():
+    ladder = _build_entry_ladder(0.40, 50.0, 45.0, 60.0)
+    assert len(ladder) == 3
+    assert sum(t["pct_position"] for t in ladder) == 100
+    # later tranches scale in on weakness (lower price)
+    assert ladder[1]["entry_price"] < ladder[0]["entry_price"]
