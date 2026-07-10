@@ -409,9 +409,51 @@ export default function OptionsScanPanel() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
+  const [autoExecuteTop, setAutoExecuteTop] = useState(0);
+  const [executingCandidates, setExecutingCandidates] = useState<Set<string>>(new Set());
 
   const isMobile = windowWidth < 768;
   const isTablet = windowWidth < 1024;
+
+  const executeTopCandidates = async (count: number) => {
+    if (!result?.candidates || count <= 0) return;
+
+    const topCandidates = result.candidates.slice(0, count);
+    const toExecute = new Set(topCandidates.map((c) => c.ticker));
+    setExecutingCandidates(toExecute);
+
+    for (const candidate of topCandidates) {
+      try {
+        const response = await fetch("/api/trade-desk/signal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticker: candidate.ticker,
+            action: candidate.action,
+            entry_price: candidate.credit,
+            stop_price: 0,
+            target_price: candidate.credit * 1.5,
+            entry_ladder: candidate.entry_ladder,
+            kelly_fraction: candidate.kelly_fraction,
+            expected_value: candidate.expected_value,
+            pop: candidate.pop,
+            confidence: candidate.confidence,
+            source: "options_scan_engine",
+          }),
+        });
+
+        if (response.ok) {
+          toExecute.delete(candidate.ticker);
+          setExecutingCandidates(new Set(toExecute));
+        }
+      } catch (e) {
+        console.error(`Failed to execute ${candidate.ticker}:`, e);
+      }
+    }
+
+    setToast({ message: `Executed ${count} top candidates`, type: "success" });
+    setAutoExecuteTop(0);
+  };
 
   // Track window width
   useEffect(() => {
@@ -481,6 +523,68 @@ export default function OptionsScanPanel() {
     }
   };
 
+  const exportCSV = () => {
+    if (!result?.candidates || result.candidates.length === 0) {
+      setToast({ message: "No candidates to export", type: "warning" });
+      return;
+    }
+
+    const headers = [
+      "Ticker",
+      "Type",
+      "Action",
+      "Short Strike",
+      "Long Strike",
+      "DTE",
+      "EV",
+      "POP",
+      "Confidence",
+      "Kelly %",
+      "Credit",
+      "Max Loss",
+      "Reward:Risk",
+      "IV Rank",
+      "Pricing Source",
+      "Timestamp",
+    ];
+
+    const rows = result.candidates.map((c) => [
+      c.ticker,
+      c.option_type.toUpperCase(),
+      c.action,
+      c.short_strike,
+      c.long_strike,
+      c.dte,
+      c.expected_value.toFixed(2),
+      (c.pop * 100).toFixed(1),
+      (c.confidence * 100).toFixed(1),
+      (c.kelly_fraction * 100).toFixed(1),
+      c.credit.toFixed(2),
+      c.max_loss.toFixed(2),
+      c.reward_risk.toFixed(2),
+      c.iv_rank.toFixed(1),
+      c.pricing_source,
+      new Date().toISOString(),
+    ]);
+
+    const csv = [
+      headers.join(","),
+      ...rows.map((r) => r.map((v) => (typeof v === "string" && v.includes(",") ? `"${v}"` : v)).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `options-scan-${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setToast({ message: `Exported ${result.candidates.length} candidates to CSV`, type: "success" });
+  };
+
   // Sort and filter logic
   const getFilteredAndSorted = () => {
     if (!result?.candidates) return [];
@@ -543,6 +647,68 @@ export default function OptionsScanPanel() {
         >
           {scanning ? "SCANNING..." : "RUN SCAN"}
         </button>
+
+        {result && result.candidates.length > 0 && (
+          <button
+            onClick={exportCSV}
+            style={{
+              background: "var(--bg-2)",
+              border: "1px solid var(--line-dim)",
+              borderRadius: 4,
+              padding: "8px 12px",
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: "pointer",
+              color: "var(--ink-dim)",
+            }}
+          >
+            ⬇ CSV
+          </button>
+        )}
+
+        {/* Auto-execute top N */}
+        {result && result.candidates.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+            <label style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
+              Auto-execute top:
+            </label>
+            <input
+              type="number"
+              min="0"
+              max={result.candidates.length}
+              value={autoExecuteTop}
+              onChange={(e) => setAutoExecuteTop(parseInt(e.target.value) || 0)}
+              style={{
+                width: 40,
+                background: "var(--bg-2)",
+                border: "1px solid var(--line-dim)",
+                borderRadius: 4,
+                padding: "4px 6px",
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                color: "var(--ink)",
+              }}
+            />
+            <button
+              onClick={() => autoExecuteTop > 0 && executeTopCandidates(autoExecuteTop)}
+              disabled={autoExecuteTop <= 0 || executingCandidates.size > 0}
+              style={{
+                background: autoExecuteTop > 0 ? "var(--green)" : "var(--bg-3)",
+                color: autoExecuteTop > 0 ? "var(--bg)" : "var(--ink-faint)",
+                border: "none",
+                borderRadius: 4,
+                padding: "4px 8px",
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: autoExecuteTop > 0 ? "pointer" : "default",
+              }}
+            >
+              GO
+            </button>
+          </div>
+        )}
 
         {/* Auto-refresh toggle */}
         <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11 }}>
