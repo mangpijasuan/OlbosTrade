@@ -17,6 +17,8 @@ import OptionsFlow     from "./pages/OptionsFlow";           // Options flow (gr
 import IncomeMatrix    from "./pages/IncomeMatrix";           // CSP + covered-call yield screener
 import OptionsChain    from "./pages/options/OptionsChain";  // Live calls/puts for a symbol
 import MLModels        from "./pages/research/MLModels";     // Signal-scorer model status
+import StrategyBuilder from "./pages/strategies/StrategyBuilder"; // Configure + register a strategy experiment
+import Alerts          from "./pages/strategies/Alerts";     // Smart Alert rules + notifications
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
@@ -62,6 +64,8 @@ const PAGES: Record<string, React.ComponentType> = {
   "trade:positions": () => <TradeDesk initialTab="positions" />,
   "trade:logs":      () => <TradeDesk initialTab="pnl" />,
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
+  "strat:builder":   StrategyBuilder,
+  "strat:alerts":    Alerts,
   "options:chain":   OptionsChain,
   "options:cc":      () => <IncomeMatrix initialFilter="cc" />,
   "options:wheel":   CspScreener,
