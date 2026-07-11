@@ -14,6 +14,15 @@ import CspScreener     from "./pages/CspScreener";          // Wheel & Income La
 import ScanCenter      from "./pages/ScanCenter";           // Options + Equity EV scan engines
 import Settings        from "./pages/Settings";             // Account, brokers, billing
 import OptionsFlow     from "./pages/OptionsFlow";           // Options flow (grouped-nav sub-item)
+// Markets module
+import Heatmap         from "./pages/markets/Heatmap";
+import Watchlists      from "./pages/markets/Watchlists";
+import NewsCatalysts   from "./pages/markets/NewsCatalysts";
+import MarketsCalendar from "./pages/markets/Calendar";
+// Data & Integrations module
+import BrokerGateway   from "./pages/data/BrokerGateway";
+import MarketData      from "./pages/data/MarketData";
+import DataQuality     from "./pages/data/DataQuality";
 
 // Placeholder for sub-items in the grouped nav that don't have a page yet.
 function ComingSoon() {
@@ -54,7 +63,17 @@ const PAGES: Record<string, React.ComponentType> = {
   "risk:heat":       RiskCenter,
   "risk:exposure":   RiskCenter,
   "risk:drawdown":   RiskCenter,
-  "data:broker":     Settings,
+
+  // Markets module
+  "markets:heatmaps":   Heatmap,
+  "markets:watchlists": Watchlists,
+  "markets:news":       NewsCatalysts,
+  "markets:calendar":   MarketsCalendar,
+
+  // Data & Integrations module
+  "data:broker":  BrokerGateway,
+  "data:market":  MarketData,
+  "data:quality": DataQuality,
 };
 
 export default function App() {
