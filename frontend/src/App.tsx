@@ -16,6 +16,7 @@ import Settings        from "./pages/Settings";             // Account, brokers,
 import OptionsFlow     from "./pages/OptionsFlow";           // Options flow (grouped-nav sub-item)
 import IncomeMatrix    from "./pages/IncomeMatrix";           // CSP + covered-call yield screener
 import OptionsChain    from "./pages/options/OptionsChain";  // Live calls/puts for a symbol
+import MLModels        from "./pages/research/MLModels";     // Signal-scorer model status
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
@@ -68,6 +69,8 @@ const PAGES: Record<string, React.ComponentType> = {
   "risk:exposure":   () => <RiskCenter initialTab="monitor" />,
   "risk:drawdown":   () => <RiskCenter initialTab="monitor" />,
   "risk:rules":      () => <RiskCenter initialTab="guardrails" />,
+  "lab:walkforward": () => <ResearchCenter initialTab="lab" />,
+  "lab:ml":          MLModels,
 
   // Markets module
   "markets:heatmaps":   Heatmap,

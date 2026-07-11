@@ -21,8 +21,8 @@ const TABS = [
   { key: "intel", label: "Intel" },
 ];
 
-export default function ResearchCenter() {
-  const [tab, setTab] = useState("lab");
+export default function ResearchCenter({ initialTab = "lab" }: { initialTab?: string }) {
+  const [tab, setTab] = useState(initialTab);
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} />
