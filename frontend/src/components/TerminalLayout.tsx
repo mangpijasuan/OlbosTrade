@@ -35,22 +35,77 @@ const ICONS: Record<string, string> = {
   flow:       "M3 12h4l3 8 4-16 3 8h4",
   strategy:   "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z",
   analytics:  "M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z",
+  markets:    "M3 3v18h18 M7 14v3 M7 8v2 M12 6v11 M12 3v1 M17 11v6 M17 8v1",
+  data:       "M12 3c4.418 0 8 1.343 8 3s-3.582 3-8 3-8-1.343-8-3 3.582-3 8-3z M4 6v6c0 1.657 3.582 3 8 3s8-1.343 8-3V6 M4 12v6c0 1.657 3.582 3 8 3s8-1.343 8-3v-6",
   mode:       "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
   settings:   "M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z",
 };
 
-const NAV_ITEMS = [
-  { key: "dashboard",  label: "Dashboard",    icon: "dashboard"  },
-  { key: "paper",      label: "Trade Desk",   icon: "paper"      },
-  { key: "equity",     label: "Signals",      icon: "equity"     },
-  { key: "backtest",   label: "Backtest",     icon: "backtest"   },
-  { key: "lab",        label: "Research Lab", icon: "lab"        },
-  { key: "risk",       label: "Risk",         icon: "risk"       },
-  { key: "journal",    label: "Journal",      icon: "journal"    },
-  { key: "analytics",  label: "Performance",  icon: "analytics"  },
-  { key: "csp",        label: "CSP Screener", icon: "equity"     },
-  { key: "scan",       label: "Scanner",      icon: "backtest"   },
+// Grouped navigation. A group is either a leaf (has `key`, navigates directly)
+// or a section (has `children`, expands to sub-items). Each leaf `key` routes
+// through the alias map in App.tsx — existing pages keep working; not-yet-built
+// items land on a shared "coming soon" placeholder.
+type NavLeaf  = { key: string; label: string };
+type NavGroup = { id: string; label: string; icon: string; key?: string; children?: NavLeaf[] };
+
+const NAV_MODEL: NavGroup[] = [
+  { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
+  { id: "markets",   label: "Markets",        icon: "markets", children: [
+    { key: "markets:heatmaps",   label: "Heatmaps" },
+    { key: "markets:watchlists", label: "Watchlists" },
+    { key: "markets:news",       label: "News & Catalysts" },
+    { key: "markets:calendar",   label: "Calendar" },
+  ]},
+  { id: "trade", label: "Trade Desk", icon: "paper", children: [
+    { key: "trade:copilot",   label: "Copilot Review" },
+    { key: "trade:orders",    label: "Orders" },
+    { key: "trade:positions", label: "Positions" },
+    { key: "trade:logs",      label: "Execution Logs" },
+  ]},
+  { id: "strat", label: "Strategies", icon: "strategy", children: [
+    { key: "equity",        label: "Signals" },
+    { key: "strat:cards",   label: "Strategy Cards" },
+    { key: "strat:builder", label: "Strategy Builder" },
+    { key: "strat:alerts",  label: "Alerts" },
+  ]},
+  { id: "options", label: "Options Desk", icon: "flow", children: [
+    { key: "options:chain",  label: "Options Chain" },
+    { key: "scan",           label: "Spread Scanner" },
+    { key: "csp",            label: "CSP Screener" },
+    { key: "options:cc",     label: "Covered Calls" },
+    { key: "options:wheel",  label: "Wheel Lab" },
+    { key: "options:flow",   label: "Options Flow" },
+  ]},
+  { id: "risk", label: "Portfolio & Risk", icon: "risk", children: [
+    { key: "risk:heat",     label: "Portfolio Heat" },
+    { key: "risk:exposure", label: "Exposure" },
+    { key: "risk:var",      label: "Stress & VaR" },
+    { key: "risk:drawdown", label: "Drawdown" },
+    { key: "risk",          label: "Risk Rules" },
+  ]},
+  { id: "lab", label: "Research Lab", icon: "lab", children: [
+    { key: "backtest",       label: "Backtests" },
+    { key: "lab:walkforward",label: "Walk-Forward" },
+    { key: "lab:ml",         label: "ML Models" },
+    { key: "lab",            label: "Paper Validation" },
+  ]},
+  { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal" },
+  { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics" },
+  { id: "data", label: "Data & Integrations", icon: "data", children: [
+    { key: "data:broker",  label: "Broker Gateway" },
+    { key: "data:market",  label: "Market Data" },
+    { key: "data:quality", label: "Data Quality" },
+  ]},
 ];
+
+// Which group owns a given active leaf key (for header highlight + auto-open).
+function groupIdForKey(key: string): string | null {
+  for (const g of NAV_MODEL) {
+    if (g.key === key) return g.id;
+    if (g.children?.some(c => c.key === key)) return g.id;
+  }
+  return null;
+}
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────
 type SnapShot = { last_close: number | null; prev_close: number | null; change_pct: number | null };
@@ -72,6 +127,30 @@ function TickerCell({ label, snap }: { label: string; snap: SnapShot }) {
   );
 }
 
+// Header pill for a global AI mode (Copilot / Autopilot).
+function ModeChip({ label, on, onColor, onClick }: {
+  label: string; on: boolean; onColor: string; onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${label} — click to toggle`}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        height: 22, padding: "0 9px", borderRadius: 11,
+        background: on ? "var(--cyan-dim)" : "transparent",
+        border: `1px solid ${on ? onColor : "var(--line-dim)"}`,
+        color: on ? onColor : "var(--ink-faint)",
+        fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.1em",
+        cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
+      }}
+    >
+      <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? onColor : undefined }} />
+      {label} {on ? "ON" : "OFF"}
+    </button>
+  );
+}
+
 function TickerStrip({ onToggle }: { onToggle: () => void }) {
   const [time, setTime] = useState(new Date());
   const [spy,  setSpy]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
@@ -87,6 +166,26 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
   const [vix,  setVix]  = useState<number | null>(null);
   const [ivr,  setIvr]  = useState<number | null>(null);
   const [mode, setMode] = useState("balanced");
+  // Execution mode (manual / copilot / autopilot) — the real backend tri-state.
+  // The two header chips project onto it: Copilot on = copilot OR autopilot;
+  // Autopilot on = autopilot. Defaults to manual (matches the no-execute gate).
+  const [execMode, setExecMode] = useState<"manual" | "copilot" | "autopilot">("manual");
+  const copilotOn   = execMode === "copilot" || execMode === "autopilot";
+  const autopilotOn = execMode === "autopilot";
+
+  const setExec = (m: "manual" | "copilot" | "autopilot") => {
+    setExecMode(m); // optimistic
+    fetch("/api/trade-desk/execution-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: m }),
+    })
+      .then(r => r.json())
+      .then(d => { if (d.mode) setExecMode(d.mode); })
+      .catch(() => {});
+  };
+  const toggleCopilot   = () => setExec(copilotOn ? "manual" : "copilot");
+  const toggleAutopilot = () => setExec(autopilotOn ? "copilot" : "autopilot");
   const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
 
   const fetchSnapshot = (sym: string, setter: (s: SnapShot) => void) => {
@@ -123,6 +222,13 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
         .catch(() => {});
     fetchMode();
 
+    const fetchExec = () =>
+      fetch("/api/trade-desk/execution-mode")
+        .then(r => r.json())
+        .then(d => { if (d.mode) setExecMode(d.mode); })
+        .catch(() => {});
+    fetchExec();
+
     // Refresh every 5 minutes
     const si = setInterval(() => {
       fetchSnapshot("SPY",  setSpy);
@@ -145,8 +251,9 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
 
     // Poll mode every 15 seconds so it updates immediately after user changes it
     const mi = setInterval(fetchMode, 15000);
+    const ei = setInterval(fetchExec, 15000);
 
-    return () => { clearInterval(si); clearInterval(ri); clearInterval(mi); };
+    return () => { clearInterval(si); clearInterval(ri); clearInterval(mi); clearInterval(ei); };
   }, []);
 
   useEffect(() => {
@@ -281,6 +388,15 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
         </div>
       </div>
 
+      {/* AI mode chips — pinned right, before market status */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
+        padding: "0 12px", borderLeft: "1px solid var(--line-dim)",
+      }}>
+        <ModeChip label="COPILOT" on={copilotOn}   onColor="var(--cyan)"  onClick={toggleCopilot} />
+        <ModeChip label="AUTOPILOT" on={autopilotOn} onColor="var(--amber)" onClick={toggleAutopilot} />
+      </div>
+
       {/* Market status + clock — pinned right */}
       <div style={{
         display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
@@ -314,10 +430,18 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
   isMobile?: boolean;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
+  // Accordion state: which group section is expanded. Auto-opens the group that
+  // owns the active page.
+  const [openGroup, setOpenGroup] = useState<string | null>(() => groupIdForKey(active));
+  useEffect(() => {
+    const g = groupIdForKey(active);
+    if (g) setOpenGroup(g);
+  }, [active]);
+
   // On mobile, labels always show (it's a full overlay panel); on desktop they
   // appear only when expanded (icon rail otherwise).
   const showLabels = expanded || isMobile;
-  const W = isMobile ? 220 : (expanded ? 200 : 48);
+  const W = isMobile ? 240 : (expanded ? 232 : 48);
 
   const containerStyle: React.CSSProperties = isMobile
     ? {
@@ -327,7 +451,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         transition: "transform 0.2s ease",
         background: "var(--bg-2)", borderRight: "1px solid var(--line-dim)",
         display: "flex", flexDirection: "column", alignItems: "stretch",
-        paddingTop: 0, paddingBottom: 8, overflow: "hidden",
+        paddingTop: 0, paddingBottom: 8, overflowY: "auto", overflowX: "hidden",
         boxShadow: expanded ? "4px 0 24px rgba(0,0,0,0.5)" : "none",
       }
     : {
@@ -335,83 +459,112 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         background: "var(--bg-2)", borderRight: "1px solid var(--line-dim)",
         display: "flex", flexDirection: "column", alignItems: "stretch",
         paddingTop: 0, paddingBottom: 8, flexShrink: 0, position: "relative",
-        transition: "width 0.18s ease, min-width 0.18s ease", overflow: "hidden",
+        transition: "width 0.18s ease, min-width 0.18s ease",
+        overflowY: expanded ? "auto" : "hidden", overflowX: "hidden",
       };
+
+  // A group header is highlighted when it's a leaf on the active page, or it owns
+  // the active sub-item.
+  const groupActive = (g: NavGroup) =>
+    g.key === active || !!g.children?.some(c => c.key === active);
+
+  const renderGroup = (g: NavGroup) => {
+    const isLeaf    = !g.children;
+    const isOpen    = openGroup === g.id;
+    const isActive  = groupActive(g);
+    const isHovered = hovered === g.id;
+
+    const onHeaderClick = () => {
+      if (isLeaf) { onNav(g.key!); return; }
+      if (!showLabels) { onNav(g.children![0].key); return; } // icon rail: jump to first item
+      setOpenGroup(prev => (prev === g.id ? null : g.id));
+    };
+
+    return (
+      <div key={g.id} style={{ width: "100%" }}>
+        <div
+          style={{ position: "relative", width: "100%" }}
+          onMouseEnter={() => setHovered(g.id)}
+          onMouseLeave={() => setHovered(null)}
+        >
+          <button
+            onClick={onHeaderClick}
+            style={{
+              width: "100%", height: 38, display: "flex", alignItems: "center",
+              justifyContent: showLabels ? "flex-start" : "center",
+              paddingLeft: showLabels ? 14 : 0, gap: showLabels ? 10 : 0,
+              background: isActive ? "var(--cyan-dim)" : isHovered ? "var(--bg-3)" : "transparent",
+              border: "none",
+              borderLeft: isActive ? "2px solid var(--cyan)" : "2px solid transparent",
+              color: isActive ? "var(--cyan)" : isHovered ? "var(--ink)" : "var(--ink-faint)",
+              cursor: "pointer", transition: "all 0.1s", overflow: "hidden", whiteSpace: "nowrap",
+            }}
+          >
+            <span style={{ flexShrink: 0 }}><Icon d={ICONS[g.icon]} size={15} /></span>
+            {showLabels && (
+              <span style={{
+                flex: 1, textAlign: "left", fontFamily: "var(--mono)", fontSize: 11,
+                letterSpacing: "0.08em", textTransform: "uppercase",
+              }}>
+                {g.label}
+              </span>
+            )}
+            {showLabels && !isLeaf && (
+              <span style={{ flexShrink: 0, paddingRight: 12, opacity: 0.6, transition: "transform 0.15s", transform: isOpen ? "rotate(90deg)" : "none" }}>
+                <Icon d="M9 18l6-6-6-6" size={12} />
+              </span>
+            )}
+          </button>
+
+          {/* Tooltip — only on the collapsed desktop icon rail */}
+          {!showLabels && isHovered && (
+            <div style={{
+              position: "absolute", left: 52, top: "50%", transform: "translateY(-50%)",
+              background: "var(--bg-4)", border: "1px solid var(--line-dim)", padding: "4px 10px",
+              whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em",
+              textTransform: "uppercase", color: "var(--ink)", zIndex: 100, pointerEvents: "none",
+            }}>
+              {g.label}
+            </div>
+          )}
+        </div>
+
+        {/* Sub-items — only when expanded and open */}
+        {showLabels && !isLeaf && isOpen && g.children!.map(c => {
+          const subActive  = active === c.key;
+          const subHovered = hovered === c.key;
+          return (
+            <button
+              key={c.key}
+              onClick={() => onNav(c.key)}
+              onMouseEnter={() => setHovered(c.key)}
+              onMouseLeave={() => setHovered(null)}
+              style={{
+                width: "100%", height: 32, display: "flex", alignItems: "center",
+                paddingLeft: 40, gap: 0,
+                background: subActive ? "var(--cyan-dim)" : subHovered ? "var(--bg-3)" : "transparent",
+                border: "none",
+                borderLeft: subActive ? "2px solid var(--cyan)" : "2px solid transparent",
+                color: subActive ? "var(--cyan)" : subHovered ? "var(--ink)" : "var(--ink-dim)",
+                cursor: "pointer", transition: "all 0.1s", overflow: "hidden", whiteSpace: "nowrap",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, letterSpacing: "0.04em" }}>
+                {c.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div style={containerStyle}>
 
-      {/* Nav items */}
-      {NAV_ITEMS.map(item => {
-        const isActive  = active === item.key;
-        const isHovered = hovered === item.key;
-        return (
-          <div
-            key={item.key}
-            style={{ position: "relative", width: "100%" }}
-            onMouseEnter={() => setHovered(item.key)}
-            onMouseLeave={() => setHovered(null)}
-          >
-            <button
-              onClick={() => onNav(item.key)}
-              style={{
-                width: "100%",
-                height: 38,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: showLabels ? "flex-start" : "center",
-                paddingLeft: showLabels ? 14 : 0,
-                gap: showLabels ? 10 : 0,
-                background: isActive ? "var(--cyan-dim)" : isHovered ? "var(--bg-3)" : "transparent",
-                border: "none",
-                borderLeft: isActive ? "2px solid var(--cyan)" : "2px solid transparent",
-                color: isActive ? "var(--cyan)" : isHovered ? "var(--ink)" : "var(--ink-faint)",
-                cursor: "pointer",
-                transition: "all 0.1s",
-                overflow: "hidden",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <span style={{ flexShrink: 0 }}>
-                <Icon d={ICONS[item.icon]} size={15} />
-              </span>
-              {showLabels && (
-                <span style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 11,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                }}>
-                  {item.label}
-                </span>
-              )}
-            </button>
-
-            {/* Tooltip — only on the collapsed desktop icon rail */}
-            {!showLabels && isHovered && (
-              <div style={{
-                position: "absolute",
-                left: 52,
-                top: "50%",
-                transform: "translateY(-50%)",
-                background: "var(--bg-4)",
-                border: "1px solid var(--line-dim)",
-                padding: "4px 10px",
-                whiteSpace: "nowrap",
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "var(--ink)",
-                zIndex: 100,
-                pointerEvents: "none",
-              }}>
-                {item.label}
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {/* Grouped nav */}
+      {NAV_MODEL.map(renderGroup)}
 
       {/* Settings / account — pinned bottom, above kill switch */}
       <div style={{ flex: 1 }} />
