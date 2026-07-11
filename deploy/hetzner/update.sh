@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# OlbosQuant — Pull latest code and redeploy (zero-downtime rolling restart)
+# OlbosTrade — Pull latest code and redeploy (zero-downtime rolling restart)
 #
-# Run from /opt/olbosquant on the server:
+# Run from /opt/olbostrade on the server:
 #   bash deploy/hetzner/update.sh
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -15,7 +15,7 @@ source backend/.env.prod
 set +a
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  OlbosQuant — Updating"
+echo "  OlbosTrade — Updating"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 echo "[1/4] Pulling latest code..."
