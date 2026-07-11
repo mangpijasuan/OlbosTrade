@@ -459,7 +459,10 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         onMouseLeave={() => setHovered(null)}
         style={{ position: "relative", width: "100%" }}
       >
-        <button style={{
+        <button
+          onClick={() => onNav("risk")}
+          title="Open the kill switch (press &amp; hold to engage on the Risk page)"
+          style={{
           width: "100%",
           height: 38,
           display: "flex",
