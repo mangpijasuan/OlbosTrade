@@ -45,7 +45,7 @@ export default function RiskMonitor() {
 
   const resetKs = async () => {
     setKsBusy(true); setKsError(null);
-    try { await api.resetKillSwitch("OLBOSQUANT_MANUAL_RESET"); await loadKs(); }
+    try { await api.resetKillSwitch("OLBOSTRADE_MANUAL_RESET"); await loadKs(); }
     catch (e: any) { setKsError(e?.message || "Failed to reset kill switch"); }
     finally { setKsBusy(false); }
   };

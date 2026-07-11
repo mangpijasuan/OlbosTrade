@@ -1,5 +1,5 @@
 """
-Position Reconciler — ensures OlbosQuant's DB state matches broker truth.
+Position Reconciler — ensures OlbosTrade's DB state matches broker truth.
 
 FIX #10: On every startup and before every signal cycle, compare broker
 positions against DB open trades. Any discrepancy halts trading until
@@ -184,7 +184,7 @@ class PositionReconciler:
             msg = (
                 f"RECONCILIATION FAILURE: {len(untracked)} positions at broker "
                 f"have no matching DB record: {untracked}. "
-                f"These are UNTRACKED positions — OlbosQuant does not know about them. "
+                f"These are UNTRACKED positions — OlbosTrade does not know about them. "
                 f"Trading halted until manual review."
             )
             logger.critical(msg)

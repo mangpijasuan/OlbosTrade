@@ -147,9 +147,9 @@ async def get_positions():
             "strategy":       db.strategy if db else "unknown",
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
             # A broker position with no matching DB open trade is "untracked" —
-            # OlbosQuant did not open it (e.g. pre-existing holdings in a shared
+            # OlbosTrade did not open it (e.g. pre-existing holdings in a shared
             # paper account). The reconciler flags these as ghost positions; the
-            # UI must not present them as OlbosQuant's managed trades or P&L.
+            # UI must not present them as OlbosTrade's managed trades or P&L.
             "tracked":        db is not None,
         })
 

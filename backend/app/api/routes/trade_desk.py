@@ -183,7 +183,7 @@ async def set_kill_switch(body: KillSwitchRequest):
         logger.warning("KILL SWITCH ENGAGED via API — all order submission halted")
     else:
         _kill_switch.clear()
-        await kill_switch_service.reset("OLBOSQUANT_MANUAL_RESET")
+        await kill_switch_service.reset("OLBOSTRADE_MANUAL_RESET")
         logger.info("Kill switch reset via API — order submission resumed")
     return {"engaged": _is_kill_switch_active()}
 

@@ -35,7 +35,7 @@ class StrategySnapshot(Base):
     config_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     inherited_from_verified_preset: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_by: Mapped[str] = mapped_column(String(120), nullable=False, default="OlbosQuant")
+    created_by: Mapped[str] = mapped_column(String(120), nullable=False, default="OlbosTrade")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

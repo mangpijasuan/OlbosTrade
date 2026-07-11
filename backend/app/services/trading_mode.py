@@ -128,7 +128,7 @@ TRADING_MODES: dict[TradingModeType, TradingModeConfig] = {
         mode=TradingModeType.BALANCED,
         display_name="Balanced",
         description=(
-            "The default OlbosQuant mode. Proven 30–35 DTE sweet spot "
+            "The default OlbosTrade mode. Proven 30–35 DTE sweet spot "
             "for the volatility risk premium. Fully automated. "
             "Recommended for most traders."
         ),
@@ -266,7 +266,7 @@ class TradingModeManager:
       - frontend reads mode for display and user switching
     """
 
-    _PERSIST_PATH = "/tmp/olbosquant_trading_mode.json"
+    _PERSIST_PATH = "/tmp/olbostrade_trading_mode.json"
 
     def __init__(self) -> None:
         # Try to restore previously persisted mode

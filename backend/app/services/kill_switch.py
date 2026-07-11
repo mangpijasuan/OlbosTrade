@@ -1,5 +1,5 @@
 """
-Master Kill Switch — OlbosQuant's emergency stop.
+Master Kill Switch — OlbosTrade's emergency stop.
 
 FIX #11: Fully implemented kill switch with:
   - Immediate scheduler pause (no new signals fire)
@@ -273,11 +273,11 @@ class KillSwitch:
         Reset kill switch after manual review.
         Requires explicit authorization to prevent accidental re-enable.
         """
-        if authorization_code != "OLBOSQUANT_MANUAL_RESET":
+        if authorization_code != "OLBOSTRADE_MANUAL_RESET":
             return {
                 "reset": False,
                 "reason": "Invalid authorization code. "
-                          "Pass authorization_code='OLBOSQUANT_MANUAL_RESET' to confirm.",
+                          "Pass authorization_code='OLBOSTRADE_MANUAL_RESET' to confirm.",
             }
 
         async with self._lock:
@@ -294,7 +294,7 @@ class KillSwitch:
             async with AsyncSessionLocal() as session:
                 session.add(GuardrailEvent(
                     event_type="kill_switch_reset",
-                    notes="manual reset via OLBOSQUANT_MANUAL_RESET",
+                    notes="manual reset via OLBOSTRADE_MANUAL_RESET",
                 ))
                 await session.commit()
         except Exception as exc:

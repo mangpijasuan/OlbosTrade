@@ -42,7 +42,7 @@ class StrategyPreset(Base):
     validation_status: Mapped[str] = mapped_column(String(40), nullable=False, default="paper_validated")
     paper_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     live_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    author: Mapped[str] = mapped_column(String(120), nullable=False, default="OlbosQuant")
+    author: Mapped[str] = mapped_column(String(120), nullable=False, default="OlbosTrade")
     approval_owner: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     approval_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)

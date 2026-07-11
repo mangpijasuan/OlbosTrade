@@ -1,7 +1,7 @@
 """
 Wheel Quality Score (WQS) — ranks cash-secured put / covered-call candidates 0–100.
 
-DESIGN PHILOSOPHY (see ARCHITECTURE_MEMO): OlbosQuant prioritizes capital
+DESIGN PHILOSOPHY (see ARCHITECTURE_MEMO): OlbosTrade prioritizes capital
 preservation, so WQS is SAFETY-TILTED by default and RISK-PROFILE-AWARE. The
 same six factors are re-weighted per profile — conservative leans ~75% on
 safety factors, aggressive shifts toward ~60% income.

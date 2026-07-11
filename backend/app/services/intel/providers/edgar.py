@@ -25,7 +25,7 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
-_UA = os.environ.get("SEC_USER_AGENT", "OlbosQuant research (contact: ops@olbosquant.local)")
+_UA = os.environ.get("SEC_USER_AGENT", "OlbosTrade research (contact: ops@olbostrade.local)")
 _BASE = "https://www.sec.gov/cgi-bin/browse-edgar"
 
 _INSIDER_FORMS = {"3", "4", "5", "3/A", "4/A", "5/A"}

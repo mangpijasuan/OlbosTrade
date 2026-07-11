@@ -40,7 +40,7 @@ class RssNewsProvider(NewsProvider):
     def fetch_news(self, symbol: str, limit: int = 20) -> list[DataEnvelope[dict]]:
         url = _FEED_TMPL.format(symbol=symbol)
         try:
-            r = httpx.get(url, headers={"User-Agent": "OlbosQuant/1.0"}, timeout=6.0,
+            r = httpx.get(url, headers={"User-Agent": "OlbosTrade/1.0"}, timeout=6.0,
                           follow_redirects=True)
             if r.status_code != 200 or not r.text.strip().startswith("<"):
                 return []
