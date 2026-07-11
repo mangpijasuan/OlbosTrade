@@ -569,6 +569,58 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
 
       {/* Settings / account — pinned bottom, above kill switch */}
       <div style={{ flex: 1 }} />
+
+      {/* Account plate — avatar initials + name, opens Settings → Profile.
+          TODO: source from a real auth/user backend once one exists (see
+          Settings.tsx's "presentational only" note); hardcoded for now. */}
+      <div
+        onMouseEnter={() => setHovered("account")}
+        onMouseLeave={() => setHovered(null)}
+        style={{ position: "relative", width: "100%" }}
+      >
+        <button
+          onClick={() => onNav("settings")}
+          title="Mangpi Jasuan — Settings"
+          style={{
+            width: "100%", height: 44, display: "flex", alignItems: "center",
+            justifyContent: showLabels ? "flex-start" : "center",
+            paddingLeft: showLabels ? 14 : 0, gap: showLabels ? 10 : 0,
+            background: hovered === "account" ? "var(--bg-3)" : "transparent",
+            border: "none", borderTop: "1px solid var(--line-dim)",
+            cursor: "pointer", overflow: "hidden", whiteSpace: "nowrap", transition: "all 0.1s",
+          }}
+        >
+          <span style={{
+            flexShrink: 0, width: 24, height: 24, borderRadius: "50%",
+            background: "var(--cyan-dim)", color: "var(--cyan)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700,
+          }}>
+            MJ
+          </span>
+          {showLabels && (
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.3, overflow: "hidden" }}>
+              <span style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                Mangpi Jasuan
+              </span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", letterSpacing: "0.06em" }}>
+                ACCOUNT
+              </span>
+            </span>
+          )}
+        </button>
+        {!showLabels && hovered === "account" && (
+          <div style={{
+            position: "absolute", left: 52, top: "50%", transform: "translateY(-50%)",
+            background: "var(--bg-4)", border: "1px solid var(--line-dim)", padding: "4px 10px",
+            whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em",
+            textTransform: "uppercase", color: "var(--ink)", zIndex: 100, pointerEvents: "none",
+          }}>
+            Mangpi Jasuan
+          </div>
+        )}
+      </div>
+
       <div
         onMouseEnter={() => setHovered("settings")}
         onMouseLeave={() => setHovered(null)}
