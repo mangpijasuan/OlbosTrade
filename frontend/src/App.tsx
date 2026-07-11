@@ -20,6 +20,7 @@ import MLModels        from "./pages/research/MLModels";     // Signal-scorer mo
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
+import ChartWorkstation from "./pages/ChartWorkstation";     // Price-action / market-structure chart
 import NewsCatalysts   from "./pages/markets/NewsCatalysts";
 import MarketsCalendar from "./pages/markets/Calendar";
 // Data & Integrations module
@@ -75,6 +76,7 @@ const PAGES: Record<string, React.ComponentType> = {
   // Markets module
   "markets:heatmaps":   Heatmap,
   "markets:watchlists": Watchlists,
+  "markets:chart":      ChartWorkstation,
   "markets:news":       NewsCatalysts,
   "markets:calendar":   MarketsCalendar,
 

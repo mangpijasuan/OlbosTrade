@@ -53,6 +53,7 @@ const NAV_MODEL: NavGroup[] = [
   { id: "markets",   label: "Markets",        icon: "markets", children: [
     { key: "markets:heatmaps",   label: "Heatmaps" },
     { key: "markets:watchlists", label: "Watchlists" },
+    { key: "markets:chart",      label: "Chart" },
     { key: "markets:news",       label: "News & Catalysts" },
     { key: "markets:calendar",   label: "Calendar" },
   ]},
