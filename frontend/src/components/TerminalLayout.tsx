@@ -76,12 +76,12 @@ const NAV_MODEL: NavGroup[] = [
     { key: "options:wheel",  label: "Wheel Lab" },
     { key: "options:flow",   label: "Options Flow" },
   ]},
-  { id: "risk", label: "Portfolio & Risk", icon: "risk", children: [
+  { id: "risk", label: "Portfolio & Risk", icon: "risk", key: "risk", children: [
     { key: "risk:heat",     label: "Portfolio Heat" },
     { key: "risk:exposure", label: "Exposure" },
     { key: "risk:var",      label: "Stress & VaR" },
     { key: "risk:drawdown", label: "Drawdown" },
-    { key: "risk",          label: "Risk Rules" },
+    { key: "risk:rules",    label: "Risk Rules" },
   ]},
   { id: "lab", label: "Research Lab", icon: "lab", children: [
     { key: "backtest",       label: "Backtests" },

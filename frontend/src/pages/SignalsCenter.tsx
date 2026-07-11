@@ -18,8 +18,8 @@ const TABS = [
   { key: "strategies", label: "Strategies" },
 ];
 
-export default function SignalsCenter() {
-  const [tab, setTab] = useState("signals");
+export default function SignalsCenter({ initialTab = "signals" }: { initialTab?: string }) {
+  const [tab, setTab] = useState(initialTab);
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} />

@@ -51,18 +51,20 @@ const PAGES: Record<string, React.ComponentType> = {
   scan:      ScanCenter,
   settings:  Settings,
 
-  // Grouped-nav aliases → existing pages (sub-items that already have a home).
-  "trade:copilot":   TradeDesk,
-  "trade:orders":    TradeDesk,
-  "trade:positions": TradeDesk,
-  "trade:logs":      TradeDesk,
-  "strat:cards":     SignalsCenter,
+  // Grouped-nav aliases → existing pages, deep-linked to the relevant tab so
+  // each sub-item lands on its own view instead of a shared default.
+  "trade:copilot":   () => <TradeDesk initialTab="approvals" />,
+  "trade:orders":    () => <TradeDesk initialTab="signals" />,
+  "trade:positions": () => <TradeDesk initialTab="positions" />,
+  "trade:logs":      () => <TradeDesk initialTab="pnl" />,
+  "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
   "options:cc":      CspScreener,
   "options:wheel":   CspScreener,
   "options:flow":    OptionsFlow,
-  "risk:heat":       RiskCenter,
-  "risk:exposure":   RiskCenter,
-  "risk:drawdown":   RiskCenter,
+  "risk:heat":       () => <RiskCenter initialTab="monitor" />,
+  "risk:exposure":   () => <RiskCenter initialTab="monitor" />,
+  "risk:drawdown":   () => <RiskCenter initialTab="monitor" />,
+  "risk:rules":      () => <RiskCenter initialTab="guardrails" />,
 
   // Markets module
   "markets:heatmaps":   Heatmap,
