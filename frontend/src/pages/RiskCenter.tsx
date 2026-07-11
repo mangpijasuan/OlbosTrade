@@ -13,8 +13,8 @@ const TABS = [
   { key: "guardrails", label: "Guardrails" },
 ];
 
-export default function RiskCenter() {
-  const [tab, setTab] = useState("monitor");
+export default function RiskCenter({ initialTab = "monitor" }: { initialTab?: string }) {
+  const [tab, setTab] = useState(initialTab);
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} />

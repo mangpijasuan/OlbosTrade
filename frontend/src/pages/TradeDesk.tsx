@@ -397,9 +397,9 @@ function PnLBreakdown() {
 }
 
 // ── Main Trade Desk ────────────────────────────────────────────────────────────
-export default function TradeDesk() {
+export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab }) {
   const { positions, lastSignal, cycleLog, loading, runCycle } = usePaperTrade();
-  const [tab, setTab] = useState<Tab>("signals");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [trades, setTrades]       = useState<any[]>([]);
   const [tradesLoading, setTradesLoading] = useState(true);
 
