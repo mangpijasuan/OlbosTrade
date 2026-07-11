@@ -16,11 +16,11 @@ interface Row {
 
 const usd = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
 
-export default function IncomeMatrix() {
+export default function IncomeMatrix({ initialFilter = "all" }: { initialFilter?: "all" | "csp" | "cc" }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"all" | "csp" | "cc">("all");
+  const [filter, setFilter] = useState<"all" | "csp" | "cc">(initialFilter);
 
   const load = () => {
     fetch("/api/income-matrix?min_prob_otm=0.6&top=200")

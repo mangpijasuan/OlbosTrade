@@ -14,6 +14,8 @@ import CspScreener     from "./pages/CspScreener";          // Wheel & Income La
 import ScanCenter      from "./pages/ScanCenter";           // Options + Equity EV scan engines
 import Settings        from "./pages/Settings";             // Account, brokers, billing
 import OptionsFlow     from "./pages/OptionsFlow";           // Options flow (grouped-nav sub-item)
+import IncomeMatrix    from "./pages/IncomeMatrix";           // CSP + covered-call yield screener
+import OptionsChain    from "./pages/options/OptionsChain";  // Live calls/puts for a symbol
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
@@ -58,7 +60,8 @@ const PAGES: Record<string, React.ComponentType> = {
   "trade:positions": () => <TradeDesk initialTab="positions" />,
   "trade:logs":      () => <TradeDesk initialTab="pnl" />,
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
-  "options:cc":      CspScreener,
+  "options:chain":   OptionsChain,
+  "options:cc":      () => <IncomeMatrix initialFilter="cc" />,
   "options:wheel":   CspScreener,
   "options:flow":    OptionsFlow,
   "risk:heat":       () => <RiskCenter initialTab="monitor" />,
