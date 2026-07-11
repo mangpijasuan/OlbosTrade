@@ -5,7 +5,7 @@ Manual   : Signals generated, NO orders sent. Review in Trade Desk.
 Copilot  : Signals queued as pending approvals. User approves → order sent.
 Autopilot: Signals pass guardrails → order sent immediately.
 
-Persists across restarts via /tmp/olbosquant_execution_mode.json.
+Persists across restarts via /tmp/olbostrade_execution_mode.json.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-PERSIST_PATH = "/tmp/olbosquant_exec_mode.json"
+PERSIST_PATH = "/tmp/olbostrade_exec_mode.json"
 
 
 class ExecutionMode(str, Enum):

@@ -18,7 +18,7 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
 _SYSTEM = (
-    "You are OlbosQuant's research assistant for a retail quant trader. "
+    "You are OlbosTrade's research assistant for a retail quant trader. "
     "Answer ONLY from the DATA provided. If the data does not contain the answer, "
     "say so plainly. Be concise and specific; cite the numbers you use."
 )

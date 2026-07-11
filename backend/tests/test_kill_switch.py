@@ -87,7 +87,7 @@ async def test_kill_switch_reset_requires_auth_code(ks):
 async def test_kill_switch_reset_with_correct_code(ks, mock_scheduler):
     ks._engaged = True
     ks._scheduler = mock_scheduler
-    result = await ks.reset("OLBOSQUANT_MANUAL_RESET")
+    result = await ks.reset("OLBOSTRADE_MANUAL_RESET")
     assert result["reset"] is True
     assert ks.is_engaged is False
     mock_scheduler.resume.assert_called_once()

@@ -330,7 +330,7 @@ async def engage_kill_switch_ui(reason: str = "manual_ui"):
 async def reset_kill_switch(body: KillSwitchResetRequest):
     """
     Reset kill switch after manual review.
-    Requires authorization_code='OLBOSQUANT_MANUAL_RESET' to prevent accidents.
+    Requires authorization_code='OLBOSTRADE_MANUAL_RESET' to prevent accidents.
     """
     result = await kill_switch_service.reset(body.authorization_code)
     if not result.get("reset"):
@@ -441,7 +441,7 @@ async def get_reconciliation():
     """
     Broker-vs-DB position reconciliation status (non-raising).
 
-    Surfaces untracked broker positions (held at broker, no OlbosQuant record),
+    Surfaces untracked broker positions (held at broker, no OlbosTrade record),
     DB phantoms (open in DB, not at broker), and quantity mismatches so the UI
     can flag a "needs reconcile" state without halting trading.
     """

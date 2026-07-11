@@ -93,7 +93,7 @@ from app.core.config import settings
 logger = get_logger(__name__)
 
 app = FastAPI(
-    title="OlbosQuant",
+    title="OlbosTrade",
     version="4.0.0",
     description="Blessed prosperity through disciplined, rules-based quantitative trading.",
 )

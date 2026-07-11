@@ -162,7 +162,7 @@ class TradeRecorder:
             logger.critical(
                 "CRITICAL: TradeRecorder.record_fill FAILED — "
                 "broker fill for dispatch_id=%s is UNTRACKED in DB. "
-                "Position exists at broker but not in OlbosQuant records. "
+                "Position exists at broker but not in OlbosTrade records. "
                 "Manual reconciliation required. Error: %s",
                 dispatch_id, exc, exc_info=True,
             )

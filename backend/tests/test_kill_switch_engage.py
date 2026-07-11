@@ -103,7 +103,7 @@ async def test_reset_requires_authorization():
         await ks.engage("x")
         bad = await ks.reset("wrong-code")
         assert bad["reset"] is False and ks.is_engaged
-        good = await ks.reset("OLBOSQUANT_MANUAL_RESET")
+        good = await ks.reset("OLBOSTRADE_MANUAL_RESET")
     assert good["reset"] is True and not ks.is_engaged
 
 
@@ -198,5 +198,5 @@ async def test_reset_without_scheduler():
     ks.configure(_broker())   # no scheduler
     with patch("app.services.kill_switch.AsyncSessionLocal", return_value=_db_session()):
         await ks.engage("x")
-        out = await ks.reset("OLBOSQUANT_MANUAL_RESET")
+        out = await ks.reset("OLBOSTRADE_MANUAL_RESET")
     assert out["reset"] is True and not ks.is_engaged

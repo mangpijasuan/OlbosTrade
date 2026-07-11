@@ -148,7 +148,7 @@ function StatCell({ label, value, sub, color }: {
 
 function PositionRow({ pos }: { pos: any }) {
   const pnl = pos.unrealized_pnl ?? 0;
-  // Untracked = a broker holding OlbosQuant never opened (no DB record). Render
+  // Untracked = a broker holding OlbosTrade never opened (no DB record). Render
   // it muted and badged "UNTRACKED" so it is never mistaken for a managed trade.
   const untracked = pos.tracked === false;
   const pnlKnown = pos.unrealized_pnl != null;
@@ -215,7 +215,7 @@ export default function Dashboard() {
   const { positions, portfolio, greeks } = usePaperTrade();
   const { guardrailStatus, portfolioState } = useRisk();
 
-  // Managed = OlbosQuant-opened positions (tracked). Untracked = pre-existing
+  // Managed = OlbosTrade-opened positions (tracked). Untracked = pre-existing
   // broker holdings in the (shared paper) account that we did not open.
   const managedPositions   = positions.filter((p: any) => p.tracked !== false);
   const untrackedPositions = positions.filter((p: any) => p.tracked === false);
@@ -398,7 +398,7 @@ export default function Dashboard() {
                 color: "var(--amber)", background: "rgba(245,158,11,0.06)",
                 borderBottom: "1px solid var(--line-dim)",
               }}>
-                ⚠ {untrackedPositions.length} broker holding{untrackedPositions.length > 1 ? "s" : ""} not opened by OlbosQuant — review/reconcile in the paper account.
+                ⚠ {untrackedPositions.length} broker holding{untrackedPositions.length > 1 ? "s" : ""} not opened by OlbosTrade — review/reconcile in the paper account.
               </div>
             )}
             <table className="t-table">

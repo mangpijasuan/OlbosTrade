@@ -1,7 +1,7 @@
 """
 Account mode guard — fail-closed protection against trading the wrong account.
 
-OlbosQuant is configured for a trading mode via ``IBKR_TRADING_MODE`` (paper or
+OlbosTrade is configured for a trading mode via ``IBKR_TRADING_MODE`` (paper or
 live). But the *actual* account the IB Gateway logs into is determined by the
 gateway's own credentials/mode, which can drift from our config (e.g. the
 gateway is pointed at a LIVE account while we believe we're on paper). IBKR
@@ -35,7 +35,7 @@ def account_is_paper(account_id: str | None) -> bool:
 
 
 def configured_paper() -> bool:
-    """True if OlbosQuant is configured to trade paper (not live)."""
+    """True if OlbosTrade is configured to trade paper (not live)."""
     return settings.ibkr_trading_mode.lower() != "live"
 
 

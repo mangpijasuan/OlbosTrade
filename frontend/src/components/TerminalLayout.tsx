@@ -414,7 +414,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
             }}>
               <span style={{ color: "var(--brand)" }}>OLBOS</span>
               <span style={{ color: "var(--brand)" }}>&nbsp;</span>
-              <span style={{ color: "var(--ink)", fontWeight: 400 }}>QUANT</span>
+              <span style={{ color: "var(--ink)", fontWeight: 400 }}>TRADE</span>
             </span>
             <span style={{
               fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
@@ -786,7 +786,7 @@ function StatusBar({ page }: { page: string }) {
       <span id="broker-status-bar">IBKR GATEWAY</span>
       <span>SPY · QQQ · IWM · NVDA · AAPL</span>
       <div style={{ flex: 1 }} />
-      <span style={{ color: "var(--brand)", fontWeight: 700 }}>OlbosQuant v5.0</span>
+      <span style={{ color: "var(--brand)", fontWeight: 700 }}>OlbosTrade v5.0</span>
     </div>
   );
 }

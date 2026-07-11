@@ -1,4 +1,4 @@
-# OlbosQuant
+# OlbosTrade
 > *From Ancient Greek ὄλβος (olbos) — blessed prosperity through disciplined, rules-based quantitative trading.*
 
 > **Philosophy: Capital preservation first. Remove emotion. Rules are law.**
@@ -56,7 +56,7 @@ olbosquant/
 - Socket port must be **4002**
 - Add `127.0.0.1` to trusted IP addresses
 
-### Step 2 — Start OlbosQuant
+### Step 2 — Start OlbosTrade
 ```bash
 cd ~/Projects/olbosquant
 ./start.sh
