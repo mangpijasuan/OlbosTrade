@@ -19,9 +19,11 @@ const usd = (n: number) =>
 
 export default function OptionsFlow() {
   const [rows, setRows] = useState<FlowRow[]>([]);
-  const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ticker, setTicker] = useState("");
+  const [tickerInput, setTickerInput] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "call" | "put">("all");
 
   const load = () => {
     fetch("/api/options-flow?min_volume=200&ratio=2&top=150")
@@ -32,7 +34,6 @@ export default function OptionsFlow() {
       })
       .catch(() => setError("Failed to load options flow"))
       .finally(() => setLoading(false));
-    fetch("/api/options-flow/summary").then(r => r.json()).then(setSummary).catch(() => {});
   };
 
   useEffect(() => {
@@ -40,6 +41,24 @@ export default function OptionsFlow() {
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
   }, []);
+
+  const submitTicker = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTicker(tickerInput.trim().toUpperCase());
+  };
+
+  const shown = rows.filter(r =>
+    (ticker === "" || r.ticker === ticker) &&
+    (typeFilter === "all" || r.type === typeFilter.toUpperCase()));
+
+  // Stats reflect the current filtered view, not the whole watchlist.
+  const callCount = shown.filter(r => r.type === "CALL").length;
+  const putCount  = shown.filter(r => r.type === "PUT").length;
+  const totalCount = callCount + putCount;
+  const callPct = totalCount > 0 ? Math.round((callCount / totalCount) * 100) : null;
+  const putPct  = totalCount > 0 ? 100 - (callPct ?? 0) : null;
+  const callPremium = shown.filter(r => r.type === "CALL").reduce((s, r) => s + r.premium, 0);
+  const putPremium  = shown.filter(r => r.type === "PUT").reduce((s, r) => s + r.premium, 0);
 
   return (
     <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>
@@ -49,13 +68,40 @@ export default function OptionsFlow() {
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
           free snapshot · volume ≫ open interest · not a real-time OPRA tape
         </span>
-        {summary?.count != null && (
+
+        <form onSubmit={submitTicker} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input
+            value={tickerInput}
+            onChange={e => setTickerInput(e.target.value)}
+            placeholder="Ticker"
+            style={{
+              width: 80, fontFamily: "var(--mono)", fontSize: 12, textTransform: "uppercase",
+              background: "var(--bg-2)", border: "1px solid var(--line-dim)", color: "var(--ink)",
+              padding: "4px 8px",
+            }}
+          />
+          <button className="btn-t" type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Go</button>
+          {ticker && (
+            <button type="button" className="btn-t" style={{ padding: "4px 10px", fontSize: 10 }}
+              onClick={() => { setTicker(""); setTickerInput(""); }}>
+              Clear
+            </button>
+          )}
+        </form>
+
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["all", "call", "put"] as const).map(f => (
+            <button key={f} className={`btn-t ${f === typeFilter ? "active" : ""}`}
+              style={{ padding: "2px 10px", fontSize: 10 }} onClick={() => setTypeFilter(f)}>
+              {f === "all" ? "ALL" : f === "call" ? "CALLS" : "PUTS"}
+            </button>
+          ))}
+        </div>
+
+        {totalCount > 0 && (
           <div style={{ display: "flex", gap: 16, marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 11 }}>
-            <span style={{ color: "var(--green)" }}>CALLS {usd(summary.call_premium || 0)}</span>
-            <span style={{ color: "var(--red)" }}>PUTS {usd(summary.put_premium || 0)}</span>
-            <span style={{ color: (summary.bullish_ratio ?? 0.5) >= 0.5 ? "var(--green)" : "var(--red)" }}>
-              BULLISH {(((summary.bullish_ratio ?? 0.5) * 100)).toFixed(0)}%
-            </span>
+            <span style={{ color: "var(--green)" }}>CALLS {callCount} · {callPct}% · {usd(callPremium)}</span>
+            <span style={{ color: "var(--red)" }}>PUTS {putCount} · {putPct}% · {usd(putPremium)}</span>
           </div>
         )}
       </div>
@@ -68,9 +114,11 @@ export default function OptionsFlow() {
         <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-faint)", padding: 24 }}>
           Scanning option chains… (first load can take a few seconds)
         </div>
-      ) : rows.length === 0 ? (
+      ) : shown.length === 0 ? (
         <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-faint)", padding: 24 }}>
-          No unusual options activity right now (markets may be closed, or nothing above threshold).
+          {rows.length === 0
+            ? "No unusual options activity right now (markets may be closed, or nothing above threshold)."
+            : "No rows match the current ticker/type filter."}
         </div>
       ) : (
         <table className="t-table">
@@ -82,7 +130,7 @@ export default function OptionsFlow() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {shown.map((r, i) => (
               <tr key={i}>
                 <td className="mono" style={{ color: "var(--cyan)" }}>{r.ticker}</td>
                 <td className="mono" style={{ color: r.type === "CALL" ? "var(--green)" : "var(--red)", fontWeight: 600 }}>
