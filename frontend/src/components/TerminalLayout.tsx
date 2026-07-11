@@ -39,6 +39,8 @@ const ICONS: Record<string, string> = {
   data:       "M12 3c4.418 0 8 1.343 8 3s-3.582 3-8 3-8-1.343-8-3 3.582-3 8-3z M4 6v6c0 1.657 3.582 3 8 3s8-1.343 8-3V6 M4 12v6c0 1.657 3.582 3 8 3s8-1.343 8-3v-6",
   mode:       "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
   settings:   "M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z",
+  logout:     "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4 M16 17l5-5-5-5 M21 12H9",
+  help:       "M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3 M12 17h.01 M12 22a10 10 0 100-20 10 10 0 000 20z",
 };
 
 // Grouped navigation. A group is either a leaf (has `key`, navigates directly)
@@ -125,6 +127,29 @@ function TickerCell({ label, snap }: { label: string; snap: SnapShot }) {
         {pct !== null ? `${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(2)}%` : ""}
       </span>
     </>
+  );
+}
+
+// A single row in the account popover menu (Settings / Help / Log out).
+function AccountMenuItem({ icon, label, onClick, danger = false }: {
+  icon: string; label: string; onClick: () => void; danger?: boolean;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "9px 12px", background: hover ? "var(--bg-3)" : "transparent",
+        border: "none", cursor: "pointer", textAlign: "left",
+        color: danger ? "var(--red)" : "var(--ink)",
+      }}
+    >
+      <Icon d={ICONS[icon]} size={14} />
+      <span style={{ fontFamily: "var(--sans)", fontSize: 12 }}>{label}</span>
+    </button>
   );
 }
 
@@ -431,6 +456,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
   isMobile?: boolean;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   // Accordion state: which group section is expanded. Auto-opens the group that
   // owns the active page.
   const [openGroup, setOpenGroup] = useState<string | null>(() => groupIdForKey(active));
@@ -570,7 +596,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
       {/* Settings / account — pinned bottom, above kill switch */}
       <div style={{ flex: 1 }} />
 
-      {/* Account plate — avatar initials + name, opens Settings → Profile.
+      {/* Account plate — avatar initials + name, opens a small account menu.
           TODO: source from a real auth/user backend once one exists (see
           Settings.tsx's "presentational only" note); hardcoded for now. */}
       <div
@@ -579,13 +605,13 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         style={{ position: "relative", width: "100%" }}
       >
         <button
-          onClick={() => onNav("settings")}
-          title="Mangpi Jasuan — Settings"
+          onClick={() => setAccountMenuOpen(o => !o)}
+          title="Mangpi Jasuan — Account"
           style={{
             width: "100%", height: 44, display: "flex", alignItems: "center",
             justifyContent: showLabels ? "flex-start" : "center",
             paddingLeft: showLabels ? 14 : 0, gap: showLabels ? 10 : 0,
-            background: hovered === "account" ? "var(--bg-3)" : "transparent",
+            background: accountMenuOpen || hovered === "account" ? "var(--bg-3)" : "transparent",
             border: "none", borderTop: "1px solid var(--line-dim)",
             cursor: "pointer", overflow: "hidden", whiteSpace: "nowrap", transition: "all 0.1s",
           }}
@@ -609,7 +635,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
             </span>
           )}
         </button>
-        {!showLabels && hovered === "account" && (
+        {!showLabels && !accountMenuOpen && hovered === "account" && (
           <div style={{
             position: "absolute", left: 52, top: "50%", transform: "translateY(-50%)",
             background: "var(--bg-4)", border: "1px solid var(--line-dim)", padding: "4px 10px",
@@ -618,6 +644,40 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
           }}>
             Mangpi Jasuan
           </div>
+        )}
+
+        {/* Account menu — opens upward, anchored to the plate. On the collapsed
+            icon rail it opens to the right instead, like the hover tooltips. */}
+        {accountMenuOpen && (
+          <>
+            <div
+              onClick={() => setAccountMenuOpen(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 90 }}
+            />
+            <div style={{
+              position: "absolute",
+              ...(showLabels
+                ? { bottom: "100%", left: 8, right: 8, marginBottom: 4 }
+                : { bottom: 0, left: 52 }),
+              width: showLabels ? undefined : 200,
+              background: "var(--bg-4)", border: "1px solid var(--line-dim)",
+              borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+              zIndex: 100, overflow: "hidden",
+            }}>
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line-dim)" }}>
+                <div style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--ink)" }}>Mangpi Jasuan</div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
+                  mangpijasuan@zomiok.org
+                </div>
+              </div>
+              <AccountMenuItem icon="settings" label="Settings"
+                onClick={() => { setAccountMenuOpen(false); onNav("settings"); }} />
+              <AccountMenuItem icon="help" label="Help"
+                onClick={() => setAccountMenuOpen(false)} />
+              <AccountMenuItem icon="logout" label="Log out" danger
+                onClick={() => setAccountMenuOpen(false)} />
+            </div>
+          </>
         )}
       </div>
 
