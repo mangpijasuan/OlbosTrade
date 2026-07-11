@@ -177,7 +177,16 @@ function ModeChip({ label, on, onColor, onClick }: {
   );
 }
 
-function TickerStrip({ onToggle }: { onToggle: () => void }) {
+function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
+  onToggle: () => void; sidebarExpanded: boolean; isMobile: boolean;
+}) {
+  // The header's hamburger+logo block width must track the sidebar's actual
+  // rendered width so their right-side dividers stay aligned as it expands/
+  // collapses. On mobile the sidebar is an overlay (doesn't reserve layout
+  // space) so the header block keeps its natural, unconstrained width.
+  const showFullLogo = isMobile || sidebarExpanded;
+  const headerLeftWidth = isMobile ? undefined : (sidebarExpanded ? 232 : 48);
+
   const [time, setTime] = useState(new Date());
   const [spy,  setSpy]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
   const [qqq,  setQqq]  = useState<SnapShot>({ last_close: null, prev_close: null, change_pct: null });
@@ -369,42 +378,50 @@ function TickerStrip({ onToggle }: { onToggle: () => void }) {
       flexShrink: 0,
       overflow: "hidden",
     }}>
-      {/* Hamburger — pinned left, aligned to sidebar */}
-      <button
-        onClick={onToggle}
-        style={{
-          width: 48, height: "100%", flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "transparent", border: "none",
-          borderRight: "1px solid var(--line-dim)",
-          color: "var(--ink-faint)", cursor: "pointer",
-          transition: "color 0.12s",
-        }}
-        onMouseEnter={e => (e.currentTarget.style.color = "var(--cyan)")}
-        onMouseLeave={e => (e.currentTarget.style.color = "var(--ink-faint)")}
-        title="Toggle sidebar"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="2" y="3.5"  width="12" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="2" y="7.25" width="12" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="2" y="11"   width="12" height="1.5" rx="0.75" fill="currentColor"/>
-        </svg>
-      </button>
+      {/* Hamburger + logo — pinned left, width tracks the sidebar's own width
+          so this block's right divider stays aligned with the sidebar's. */}
+      <div style={{
+        display: "flex", alignItems: "center", flexShrink: 0,
+        width: headerLeftWidth, height: "100%",
+        borderRight: "1px solid var(--line-dim)",
+        transition: "width 0.18s ease",
+      }}>
+        <button
+          onClick={onToggle}
+          style={{
+            width: 48, height: "100%", flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "transparent", border: "none",
+            color: "var(--ink-faint)", cursor: "pointer",
+            transition: "color 0.12s",
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = "var(--cyan)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "var(--ink-faint)")}
+          title="Toggle sidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="3.5"  width="12" height="1.5" rx="0.75" fill="currentColor"/>
+            <rect x="2" y="7.25" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+            <rect x="2" y="11"   width="12" height="1.5" rx="0.75" fill="currentColor"/>
+          </svg>
+        </button>
 
-      {/* Logo — pinned left */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, padding: "0 16px 0 14px", borderRight: "1px solid var(--line-dim)" }}>
-        <span style={{
-          fontFamily: "'Georgia', 'Times New Roman', serif",
-          fontWeight: 700, fontSize: 17, letterSpacing: "0.06em", lineHeight: 1,
-        }}>
-          <span style={{ color: "var(--brand)" }}>OLBOS</span>
-          <span style={{ color: "var(--brand)" }}>&nbsp;</span>
-          <span style={{ color: "var(--ink)", fontWeight: 400 }}>QUANT</span>
-        </span>
-        <span style={{
-          fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
-          letterSpacing: "0.55em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1,
-        }}>TERMINAL</span>
+        {showFullLogo && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, overflow: "hidden", paddingRight: 12 }}>
+            <span style={{
+              fontFamily: "'Georgia', 'Times New Roman', serif",
+              fontWeight: 700, fontSize: 17, letterSpacing: "0.06em", lineHeight: 1, whiteSpace: "nowrap",
+            }}>
+              <span style={{ color: "var(--brand)" }}>OLBOS</span>
+              <span style={{ color: "var(--brand)" }}>&nbsp;</span>
+              <span style={{ color: "var(--ink)", fontWeight: 400 }}>QUANT</span>
+            </span>
+            <span style={{
+              fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
+              letterSpacing: "0.55em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1, whiteSpace: "nowrap",
+            }}>TERMINAL</span>
+          </div>
+        )}
       </div>
 
       {/* Marquee strip — scrolls continuously */}
@@ -793,7 +810,7 @@ export default function TerminalLayout({ children, activePage, onNav }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} />
+      <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <Sidebar
           active={activePage}
