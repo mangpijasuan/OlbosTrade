@@ -49,6 +49,15 @@ function Metric({ label, value, placeholder = true }: { label: string; value: st
   );
 }
 
+const PLAN_LIMITS: { feature: string; limit: string }[] = [
+  { feature: "Concurrent algos", limit: "5" },
+  { feature: "Open positions", limit: "25" },
+  { feature: "Broker connections", limit: "3" },
+  { feature: "Historical data", limit: "5 years" },
+  { feature: "Signal scans / day", limit: "500" },
+  { feature: "API rate", limit: "120 req/min" },
+];
+
 export default function Landing() {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -66,6 +75,7 @@ export default function Landing() {
             <NavLink href="#how">How It Works</NavLink>
             <NavLink href="#risk">Risk Controls</NavLink>
             <NavLink href="#track-record">Track Record</NavLink>
+            <NavLink href="#pricing">Pricing</NavLink>
           </nav>
           <div className="landing-nav-actions">
             <Link className="landing-signin" to="/terminal">Sign In</Link>
@@ -181,6 +191,38 @@ export default function Landing() {
               <Metric label="Trades evaluated" value="Demo data" />
               <Metric label="Maximum drawdown" value="Awaiting verified history" placeholder={false} />
               <Metric label="Risk-gate rejection rate" value="Awaiting verified history" placeholder={false} />
+            </div>
+          </div>
+        </section>
+
+        {/* ── Pricing ───────────────────────────────────────────────────── */}
+        <section className="landing-section" id="pricing">
+          <div className="landing-container">
+            <div className="landing-eyebrow">Pricing</div>
+            <h2 className="landing-h2">One plan, one price</h2>
+            <p className="landing-lede">
+              Onboarding is by request, not self-serve checkout — there is no billing system wired
+              up yet. This is the plan we intend to charge, shown honestly instead of hidden.
+            </p>
+            <div className="pricing-card">
+              <div className="pricing-card-head">
+                <div className="pricing-card-name">Pro</div>
+                <div className="pricing-card-price">
+                  <span className="pricing-card-amount">$49</span>
+                  <span className="pricing-card-period">/mo</span>
+                </div>
+              </div>
+              <div className="pricing-card-limits">
+                {PLAN_LIMITS.map((l) => (
+                  <div className="pricing-card-limit" key={l.feature}>
+                    <span className="landing-cell-body">{l.feature}</span>
+                    <span className="pricing-card-limit-value">{l.limit}</span>
+                  </div>
+                ))}
+              </div>
+              <a className="landing-cta-btn" href="mailto:mangpijasuan@zomiok.org?subject=Olbos%20access%20request">
+                Request access
+              </a>
             </div>
           </div>
         </section>
