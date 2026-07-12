@@ -6,6 +6,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import TradingModeSelector from "../components/TradingModeSelector";
+import SignalAttribution from "../components/SignalAttribution";
+import type { SignalAttributionData } from "../types/signal";
 import { api } from "../api/client";
 
 type ExecMode = "manual" | "copilot" | "autopilot";
@@ -179,13 +181,24 @@ function ApprovalsQueue() {
                     {s.ticker}
                   </span>
                   <Badge text={s.asset_type?.toUpperCase() || "EQUITY"} color="var(--ink-dim)" />
-                  <Badge text={s.action || s.strategy?.toUpperCase() || "BUY"} color={
-                    (s.action === "BUY" || s.action === "SELL_SPREAD") ? "var(--green)" : "var(--red)"
-                  } />
+                  <SignalAttribution
+                    data={{
+                      direction: s.action || s.strategy?.toUpperCase() || "BUY",
+                      source: s.spread ? "Options Scan Engine" : "Equity Scan Engine",
+                      // Repository verified: pending-approval payloads carry no
+                      // bar-timeframe field — left unknown rather than guessed.
+                      timeframe: null,
+                      confidence: typeof s.confidence === "number" ? s.confidence : null,
+                      updatedAt: s.queued_at ?? null,
+                      // This row is, by construction, in the Copilot approval
+                      // queue — it cannot reach the broker without a human
+                      // APPROVE click, so "advisory" is verified from this
+                      // page's own gating, not assumed.
+                      authority: "advisory",
+                    } as SignalAttributionData}
+                    size="sm"
+                  />
                   <Badge text={s.regime?.toUpperCase() || "—"} color="var(--amber)" />
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                    confidence: {((s.confidence || 0) * 100).toFixed(1)}%
-                  </span>
                 </div>
                 {s.spread && (
                   <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>

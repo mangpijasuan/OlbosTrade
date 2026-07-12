@@ -1,0 +1,124 @@
+import React from "react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+
+import GlobalRiskStatus from "../GlobalRiskStatus";
+import { api } from "../../api/client";
+
+vi.mock("../../api/client", () => ({
+  api: {
+    getExecutionMode: vi.fn(),
+    getTradeDeskKillSwitch: vi.fn(),
+    getKillSwitchStatus: vi.fn(),
+    getPortfolioState: vi.fn(),
+  },
+}));
+
+const mockedApi = api as unknown as {
+  getExecutionMode: ReturnType<typeof vi.fn>;
+  getTradeDeskKillSwitch: ReturnType<typeof vi.fn>;
+  getKillSwitchStatus: ReturnType<typeof vi.fn>;
+  getPortfolioState: ReturnType<typeof vi.fn>;
+};
+
+function mockBroker(body: object, ok = true) {
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    ok,
+    status: ok ? 200 : 500,
+    json: () => Promise.resolve(body),
+  }) as unknown as typeof fetch;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("GlobalRiskStatus", () => {
+  it("shows LIVE — IBKR when connected and not in paper mode", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: false, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: { daily_loss_pct: 0.01, max_daily_loss_pct: 0.02 } });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("LIVE — IBKR")).toBeInTheDocument());
+  });
+
+  it("shows PAPER environment distinctly from live", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "autopilot" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: {} });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("PAPER — IBKR")).toBeInTheDocument());
+    expect(screen.getByText("AUTOPILOT ON")).toBeInTheDocument();
+  });
+
+  it("shows AUTOPILOT OFF for manual/copilot mode", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "copilot" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: {} });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("AUTOPILOT OFF")).toBeInTheDocument());
+  });
+
+  it("shows KILL ARMED when the kill switch is engaged", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: true });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: {} });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("ARMED")).toBeInTheDocument());
+  });
+
+  it("shows KILL UNKNOWN rather than defaulting to not-armed when both kill-switch reads fail", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockRejectedValue(new Error("network error"));
+    mockedApi.getKillSwitchStatus.mockRejectedValue(new Error("network error"));
+    mockedApi.getPortfolioState.mockResolvedValue({ state: {} });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("UNKNOWN")).toBeInTheDocument());
+    // Must never render "NOT ARMED" (a safe-looking default) when the read failed.
+    expect(screen.queryByText("NOT ARMED")).not.toBeInTheDocument();
+  });
+
+  it("shows ENV DISCONNECTED when the broker reports not connected", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "disconnected", error: "socket closed" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: {} });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("DISCONNECTED")).toBeInTheDocument());
+  });
+
+  it("derives remaining risk budget only from two verified same-source values", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: { daily_loss_pct: 0.005, max_daily_loss_pct: 0.02 } });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("1.5%")).toBeInTheDocument());
+  });
+
+  it("shows risk budget as unavailable rather than guessing when the limit is missing", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    mockedApi.getPortfolioState.mockResolvedValue({ state: { daily_loss_pct: 0.005 } });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getAllByText("UNAVAILABLE").length).toBeGreaterThan(0));
+  });
+});

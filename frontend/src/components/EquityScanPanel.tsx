@@ -12,6 +12,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import WatchlistManager from "./WatchlistManager";
 import IBKRLiveControl from "./IBKRLiveControl";
+import SignalAttribution from "./SignalAttribution";
 import { useLiveData } from "../hooks/useLiveData";
 
 interface Candidate {
@@ -1033,20 +1034,21 @@ export default function EquityScanPanel() {
                     >
                       {cand.ticker}
                     </span>
-                    <span
-                      style={{
-                        color: cand.action === "BUY" ? "var(--green)" : "var(--red)",
-                        border: `1px solid ${cand.action === "BUY" ? "var(--green)" : "var(--red)"}`,
-                        borderRadius: 2,
-                        padding: "2px 6px",
-                        fontFamily: "var(--mono)",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        letterSpacing: "0.08em",
+                    <SignalAttribution
+                      data={{
+                        direction: cand.action,
+                        source: cand.pricing_source
+                          ? `Equity Scan Engine (${cand.pricing_source.replace(/_/g, " ")})`
+                          : "Equity Scan Engine",
+                        // Repository verified: equity candidates carry no
+                        // bar-timeframe field — left unknown, not guessed.
+                        timeframe: null,
+                        confidence: typeof cand.confidence === "number" ? cand.confidence : null,
+                        updatedAt: (cand as unknown as { last_update?: string }).last_update ?? null,
+                        authority: "advisory",
                       }}
-                    >
-                      {cand.action}
-                    </span>
+                      size="sm"
+                    />
                   </div>
                   <span
                     style={{

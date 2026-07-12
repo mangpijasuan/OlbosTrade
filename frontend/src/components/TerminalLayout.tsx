@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
+import GlobalRiskStatus from "./GlobalRiskStatus";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -426,7 +427,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
 
       {/* Marquee strip — scrolls continuously */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        <div style={{ display: "inline-flex", animation: "ticker-scroll 55s linear infinite" }}>
+        <div className="ticker-strip-marquee" style={{ display: "inline-flex", animation: "ticker-scroll 55s linear infinite" }}>
           {marqueeContent}{marqueeContent}
         </div>
       </div>
@@ -811,6 +812,7 @@ export default function TerminalLayout({ children, activePage, onNav }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
+      <GlobalRiskStatus />
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <Sidebar
           active={activePage}
