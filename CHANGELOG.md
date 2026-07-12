@@ -54,6 +54,19 @@ alongside this change for the full evidence table).
 - `index.tsx`: now renders a `BrowserRouter` with lazy-loaded `/` and
   `/terminal/*` routes instead of mounting `App` directly.
 
+### Fixed
+- **Terminal-wide crash on bad market data.** Found by running the frontend
+  against a real, locally-provisioned backend instead of only a stopped one:
+  `/api/market/snapshot/{symbol}` and `/api/market/regime` both omit their
+  normal fields on error (a documented yfinance-failure condition, see
+  `AUDIT_2026-06.md`), and the ticker strip called `.toFixed()` /
+  `.includes()` / `.replace()` on the resulting `undefined` with no error
+  boundary above it — blanking the *entire* terminal, not just the ticker.
+  Fixed the two unsafe field checks and wrapped the ticker strip, risk-status
+  bar, sidebar, and page content each in the existing `ErrorBoundary`
+  component so one panel failing can no longer take the others down.
+  Regression tests added.
+
 ### Known limitations
 - This repository has no authentication system (confirmed by direct
   inspection — no router, no session/token handling, a hardcoded account
