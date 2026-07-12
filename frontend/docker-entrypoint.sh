@@ -1,5 +1,5 @@
 #!/bin/sh
-# OlbosQuant frontend entrypoint.
+# OlbosTrade frontend entrypoint.
 #
 # Writes the nginx config at startup and — when DASH_USER / DASH_PASS are set —
 # password-protects the WHOLE app (dashboard + proxied /api) with HTTP Basic Auth.
@@ -12,7 +12,7 @@ set -e
 AUTH_BLOCK=""
 if [ -n "$DASH_USER" ] && [ -n "$DASH_PASS" ]; then
     htpasswd -bc /etc/nginx/.htpasswd "$DASH_USER" "$DASH_PASS" >/dev/null 2>&1
-    AUTH_BLOCK='auth_basic "OlbosQuant"; auth_basic_user_file /etc/nginx/.htpasswd;'
+    AUTH_BLOCK='auth_basic "OlbosTrade"; auth_basic_user_file /etc/nginx/.htpasswd;'
     echo "[entrypoint] Dashboard auth ENABLED (user: $DASH_USER)"
 else
     echo "[entrypoint] WARNING: DASH_USER/DASH_PASS not set — dashboard is OPEN to anyone who can reach this port."
@@ -28,11 +28,11 @@ server {
     # Healthcheck must stay open (container probe has no credentials).
     location = /health { auth_basic off; return 200 "ok"; add_header Content-Type text/plain; }
 
-    location /api         { proxy_pass http://olbosquant-backend:8000; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$remote_addr; }
-    location /docs        { proxy_pass http://olbosquant-backend:8000; }
-    location /openapi.json { proxy_pass http://olbosquant-backend:8000; }
+    location /api         { proxy_pass http://olbostrade-backend:8000; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$remote_addr; }
+    location /docs        { proxy_pass http://olbostrade-backend:8000; }
+    location /openapi.json { proxy_pass http://olbostrade-backend:8000; }
     location /ws {
-        proxy_pass http://olbosquant-backend:8000;
+        proxy_pass http://olbostrade-backend:8000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";

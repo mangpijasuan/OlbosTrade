@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# OlbosQuant — First-time start on Hetzner
+# OlbosTrade — First-time start on Hetzner
 #
 # Run this ONCE after cloning the repo and filling in backend/.env.prod
-# From /opt/olbosquant on the server:
+# From /opt/olbostrade on the server:
 #   bash deploy/hetzner/up.sh
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -35,7 +35,7 @@ fi
 echo "      Using network: $CADDY_NETWORK"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  OlbosQuant — Starting on Hetzner"
+echo "  OlbosTrade — Starting on Hetzner"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── 1. Build and start containers ─────────────────────────────────────────────
@@ -46,13 +46,13 @@ echo "      ✅ Containers started"
 # ── 2. Wait for backend to be healthy ─────────────────────────────────────────
 echo "[2/4] Waiting for backend to be ready (up to 90s)..."
 for i in $(seq 1 30); do
-  if docker exec olbosquant-backend curl -fsS http://127.0.0.1:8000/api/guardrails/status > /dev/null 2>&1; then
+  if docker exec olbostrade-backend curl -fsS http://127.0.0.1:8000/api/guardrails/status > /dev/null 2>&1; then
     echo "      ✅ Backend healthy"
     break
   fi
   if [[ $i -eq 30 ]]; then
     echo "      ❌ Backend did not start in time"
-    echo "         Check logs: docker logs olbosquant-backend"
+    echo "         Check logs: docker logs olbostrade-backend"
     exit 1
   fi
   sleep 3
@@ -60,21 +60,22 @@ done
 
 # ── 3. Run database migrations ────────────────────────────────────────────────
 echo "[3/4] Running database migrations..."
-docker exec olbosquant-backend python3 -m alembic upgrade head
+docker exec olbostrade-backend python3 -m alembic upgrade head
 echo "      ✅ Migrations applied"
 
-# ── 4. Add OlbosQuant to Caddy ────────────────────────────────────────────────
+# ── 4. Add OlbosTrade to Caddy ────────────────────────────────────────────────
 echo "[4/4] Caddy configuration..."
 CADDYFILE=/opt/olbosterminal/docker/Caddyfile
 
-if grep -q "olbosquant-backend" "$CADDYFILE" 2>/dev/null; then
-  echo "      ✅ Caddy already configured for OlbosQuant"
+if grep -q "olbostrade-backend" "$CADDYFILE" 2>/dev/null; then
+  echo "      ✅ Caddy already configured for OlbosTrade"
 else
   echo ""
-  echo "  ⚠️  ACTION REQUIRED — add OlbosQuant to Caddy:"
+  echo "  ⚠️  ACTION REQUIRED — update Caddy for the renamed containers:"
   echo ""
   echo "  Edit: $CADDYFILE"
-  echo "  Add this block (replace trading.yourdomain.com with your subdomain):"
+  echo "  Replace any olbosquant-backend/olbosquant-frontend entries with the"
+  echo "  block below (replace trading.yourdomain.com with your subdomain):"
   echo ""
   cat deploy/hetzner/Caddyfile.snippet
   echo ""
@@ -84,9 +85,9 @@ fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✅ OlbosQuant is running"
+echo "  ✅ OlbosTrade is running"
 echo ""
 echo "  Next: add the Caddyfile block above,"
 echo "  point trading.yourdomain.com → this server's IP,"
 echo "  then open https://trading.yourdomain.com"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

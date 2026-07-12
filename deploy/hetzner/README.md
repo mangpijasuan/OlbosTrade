@@ -1,6 +1,6 @@
-# OlbosQuant — Deploy on Hetzner (alongside olbos app)
+# OlbosTrade — Deploy on Hetzner (alongside olbos app)
 
-Runs OlbosQuant on the **same Hetzner server** as the olbos app.
+Runs OlbosTrade on the **same Hetzner server** as the olbos app.
 Caddy (already running in olbos) handles HTTPS for both — no second reverse proxy needed.
 
 ## Architecture
@@ -11,14 +11,19 @@ Internet
     ▼
  Caddy (olbos-caddy container, ports 80/443)
     ├── olbos.yourdomain.com      → olbos-backend / olbos-frontend
-    └── trading.yourdomain.com   → olbosquant-backend / olbosquant-frontend
+    └── trading.yourdomain.com   → olbostrade-backend / olbostrade-frontend
                                        │
-                                  olbosquant-db (postgres)
-                                  olbosquant-redis
+                                  olbostrade-db (postgres)
+                                  olbostrade-redis
 ```
 
-OlbosQuant joins the `olbos_default` Docker network so Caddy can reach it.
-Its database and Redis are isolated on `olbosquant_internal` — separate from olbos.
+OlbosTrade joins the `olbos_default` Docker network so Caddy can reach it.
+Its database and Redis are isolated on `olbostrade_internal` — separate from olbos.
+
+NOTE: the Postgres database itself keeps its original name/user/data volume
+(`olbosquantdb` / `olbosquant` / `olbosquant_pgdata`) — only the Docker
+container, network, and directory names were rebranded. See the comment at
+the top of `docker-compose.hetzner.yml` for why.
 
 ---
 
@@ -29,11 +34,11 @@ Its database and Redis are isolated on `olbosquant_internal` — separate from o
 ssh root@<YOUR_HETZNER_IP>
 ```
 
-### 2. Clone OlbosQuant
+### 2. Clone OlbosTrade
 ```bash
 cd /opt
-git clone https://github.com/mangpijasuan/OlbosQuant.git olbosquant
-cd olbosquant
+git clone https://github.com/mangpijasuan/OlbosTrade.git olbostrade
+cd olbostrade
 ```
 
 ### 3. Create the env file
@@ -48,6 +53,9 @@ Fill in these required values:
 | `OLBOSQUANT_DB_PASSWORD` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `OLBOS_API_KEY` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 
+`OLBOSQUANT_DB_PASSWORD` keeps its original name (matches the unchanged
+Postgres user/db — see the note above); it is NOT `OLBOSTRADE_DB_PASSWORD`.
+
 Leave `DATABASE_URL` and `REDIS_URL` blank — docker-compose fills them in.
 
 ### 4. Add a DNS record
@@ -59,7 +67,7 @@ trading.yourdomain.com  →  <YOUR_HETZNER_IP>
 
 Wait ~60 seconds for DNS to propagate.
 
-### 5. Start OlbosQuant
+### 5. Start OlbosTrade
 ```bash
 bash deploy/hetzner/up.sh
 ```
@@ -69,18 +77,18 @@ The script will:
 - Run database migrations
 - Print the Caddyfile block you need to add
 
-### 6. Add OlbosQuant to Caddy
+### 6. Add OlbosTrade to Caddy
 
 The script prints exactly what to add. Manually:
 ```bash
-nano /opt/olbos/docker/Caddyfile
+nano /opt/olbosterminal/docker/Caddyfile
 ```
 
 Add the block from `deploy/hetzner/Caddyfile.snippet` (replace `trading.yourdomain.com`).
 
 Then reload Caddy (no downtime for the olbos app):
 ```bash
-docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile
+docker exec olbosterminal-caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
 ### 7. Verify
@@ -96,7 +104,7 @@ Open **https://trading.yourdomain.com** in your browser.
 ## Updating after a code change
 
 ```bash
-cd /opt/olbosquant
+cd /opt/olbostrade
 bash deploy/hetzner/update.sh
 ```
 
@@ -108,8 +116,8 @@ This pulls latest code, rebuilds, restarts, and runs any new migrations.
 
 ```bash
 # View live logs
-docker logs olbosquant-backend -f
-docker logs olbosquant-frontend -f
+docker logs olbostrade-backend -f
+docker logs olbostrade-frontend -f
 
 # Check all container status
 docker compose -f docker-compose.hetzner.yml ps
@@ -118,20 +126,20 @@ docker compose -f docker-compose.hetzner.yml ps
 docker compose -f docker-compose.hetzner.yml down
 
 # Open a shell in backend
-docker exec -it olbosquant-backend bash
+docker exec -it olbostrade-backend bash
 
 # Run a migration manually
-docker exec olbosquant-backend python3 -m alembic upgrade head
+docker exec olbostrade-backend python3 -m alembic upgrade head
 
-# Check database
-docker exec -it olbosquant-db psql -U olbosquant -d olbosquantdb
+# Check database (user/db name unchanged — see note above)
+docker exec -it olbostrade-db psql -U olbosquant -d olbosquantdb
 ```
 
 ---
 
 ## IBKR Gateway (Docker)
 
-OlbosQuant talks to IBKR through the [gnzsnz/ib-gateway](https://github.com/gnzsnz/ib-gateway-docker) image via `ib_insync` (socket API, not Client Portal).
+OlbosTrade talks to IBKR through the [gnzsnz/ib-gateway](https://github.com/gnzsnz/ib-gateway-docker) image via `ib_insync` (socket API, not Client Portal).
 
 ### Start the gateway (same server)
 
@@ -164,13 +172,13 @@ After gateway restart, approve **2FA** on the IBKR mobile app if prompted. Check
 
 ```bash
 docker logs ibkr-gateway --tail 30    # expect "Login has completed"
-docker logs olbosquant-backend --tail 20   # expect "Broker connected successfully"
+docker logs olbostrade-backend --tail 20   # expect "Broker connected successfully"
 ```
 
 Test from the backend container:
 
 ```bash
-docker exec olbosquant-backend python3 -c "
+docker exec olbostrade-backend python3 -c "
 import asyncio, os
 from ib_insync import IB
 async def t():
@@ -188,10 +196,10 @@ asyncio.run(t())
 
 | Container | RAM |
 |-----------|-----|
-| olbosquant-backend | ~400–800 MB |
-| olbosquant-frontend | ~100 MB |
-| olbosquant-db | ~150–300 MB |
-| olbosquant-redis | ~50 MB |
+| olbostrade-backend | ~400–800 MB |
+| olbostrade-frontend | ~100 MB |
+| olbostrade-db | ~150–300 MB |
+| olbostrade-redis | ~50 MB |
 | **Total** | **~700 MB – 1.3 GB** |
 
 Your existing olbos app uses ~2–3 GB.

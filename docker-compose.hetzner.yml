@@ -1,12 +1,19 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# OlbosQuant — Hetzner production stack
+# OlbosTrade — Hetzner production stack
 #
 # Runs ALONGSIDE the existing olbos app on the same server.
 # Caddy (already running in olbos) handles HTTPS for both apps.
-# OlbosQuant joins the olbos Docker network so Caddy can reach it.
+# OlbosTrade joins the olbos Docker network so Caddy can reach it.
 #
-# Usage — on the server inside /opt/olbosquant:
+# Usage — on the server inside /opt/olbostrade:
 #   bash deploy/hetzner/up.sh
+#
+# NOTE on the DB service: container/network names below were renamed from the
+# old "olbosquant" branding, but POSTGRES_USER/POSTGRES_DB/the data volume
+# name were deliberately LEFT UNCHANGED (still olbosquant/olbosquantdb/
+# olbosquant_pgdata). Renaming those would need a live ALTER DATABASE/ALTER
+# USER or a dump+restore; keeping them means this compose file mounts the
+# exact same volume with the exact same data — no migration required.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 services:
@@ -15,17 +22,17 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: olbosquant-backend
+    container_name: olbostrade-backend
     restart: unless-stopped
     env_file:
       - backend/.env.prod
     environment:
-      DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbosquant-db:5432/olbosquantdb
+      DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbostrade-db:5432/olbosquantdb
     depends_on:
-      olbosquant-db:
+      olbostrade-db:
         condition: service_healthy
     networks:
-      - olbosquant_internal
+      - olbostrade_internal
       - olbos_default        # joins existing Caddy network
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/guardrails/status || exit 1"]
@@ -51,10 +58,10 @@ services:
       args:
         VITE_API_URL: ""
         VITE_WS_URL: ""
-    container_name: olbosquant-frontend
+    container_name: olbostrade-frontend
     restart: unless-stopped
     environment:
-      - BACKEND_URL=http://olbosquant-backend:8000
+      - BACKEND_URL=http://olbostrade-backend:8000
       # Set DASH_USER/DASH_PASS in backend/.env.prod to password-protect the whole
       # dashboard + API (HTTP Basic Auth). Leave unset to serve open (NOT advised
       # when exposed by public IP).
@@ -69,7 +76,7 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - olbosquant_internal
+      - olbostrade_internal
       - olbos_default        # joins existing Caddy network
     deploy:
       resources:
@@ -82,9 +89,9 @@ services:
         max-size: "20m"
         max-file: "3"
 
-  olbosquant-db:
+  olbostrade-db:
     image: postgres:16-alpine
-    container_name: olbosquant-db
+    container_name: olbostrade-db
     restart: unless-stopped
     environment:
       POSTGRES_USER:     olbosquant
@@ -93,7 +100,7 @@ services:
     volumes:
       - olbosquant_pgdata:/var/lib/postgresql/data
     networks:
-      - olbosquant_internal
+      - olbostrade_internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U olbosquant -d olbosquantdb"]
       interval: 5s
@@ -114,7 +121,7 @@ volumes:
   olbosquant_archive:
 
 networks:
-  olbosquant_internal:
+  olbostrade_internal:
     driver: bridge
   olbos_default:
     external: true

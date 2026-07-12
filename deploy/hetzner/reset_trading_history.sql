@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- OlbosQuant — reset trading / execution history
+-- OlbosTrade — reset trading / execution history
 --
 -- Wipes ALL recorded live trades, their journal entries, DB-tracked positions, and
 -- the risk state that the guardrails rehydrate from (consecutive losses, cooling-off
@@ -9,7 +9,7 @@
 -- What it does NOT touch:
 --   • backtest_runs / market_snapshots / signal_scores  (backtest + ML history)
 --   • options_flow                                       (options-intelligence data)
---   • broker positions at IBKR                           (this only clears OlbosQuant's
+--   • broker positions at IBKR                           (this only clears OlbosTrade's
 --                                                          DB — close real positions in
 --                                                          IB Gateway yourself first)
 --

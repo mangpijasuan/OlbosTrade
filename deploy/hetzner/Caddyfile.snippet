@@ -1,19 +1,19 @@
 # ── Add this block to /opt/olbosterminal/docker/Caddyfile on the server ───────
-# It adds OlbosQuant as a second site on the same Caddy instance.
+# It adds OlbosTrade as a second site on the same Caddy instance.
 # Replace trading.yourdomain.com with your actual subdomain.
 
 trading.yourdomain.com {
 	@api path /api* /docs* /openapi.json /redoc*
 	handle @api {
-		reverse_proxy olbosquant-backend:8000
+		reverse_proxy olbostrade-backend:8000
 	}
 
 	@ws path /ws*
 	handle @ws {
-		reverse_proxy olbosquant-backend:8000
+		reverse_proxy olbostrade-backend:8000
 	}
 
 	handle {
-		reverse_proxy olbosquant-frontend:80
+		reverse_proxy olbostrade-frontend:80
 	}
 }
