@@ -410,9 +410,11 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
           <div style={{ display: "flex", flexDirection: "column", gap: 2, overflow: "hidden", paddingRight: 12 }}>
             <span style={{
               fontFamily: "'Georgia', 'Times New Roman', serif",
-              fontWeight: 700, fontSize: 17, letterSpacing: "0.06em", lineHeight: 1, whiteSpace: "nowrap",
+              fontWeight: 400, fontSize: 17, letterSpacing: "0.01em", lineHeight: 1, whiteSpace: "nowrap",
             }}>
-              <span style={{ color: "var(--brand)" }}>OLBOS</span>
+              {/* Matches the marketing site's wordmark treatment — same
+                  weight/spacing/phosphor glow, see olbos.trade header. */}
+              <span style={{ color: "var(--brand)", textShadow: "0 0 10px rgba(212,175,55,.3)" }}>OLBOS</span>
             </span>
             <span style={{
               fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
