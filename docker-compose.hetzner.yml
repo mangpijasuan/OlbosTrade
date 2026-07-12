@@ -12,8 +12,15 @@
 # old "olbosquant" branding, but POSTGRES_USER/POSTGRES_DB/the data volume
 # name were deliberately LEFT UNCHANGED (still olbosquant/olbosquantdb/
 # olbosquant_pgdata). Renaming those would need a live ALTER DATABASE/ALTER
-# USER or a dump+restore; keeping them means this compose file mounts the
-# exact same volume with the exact same data — no migration required.
+# USER or a dump+restore.
+#
+# IMPORTANT — the pgdata volume is pinned with `external: true` + an explicit
+# `name:` below, pointing at the volume Compose actually created back when
+# this directory was named /opt/olbosquant (Compose prefixes unpinned volume
+# names with a project name derived from the directory, so renaming the
+# directory silently produces a DIFFERENT, empty volume unless pinned like
+# this). `external: true` also makes `docker compose up` fail loudly if that
+# volume doesn't exist, instead of silently creating a fresh empty one.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 services:
@@ -118,6 +125,8 @@ services:
 
 volumes:
   olbosquant_pgdata:
+    external: true
+    name: olbosquant_olbosquant_pgdata   # the real volume — see NOTE above
   olbosquant_archive:
 
 networks:
