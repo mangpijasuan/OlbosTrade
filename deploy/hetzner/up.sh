@@ -29,7 +29,7 @@ CADDY_NETWORK=$(docker network ls --format '{{.Name}}' | grep -E '^docker_defaul
 if [[ -z "$CADDY_NETWORK" ]]; then
   echo "❌  Docker network not found."
   echo "    Make sure the OlbosTerminal app is running first:"
-  echo "    cd /opt/olbosterminal && bash deploy/hetzner/up.sh"
+  echo "    cd /root/OlbosTerminal && bash deploy/hetzner/up.sh"
   exit 1
 fi
 echo "      Using network: $CADDY_NETWORK"
@@ -64,8 +64,13 @@ docker exec olbostrade-backend python3 -m alembic upgrade head
 echo "      ✅ Migrations applied"
 
 # ── 4. Add OlbosTrade to Caddy ────────────────────────────────────────────────
+# NOTE: the host path and container name for the sibling Caddy stack have
+# varied across servers/setups in practice. The values below are a best
+# guess — if `docker exec olbos-caddy ...` fails, find the real ones with:
+#   docker ps --format '{{.Names}}' | grep -i caddy
+#   docker inspect <that-name> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
 echo "[4/4] Caddy configuration..."
-CADDYFILE=/opt/olbosterminal/docker/Caddyfile
+CADDYFILE=/root/OlbosTerminal/docker/Caddyfile
 
 if grep -q "olbostrade-backend" "$CADDYFILE" 2>/dev/null; then
   echo "      ✅ Caddy already configured for OlbosTrade"
@@ -74,13 +79,15 @@ else
   echo "  ⚠️  ACTION REQUIRED — update Caddy for the renamed containers:"
   echo ""
   echo "  Edit: $CADDYFILE"
+  echo "  (if that path doesn't exist, see the NOTE above this section in"
+  echo "  deploy/hetzner/up.sh for how to find the real one)"
   echo "  Replace any olbosquant-backend/olbosquant-frontend entries with the"
   echo "  block below (replace trading.yourdomain.com with your subdomain):"
   echo ""
   cat deploy/hetzner/Caddyfile.snippet
   echo ""
   echo "  Then reload Caddy:"
-  echo "    cd /opt/olbosterminal && docker exec olbosterminal-caddy caddy reload --config /etc/caddy/Caddyfile"
+  echo "    docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile"
 fi
 
 echo ""

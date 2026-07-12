@@ -1,4 +1,7 @@
-# ── Add this block to /opt/olbosterminal/docker/Caddyfile on the server ───────
+# ── Add this block to the Caddyfile bind-mounted into the sibling Caddy
+# container (commonly /root/OlbosTerminal/docker/Caddyfile, but verify with
+# `docker inspect <caddy-container> --format '{{range .Mounts}}...'` —
+# this path is NOT guaranteed to match on every server).
 # It adds OlbosTrade as a second site on the same Caddy instance.
 # Replace trading.yourdomain.com with your actual subdomain.
 

@@ -81,14 +81,22 @@ The script will:
 
 The script prints exactly what to add. Manually:
 ```bash
-nano /opt/olbosterminal/docker/Caddyfile
+nano /root/OlbosTerminal/docker/Caddyfile
+```
+
+If that path doesn't exist on your server, find the real one — the host
+path and container name for the sibling Caddy stack are NOT guaranteed to
+match the docs (verified the hard way during the Hetzner infra migration):
+```bash
+docker ps --format '{{.Names}}' | grep -i caddy
+docker inspect <name-from-above> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
 ```
 
 Add the block from `deploy/hetzner/Caddyfile.snippet` (replace `trading.yourdomain.com`).
 
 Then reload Caddy (no downtime for the olbos app):
 ```bash
-docker exec olbosterminal-caddy caddy reload --config /etc/caddy/Caddyfile
+docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
 ### 7. Verify
