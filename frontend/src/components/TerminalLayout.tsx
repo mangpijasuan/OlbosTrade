@@ -13,6 +13,7 @@
 import React, { useState, useEffect } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import GlobalRiskStatus from "./GlobalRiskStatus";
+import ErrorBoundary from "./ErrorBoundary";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -115,8 +116,14 @@ function groupIdForKey(key: string): string | null {
 type SnapShot = { last_close: number | null; prev_close: number | null; change_pct: number | null };
 
 function TickerCell({ label, snap }: { label: string; snap: SnapShot }) {
-  const price = snap.last_close;
-  const pct   = snap.change_pct;
+  // Snapshot fields come back `undefined` (not `null`) whenever the backend's
+  // market-data payload errors out (e.g. yfinance failure — a real,
+  // documented condition, see AUDIT_2026-06.md). A `!== null` check treats
+  // `undefined` as present and crashes the whole app on `.toFixed()`; use
+  // `typeof === "number"` so any missing/malformed value renders as "—"
+  // instead of taking down the terminal shell.
+  const price = typeof snap.last_close === "number" ? snap.last_close : null;
+  const pct   = typeof snap.change_pct === "number" ? snap.change_pct : null;
   const up    = pct !== null && pct >= 0;
   return (
     <>
@@ -350,7 +357,13 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
       </>}
       <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>MODE</span>
       <span className={`mode-badge ${mode}`} style={{ marginRight: 20 }}>{mode}</span>
-      {regime && <>
+      {/* Guard on regime.regime specifically, not just the object: a partial
+          or error payload (e.g. `{}`) is still a truthy object but has no
+          `.regime` string, and `.includes()`/`.replace()` on `undefined`
+          crashed the whole ticker strip with no error boundary catching it
+          (see AUDIT_2026-06.md re: market-data failures being a real
+          condition, and the identical bug fixed in TickerCell above). */}
+      {regime?.regime && <>
         {sep}
         <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>REGIME</span>
         <span style={{
@@ -811,15 +824,21 @@ export default function TerminalLayout({ children, activePage, onNav }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
-      <GlobalRiskStatus />
+      <ErrorBoundary label="Ticker strip">
+        <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
+      </ErrorBoundary>
+      <ErrorBoundary label="Capital-at-risk status">
+        <GlobalRiskStatus />
+      </ErrorBoundary>
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
-        <Sidebar
-          active={activePage}
-          onNav={handleNav}
-          expanded={sidebarExpanded}
-          isMobile={isMobile}
-        />
+        <ErrorBoundary label="Navigation">
+          <Sidebar
+            active={activePage}
+            onNav={handleNav}
+            expanded={sidebarExpanded}
+            isMobile={isMobile}
+          />
+        </ErrorBoundary>
         {/* Tap-away backdrop when the overlay sidebar is open on mobile */}
         {isMobile && sidebarExpanded && (
           <div
@@ -833,7 +852,9 @@ export default function TerminalLayout({ children, activePage, onNav }: {
           background: "var(--bg)",
           minWidth: 0,   // allow children to shrink instead of forcing overflow
         }}>
-          {children}
+          <ErrorBoundary label="Page content">
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
       <StatusBar page={activePage} />
