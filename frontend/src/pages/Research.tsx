@@ -622,7 +622,7 @@ export default function Research() {
 
         <div style={{ borderTop: "1px solid var(--line-dim)", background: "var(--bg-1)" }}>
           <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-            <span className="panel-title">OlbosTrade Operating Doctrine</span>
+            <span className="panel-title">Olbos Operating Doctrine</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 0 }}>
             {[
