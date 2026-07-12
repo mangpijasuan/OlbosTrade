@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# OlbosQuant — reset trading / execution history (Hetzner)
+# OlbosTrade — reset trading / execution history (Hetzner)
 #
 # Clears all recorded live trades, journal entries, DB positions, and guardrail /
 # EmotionGuard risk state so win rate, drawdown and P&L start from a clean slate.
 #
-# Usage (on the server, from the repo root /opt/olbosquant):
+# Usage (on the server, from the repo root /opt/olbostrade):
 #   bash deploy/hetzner/reset_trading_history.sh          # prompts for confirmation
 #   bash deploy/hetzner/reset_trading_history.sh --yes    # no prompt (scripted)
 #
-# Safe to run while the stack is up. It only clears OlbosQuant's database — it does
+# Safe to run while the stack is up. It only clears OlbosTrade's database — it does
 # NOT touch your real IBKR positions. Close any open positions in IB Gateway first
 # if you want the broker flat too.
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-DB_CONTAINER="olbosquant-db"
+# DB_USER/DB_NAME deliberately unchanged — see docker-compose.hetzner.yml note.
+DB_CONTAINER="olbostrade-db"
 DB_USER="olbosquant"
 DB_NAME="olbosquantdb"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,4 +55,4 @@ psql -v ON_ERROR_STOP=1 < "${SQL_FILE}"
 echo
 echo "Done. Trading history cleared."
 echo "Tip: restart the backend so any in-memory execution log resets too:"
-echo "  docker restart olbosquant-backend"
+echo "  docker restart olbostrade-backend"

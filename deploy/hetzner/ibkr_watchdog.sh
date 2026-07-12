@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# OlbosQuant — IB Gateway watchdog
+# OlbosTrade — IB Gateway watchdog
 #
 # The gnzsnz/ib-gateway container can stay "Up" while the IB Gateway app inside it
 # stops serving its API port (the classic IBKR daily-restart hang). When that
@@ -20,7 +20,7 @@ VERBOSE=0
 [ "${1:-}" = "--verbose" ] && VERBOSE=1
 
 GATEWAY="ibkr-gateway"
-BACKEND="olbosquant-backend"
+BACKEND="olbostrade-backend"
 GW_HOST="ibkr-gateway"          # docker service name the backend connects to
 GW_PORT="4004"
 PROBE_CLIENT_ID="99"            # distinct from the app's clientId to avoid clashes

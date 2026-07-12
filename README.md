@@ -77,7 +77,7 @@ The script will:
 Expected output:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  OlbosQuant Health Check
+  OlbosTrade Health Check
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Backend  ✅  running
   Broker   ✅  connected (PAPER)

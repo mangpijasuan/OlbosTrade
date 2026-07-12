@@ -24,19 +24,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /bin/bash olbosquant
+    && useradd --create-home --shell /bin/bash olbostrade
 
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
 # Copy application code
-COPY --chown=olbosquant:olbosquant . .
+COPY --chown=olbostrade:olbostrade . .
 
 # Create directories the app writes to
 RUN mkdir -p /app/ml/model_registry /app/logs \
-    && chown -R olbosquant:olbosquant /app/ml /app/logs
+    && chown -R olbostrade:olbostrade /app/ml /app/logs
 
-USER olbosquant
+USER olbostrade
 
 EXPOSE 8000
 

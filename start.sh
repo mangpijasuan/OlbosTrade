@@ -1,15 +1,15 @@
 #!/bin/bash
-# OlbosQuant startup script
+# OlbosTrade startup script
 # Run this once before market open: ./start.sh
 # Or set it up as a launchd service (see README)
 
 set -e
-PROJECT="/Users/mangpijasuan/Projects/olbosquant"
+PROJECT="/Users/mangpijasuan/Projects/olbostrade"
 LOG_DIR="$PROJECT/logs"
 mkdir -p "$LOG_DIR"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  OlbosQuant — System Startup"
+echo "  OlbosTrade — System Startup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── 1. Check IB Gateway / TWS is reachable ───────────────────────────────────
@@ -77,7 +77,7 @@ SPY_PRICE=$(echo "$SPY" | python3 -c "import sys,json; d=json.load(sys.stdin); p
 echo "✅ DONE"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✅ OlbosQuant is LIVE"
+echo "  ✅ OlbosTrade is LIVE"
 echo "  Broker : $BROKER_STATUS (IBKR paper)"
 echo "  SPY    : \$$SPY_PRICE"
 echo "  UI     : http://localhost:3000"

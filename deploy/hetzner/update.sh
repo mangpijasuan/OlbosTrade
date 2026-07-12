@@ -33,9 +33,9 @@ echo "      ✅ Containers restarted"
 echo "[4/4] Running migrations..."
 # Wait briefly for backend to come up
 sleep 5
-docker exec olbosquant-backend python3 -m alembic upgrade head
+docker exec olbostrade-backend python3 -m alembic upgrade head
 echo "      ✅ Migrations applied"
 
 echo ""
 echo "  ✅ Update complete"
-echo "     docker logs olbosquant-backend -f   ← watch logs"
+echo "     docker logs olbostrade-backend -f   ← watch logs"

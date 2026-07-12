@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick health check — run anytime to see system status
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  OlbosQuant Health Check"
+echo "  OlbosTrade Health Check"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Backend
