@@ -60,6 +60,21 @@ export default function OptionsFlow() {
   const callPremium = shown.filter(r => r.type === "CALL").reduce((s, r) => s + r.premium, 0);
   const putPremium  = shown.filter(r => r.type === "PUT").reduce((s, r) => s + r.premium, 0);
 
+  // Top 3 tickers by total premium, computed separately for calls and puts
+  // (a ticker can appear in both lists — e.g. NVDA heavy on calls, light on puts).
+  const topByTicker = (type: "CALL" | "PUT") => {
+    const totals = new Map<string, number>();
+    for (const r of shown) {
+      if (r.type !== type) continue;
+      totals.set(r.ticker, (totals.get(r.ticker) ?? 0) + r.premium);
+    }
+    return [...totals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+  };
+  const topCalls = topByTicker("CALL");
+  const topPuts  = topByTicker("PUT");
+
   return (
     <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>
       {/* Header / summary */}
@@ -105,6 +120,33 @@ export default function OptionsFlow() {
           </div>
         )}
       </div>
+
+      {(topCalls.length > 0 || topPuts.length > 0) && (
+        <div style={{ display: "flex", gap: 28, marginBottom: 14, flexWrap: "wrap", fontFamily: "var(--mono)", fontSize: 11 }}>
+          {topCalls.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP CALLS</span>
+              {topCalls.map(([tk, premium], i) => (
+                <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--green)" }}
+                  onClick={() => { setTicker(tk); setTickerInput(tk); }}>
+                  {i + 1}. {tk} {usd(premium)}
+                </button>
+              ))}
+            </div>
+          )}
+          {topPuts.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP PUTS</span>
+              {topPuts.map(([tk, premium], i) => (
+                <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--red)" }}
+                  onClick={() => { setTicker(tk); setTickerInput(tk); }}>
+                  {i + 1}. {tk} {usd(premium)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {error ? (
         <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)", padding: 24 }}>
