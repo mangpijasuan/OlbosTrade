@@ -5,12 +5,22 @@
  */
 import React, { useEffect, useState } from "react";
 
+interface ValidationMetrics {
+  mae?: number;
+  r2?: number;
+  directional_accuracy?: number;
+  n_train?: number;
+  n_val?: number;
+}
+
 interface ModelPerf {
   model_version?: string;
+  model_type?: string;
   model_path?: string;
   trained?: boolean;
   auc?: number | null;
   last_trained?: string | null;
+  validation_metrics?: ValidationMetrics;
   retrain_schedule?: string;
   error?: string;
 }
@@ -79,7 +89,22 @@ export default function MLModels() {
         </div>
         <Field label="Architecture">XGBoost regressor · SHAP explainability</Field>
         <Field label="Predicts">Return-on-risk (RoR)</Field>
-        <Field label="AUC">{perf?.auc != null ? perf.auc.toFixed(3) : "—"}</Field>
+        <Field label="Directional accuracy">
+          {perf?.validation_metrics?.directional_accuracy != null
+            ? `${(perf.validation_metrics.directional_accuracy * 100).toFixed(1)}%`
+            : "—"}
+        </Field>
+        <Field label="R²">
+          {perf?.validation_metrics?.r2 != null ? perf.validation_metrics.r2.toFixed(3) : "—"}
+        </Field>
+        <Field label="MAE (RoR)">
+          {perf?.validation_metrics?.mae != null ? perf.validation_metrics.mae.toFixed(4) : "—"}
+        </Field>
+        <Field label="Train / val rows">
+          {perf?.validation_metrics?.n_train != null
+            ? `${perf.validation_metrics.n_train} / ${perf.validation_metrics.n_val}`
+            : "—"}
+        </Field>
         <Field label="Last trained">{perf?.last_trained ?? "—"}</Field>
         <Field label="Retrain schedule">{perf?.retrain_schedule ?? "—"}</Field>
         {perf?.error && <Field label="Error"><span style={{ color: "var(--red)" }}>{perf.error}</span></Field>}

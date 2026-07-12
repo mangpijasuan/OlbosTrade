@@ -29,6 +29,7 @@ from app.services.strategy_engine import (
     BullPutSpread, BearCallSpread, IronCondor, BullCallDebitSpread,
 )
 from app.utils.logger import get_logger
+from ml.features import compute_adx
 from app.utils.metrics import PerformanceMetrics, calculate_all_metrics
 
 logger = get_logger(__name__)
@@ -72,6 +73,18 @@ class BacktestTrade:
     credit_received: float = 0.0        # entry_credit * 100 per contract (dollars)
     # FIX #5: Store what the model WOULD have scored (counterfactual)
     counterfactual_signal_score: Optional[float] = None
+    # Entry-time SignalFeatures snapshot — populated so ml/train_signal_scorer.py
+    # can train on real historical conditions instead of hardcoded defaults.
+    # Mirrors app.services.signal_scorer.FEATURE_NAMES.
+    iv_rank: float = 0.0
+    iv_percentile: float = 0.0
+    spy_rsi_14: float = 50.0
+    spy_adx_14: float = 20.0
+    spy_trend_direction: float = 1.0
+    days_to_expiry: float = 35.0
+    short_strike_delta: float = 0.20
+    spy_realized_vol_20d: float = 0.15
+    iv_minus_rv: float = 0.0
 
 
 @dataclass
@@ -138,10 +151,12 @@ class Backtester:
         rsi   = self.fetcher.calculate_rsi(df["Close"])
         sma20 = self.fetcher.calculate_sma(df["Close"])
         rv20  = self.fetcher.calculate_realized_vol(df["Close"])
+        adx14 = compute_adx(df)
 
         out["signal_rsi"]       = rsi.shift(1)
         out["signal_sma20"]     = sma20.shift(1)
         out["signal_rv"]        = rv20.shift(1)
+        out["signal_adx"]       = adx14.shift(1)
         out["signal_above_sma"] = (df["Close"].shift(1) > sma20.shift(1))
 
         return out
@@ -255,6 +270,7 @@ class Backtester:
             current_rsi  = float(row["signal_rsi"]) if not pd.isna(row["signal_rsi"]) else 50.0
             current_sma  = float(row["signal_sma20"]) if not pd.isna(row["signal_sma20"]) else signal_close
             current_rv   = float(row["signal_rv"]) if not pd.isna(row["signal_rv"]) else 0.20
+            current_adx  = float(row["signal_adx"]) if not pd.isna(row["signal_adx"]) else 20.0
             above_sma    = bool(row["signal_above_sma"])
 
             # FIX #3: Derive VIX from real data if available, else RV proxy
@@ -454,7 +470,7 @@ class Backtester:
                 chain=chain,
                 iv_rank=iv_rank,
                 rsi=current_rsi,
-                adx=15.0,
+                adx=current_adx,
                 above_sma20=above_sma,
                 vix=vix,
                 portfolio_state=portfolio_state,
@@ -530,6 +546,20 @@ class Backtester:
                 spread_width=_sw,
                 credit_to_width_ratio=(net_credit / _sw) if _sw > 0 else 0.0,
                 credit_received=net_credit * 100,   # dollars per contract
+                # Entry-time SignalFeatures snapshot for ml/train_signal_scorer.py.
+                # iv_percentile is approximated as iv_rank (both 0-100 vol-vs-history
+                # measures, highly correlated) — a real per-bar percentileofscore
+                # would need the full trailing VIX history recomputed at every bar,
+                # not implemented here. Flag for a future retrain improvement.
+                iv_rank=float(iv_rank),
+                iv_percentile=float(iv_rank),
+                spy_rsi_14=current_rsi,
+                spy_adx_14=current_adx,
+                spy_trend_direction=1.0 if above_sma else -1.0,
+                days_to_expiry=float((target_expiry - current_date).days),
+                short_strike_delta=float(signal.target_delta or 0.20),
+                spy_realized_vol_20d=current_rv,
+                iv_minus_rv=(vix / 100.0) - current_rv,
             )
             open_trades.append(new_trade)
             trades_today += 1

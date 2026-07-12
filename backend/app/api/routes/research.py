@@ -100,12 +100,18 @@ async def get_model_performance():
         import os
         scorer = SignalScorer()
         trained = os.path.exists(settings.model_path)
+        # "auc" doesn't apply to this model — it's a RoR regressor, not a
+        # classifier — kept as null for any older frontend expecting the key;
+        # validation_metrics carries the metrics that actually apply
+        # (MAE / R² / directional accuracy), written by ml/train_signal_scorer.py.
         return {
-            "model_version":  "v1" if trained else "untrained",
+            "model_version":  scorer.model_version,
+            "model_type":     scorer.model_type,
             "model_path":     settings.model_path,
             "trained":        trained,
-            "auc":            getattr(scorer, "auc", None),
-            "last_trained":   getattr(scorer, "last_trained", None),
+            "auc":            None,
+            "last_trained":   scorer.last_trained,
+            "validation_metrics": scorer.validation_metrics,
             "retrain_schedule": settings.retrain_schedule,
         }
     except Exception as exc:

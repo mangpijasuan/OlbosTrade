@@ -135,6 +135,10 @@ class SignalScorer:
         self._ror_threshold = DEFAULT_ROR_THRESHOLD
         # FIX #4: Explainer cached here — never rebuilt per call
         self._explainer = None
+        # Exposed for /api/research/model-performance — populated in
+        # _load_model() from the pickle's metadata, not guessed via getattr.
+        self.last_trained: Optional[str] = None
+        self.validation_metrics: dict = {}
         self._load_model()
 
     def _load_model(self) -> None:
@@ -172,6 +176,8 @@ class SignalScorer:
         date_range = saved.get("date_range", {})
         staleness_days = int(date_range.get("staleness_days", 90))
         cutoff_str = date_range.get("to", "")
+        self.last_trained = cutoff_str or None
+        self.validation_metrics = saved.get("metrics", {})
         if cutoff_str:
             try:
                 cutoff_date = date.fromisoformat(cutoff_str)
