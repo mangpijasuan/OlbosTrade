@@ -6,6 +6,8 @@
 import React, { useEffect, useState } from "react";
 import BrokerStatus from "../components/BrokerStatus";
 import PortfolioGreeks from "../components/PortfolioGreeks";
+import SignalAttribution from "../components/SignalAttribution";
+import type { SignalAttributionData } from "../types/signal";
 
 interface TradePlan {
   entry_price?: number;
@@ -53,11 +55,23 @@ function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
-function SignalCard({ sig }: { sig: Signal }) {
-  const actionColor =
-    sig.action === "BUY"  ? "var(--green)" :
-    sig.action === "SELL" ? "var(--red)"   : "var(--ink-faint)";
+function toAttribution(sig: Signal): SignalAttributionData {
+  return {
+    direction: sig.action,
+    source: "Equity Scan Engine",
+    // Repository verified: /api/equity/signals does not return a bar-timeframe
+    // field on the signal payload — do not fabricate one.
+    timeframe: null,
+    confidence: sig.action !== "HOLD" ? sig.confidence : null,
+    updatedAt: sig.generated_at,
+    // This page has no execute/approve control of its own (unlike the scan
+    // panels), and there's no verified lineage from this payload to
+    // AUTOPILOT here — authority is left unknown rather than guessed.
+    authority: "unknown",
+  };
+}
 
+function SignalCard({ sig }: { sig: Signal }) {
   const tp = sig.trade_plan || {};
   const ind = sig.indicators || {};
 
@@ -80,15 +94,7 @@ function SignalCard({ sig }: { sig: Signal }) {
         }}>
           {sig.ticker}
         </span>
-        <span style={{
-          color: actionColor,
-          border: `1px solid ${actionColor}`,
-          borderRadius: 3, padding: "2px 8px",
-          fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700,
-          letterSpacing: "0.1em",
-        }}>
-          {sig.action}
-        </span>
+        <SignalAttribution data={toAttribution(sig)} size="sm" />
         {sig.earnings_gated && (
           <span style={{
             color: "var(--amber)", border: "1px solid var(--amber)",
