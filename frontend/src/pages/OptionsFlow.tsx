@@ -84,6 +84,13 @@ export default function OptionsFlow() {
           free snapshot · volume ≫ open interest · not a real-time OPRA tape
         </span>
 
+        {totalCount > 0 && (
+          <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 11 }}>
+            <span style={{ color: "var(--green)" }}>CALLS {callCount} · {callPct}% · {usd(callPremium)}</span>
+            <span style={{ color: "var(--red)" }}>PUTS {putCount} · {putPct}% · {usd(putPremium)}</span>
+          </div>
+        )}
+
         <form onSubmit={submitTicker} style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input
             value={tickerInput}
@@ -112,13 +119,6 @@ export default function OptionsFlow() {
             </button>
           ))}
         </div>
-
-        {totalCount > 0 && (
-          <div style={{ display: "flex", gap: 16, marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 11 }}>
-            <span style={{ color: "var(--green)" }}>CALLS {callCount} · {callPct}% · {usd(callPremium)}</span>
-            <span style={{ color: "var(--red)" }}>PUTS {putCount} · {putPct}% · {usd(putPremium)}</span>
-          </div>
-        )}
       </div>
 
       {(topCalls.length > 0 || topPuts.length > 0) && (
