@@ -10,7 +10,7 @@ A full-stack algorithmic options trading platform with IBKR integration, AI sign
 ## Architecture
 
 ```
-olbosquant/
+olbostrade/
 ├── backend/              Python 3.9+ · FastAPI · PostgreSQL · ib_insync
 │   ├── app/
 │   │   ├── api/routes/   REST endpoints (market, paper_trade, trade_desk, …)
