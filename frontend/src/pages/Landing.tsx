@@ -352,7 +352,13 @@ export default function Landing() {
       <footer className="landing-footer">
         <div className="landing-container">
           <div className="landing-footer-row">
-            <span className="landing-wordmark" style={{ fontSize: 15 }}>OLBOS</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <span className="landing-wordmark" style={{ fontSize: 15 }}>OLBOS</span>
+              <span style={{
+                fontFamily: "var(--mono)", fontSize: 7, fontWeight: 500,
+                letterSpacing: "0.2em", color: "var(--ink-faint)", lineHeight: 1, whiteSpace: "nowrap",
+              }}>TRADING SYSTEM</span>
+            </div>
             <div className="landing-footer-links">
               <span className="disabled" title="Not published">Privacy</span>
               <span className="disabled" title="Not published">Terms</span>
