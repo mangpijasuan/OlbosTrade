@@ -236,6 +236,14 @@ class Backtester:
         weekly_pnl = 0.0
         monthly_pnl = 0.0
         consecutive_losses = 0
+        # Guardrails.check_all() reports a 48h suspension on a consecutive-loss
+        # trip, but (unlike daily/weekly/monthly P&L) consecutive_losses has no
+        # calendar-boundary reset — without this, one losing streak permanently
+        # blocks every later simulated day for the rest of the backtest, since
+        # the counter can only fall back to 0 via a win, and wins require new
+        # entries that the trip itself is blocking. Mirrors the 48h wall-clock
+        # suspension guardrails.py grants live trades, in simulated time.
+        consecutive_loss_lockout_until: Optional[date] = None
         trades_today = 0
         last_date: Optional[date] = None
         last_week: Optional[int] = None
@@ -249,6 +257,12 @@ class Backtester:
                 trades_today = 0
                 daily_pnl = 0.0
                 last_date = current_date
+            if (
+                consecutive_loss_lockout_until is not None
+                and current_date >= consecutive_loss_lockout_until
+            ):
+                consecutive_losses = 0
+                consecutive_loss_lockout_until = None
             week_num = current_date.isocalendar()[1]
             if last_week is not None and week_num != last_week:
                 weekly_pnl = 0.0
@@ -365,6 +379,10 @@ class Backtester:
                     monthly_pnl += pnl
 
                     consecutive_losses = consecutive_losses + 1 if pnl < 0 else 0
+                    if consecutive_losses >= self.guardrails.max_consecutive_losses:
+                        consecutive_loss_lockout_until = current_date + timedelta(hours=48)
+                    else:
+                        consecutive_loss_lockout_until = None
                     trades.append(trade)
                     logger.debug(
                         "Closed %s P&L=%.2f reason=%s",
