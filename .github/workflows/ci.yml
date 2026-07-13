@@ -34,6 +34,8 @@ jobs:
           tests/test_llm_provider.py tests/test_account_guard.py
           tests/test_margin_monitor.py tests/test_unusual_activity.py
           tests/test_income_screener.py tests/test_flow_recommender.py
+          tests/test_options_decision_engine.py
+          --cov=app.services.options_decision_engine
           --cov=app.services.account_guard
           --cov=app.services.margin_monitor
           --cov=app.services.unusual_activity

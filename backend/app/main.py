@@ -84,6 +84,7 @@ from app.api.routes import options_flow
 from app.api.routes import income_matrix
 from app.api.routes import portfolio
 from app.api.routes import options_csp
+from app.api.routes import options_decision
 from app.api.routes import intel
 from app.api.routes import chart
 from app.api.routes import alerts
@@ -155,6 +156,7 @@ app.include_router(symphony.router,    prefix="/api/symphony",     tags=["Sympho
 app.include_router(options.router,     prefix="/api/options",      tags=["Options"])
 app.include_router(portfolio.router,   prefix="/api/portfolio",    tags=["Portfolio"])
 app.include_router(options_csp.router, prefix="/api/options/csp",   tags=["Options Income"])
+app.include_router(options_decision.router, prefix="/api/options-decision", tags=["Options Decision"])
 app.include_router(intel.router,       prefix="/api/intel",        tags=["Intelligence Hub"])
 app.include_router(chart.router,       prefix="/api/chart",        tags=["Chart Intelligence"])
 app.include_router(alerts.router,      prefix="/api/alerts",       tags=["Smart Alerts"])
