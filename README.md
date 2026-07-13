@@ -104,8 +104,8 @@ Go to **http://localhost:3000** and confirm:
 
 ### 1. Clone and install dependencies
 ```bash
-git clone <repo-url> olbosquant
-cd olbosquant
+git clone <repo-url> olbostrade
+cd olbostrade
 
 # Backend
 cd backend
@@ -147,7 +147,7 @@ alembic upgrade head
 
 ### 4. First startup
 ```bash
-cd ~/Projects/olbosquant
+cd ~/Projects/olbostrade
 chmod +x start.sh stop.sh health.sh
 ./start.sh
 ```
