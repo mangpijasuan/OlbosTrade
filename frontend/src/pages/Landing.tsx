@@ -152,14 +152,14 @@ export default function Landing() {
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <section className="landing-section landing-hero" id="product">
           <div className="landing-container">
-            <div className="landing-eyebrow">Systematic SPY Options Execution</div>
+            <div className="landing-eyebrow">Systematic Options Execution</div>
             <h1 className="landing-h1">
-              Systematic SPY options execution with risk controls built into every decision.
+              Systematic options execution with risk controls built into every decision.
             </h1>
             <p className="landing-lede">
-              OlbosTrade runs a rules-based options and equity workflow — regime detection, a
-              trained signal model, and a fail-closed risk gate — in front of every trade
-              decision. Nothing executes without passing guardrails, and every signal shows
+              Olbos Trading System runs a rules-based options and equity workflow — regime
+              detection, a trained signal model, and a fail-closed risk gate — in front of every
+              trade decision. Nothing executes without passing guardrails, and every signal shows
               where it came from. Currently in paper-trading evaluation; live capital requires a
               validated track record first.
             </p>
@@ -172,7 +172,7 @@ export default function Landing() {
               <PipelineStage
                 n="01"
                 title="Market inputs"
-                detail="SPY price/volatility data and account state, decoupled from execution."
+                detail="SPY/QQQ/IWM price/volatility data and account state, decoupled from execution."
               />
               <PipelineStage
                 n="02"
@@ -225,7 +225,7 @@ export default function Landing() {
               <Cell title="Divergence disclosure" body="When two independently-computed signals for the same symbol disagree, the terminal shows the disagreement explicitly instead of resolving it visually." />
               <Cell title="Manual oversight" body="Autopilot can be turned off at any time; Manual and Copilot modes keep a human in the approval loop." />
               <Cell title="Explainability" body="The signal model's training pipeline runs a SHAP-based economic-direction check at train time and on live signals, to catch backwards feature logic." />
-              <Cell title="No validated track record yet" body="OlbosTrade has not completed a validated paper-trading evaluation period. We say so plainly instead of implying otherwise." />
+              <Cell title="No validated track record yet" body="Olbos Trading System has not completed a validated paper-trading evaluation period. We say so plainly instead of implying otherwise." />
             </div>
           </div>
         </section>
@@ -364,9 +364,9 @@ export default function Landing() {
           </div>
           <p className="landing-disclosure">
             Options and equity trading involves substantial risk of loss and is not suitable for
-            all investors. OlbosTrade is currently in paper-trading evaluation with no verified
-            live performance history. Nothing on this page is investment advice, and past or
-            simulated results, once published, will not guarantee future returns.
+            all investors. Olbos Trading System is currently in paper-trading evaluation with no
+            verified live performance history. Nothing on this page is investment advice, and past
+            or simulated results, once published, will not guarantee future returns.
           </p>
         </div>
       </footer>
