@@ -346,9 +346,15 @@ async def _background_scheduler() -> None:
                     )
                 last_equity = now
 
-            # Every 1 hour: options spread signal scan (if regime allows)
+            # Every 1 hour: options spread signal scan (if regime allows).
+            # SPY and QQQ both scanned each cycle — see _run_options_scan's
+            # docstring for why QQQ reuses SPY's regime as a shared proxy.
             if now - last_options >= options_interval_s:
-                await _guarded(_run_options_scan(), "options_scan", 90)
+                for _opt_symbol in ("SPY", "QQQ"):
+                    await _guarded(
+                        _run_options_scan(_opt_symbol),
+                        f"options_scan_{_opt_symbol.lower()}", 90,
+                    )
                 last_options = now
 
             # Every 30 sec: poll fills from active broker
@@ -694,9 +700,69 @@ async def _yf_options_quote(
     return await loop.run_in_executor(None, _fetch)
 
 
-async def _run_options_scan() -> None:
+async def _build_portfolio_risk_state(portfolio_value: float):
     """
-    Generate options spread signals based on current regime and SPY bars.
+    Real PortfolioRiskState for RiskManager.approve_trade()'s concentration
+    check — positions_by_underlying/positions_by_sector grouped from actual
+    open trades via portfolio_engine.position_risk_dollars()/sector_for()
+    (the same logic /api/portfolio/heat uses), net Greeks from the live
+    _greeks_tracker when available. SPY and QQQ both map to sector "Index"
+    (see portfolio_engine.SECTORS), so trading both is correctly seen as one
+    correlated bucket rather than two independent 25%-cap slots.
+    """
+    from app.services.risk_manager import PortfolioRiskState
+    from app.services.portfolio_engine import position_risk_dollars, sector_for
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    by_underlying: dict[str, float] = {}
+    by_sector: dict[str, float] = {}
+    open_count = 0
+    try:
+        async with AsyncSessionLocal() as session:
+            open_trades = (await session.execute(
+                select(Trade).where(Trade.status == "open")
+            )).scalars().all()
+        open_count = len(open_trades)
+        for t in open_trades:
+            u = (t.underlying or "?").upper()
+            s = sector_for(u)
+            r = position_risk_dollars(t)
+            by_underlying[u] = by_underlying.get(u, 0.0) + r
+            by_sector[s] = by_sector.get(s, 0.0) + r
+    except Exception as exc:
+        logger.warning("Could not load open positions for concentration check: %s", exc)
+
+    net_delta = net_vega = net_theta = 0.0
+    if _greeks_tracker is not None:
+        try:
+            net_delta = _greeks_tracker.net_delta()
+            net_vega  = _greeks_tracker.net_vega()
+            net_theta = _greeks_tracker.net_theta()
+        except Exception:
+            pass
+
+    return PortfolioRiskState(
+        net_delta=net_delta, net_vega=net_vega, net_theta=net_theta,
+        open_position_count=open_count, portfolio_value=portfolio_value,
+        positions_by_underlying=by_underlying, positions_by_sector=by_sector,
+    )
+
+
+async def _run_options_scan(symbol: str = "SPY") -> None:
+    """
+    Generate options spread signals for `symbol` based on the current regime.
+
+    The regime itself is still classified from SPY alone (_reclassify_regime) —
+    scanning QQQ reuses that same regime/VIX/IV-rank state as a shared proxy
+    rather than building QQQ its own classifier, since SPY and QQQ are highly
+    correlated broad-market proxies. What IS symbol-specific: the underlying's
+    own price bars/SMA/spot, its own option chain and quotes, and the
+    concentration check below (positions_by_underlying/positions_by_sector —
+    both SPY and QQQ fall under the same "Index" sector in portfolio_engine.py,
+    so trading both can't silently double the correlated exposure past the
+    sector cap).
 
     Delegates strike selection, entry-condition gating, and the credit-vs-debit
     distinction to the real per-strategy classes in strategy_engine.py — the
@@ -761,12 +827,12 @@ async def _run_options_scan() -> None:
         dte_target = trading_mode_manager.config.dte_target or 30
         RISK_FREE  = 0.05
 
-        # Get SPY bars via yfinance — no broker subscription needed
-        spy_bars = await _yf_bars("SPY", limit=30)
-        if len(spy_bars) < 20:
+        # Get the underlying's bars via yfinance — no broker subscription needed
+        underlying_bars = await _yf_bars(symbol, limit=30)
+        if len(underlying_bars) < 20:
             return
 
-        closes = [float(b.close) for b in spy_bars]
+        closes = [float(b.close) for b in underlying_bars]
         spot   = closes[-1]
         sma20  = float(np.mean(closes[-20:]))
         above_sma20 = spot > sma20
@@ -815,7 +881,7 @@ async def _run_options_scan() -> None:
                 continue
             half_spread = 0.05
             puts.append(OptionContract(
-                symbol=f"SPY_P{int(s)}", underlying="SPY", expiration=target_exp,
+                symbol=f"{symbol}_P{int(s)}", underlying=symbol, expiration=target_exp,
                 strike=Decimal(str(int(s))), option_type="put",
                 bid=Decimal(str(round(max(put_px - half_spread, 0.01), 2))),
                 ask=Decimal(str(round(put_px + half_spread, 2))),
@@ -823,7 +889,7 @@ async def _run_options_scan() -> None:
                 greeks=GK(delta=put_d, gamma=gamma_v, theta=put_th, vega=vega_v, implied_vol=vix_est),
             ))
             calls.append(OptionContract(
-                symbol=f"SPY_C{int(s)}", underlying="SPY", expiration=target_exp,
+                symbol=f"{symbol}_C{int(s)}", underlying=symbol, expiration=target_exp,
                 strike=Decimal(str(int(s))), option_type="call",
                 bid=Decimal(str(round(max(call_px - half_spread, 0.01), 2))),
                 ask=Decimal(str(round(call_px + half_spread, 2))),
@@ -831,7 +897,7 @@ async def _run_options_scan() -> None:
                 greeks=GK(delta=call_d, gamma=gamma_v, theta=call_th, vega=vega_v, implied_vol=vix_est),
             ))
         chain = OptionsChain(
-            underlying="SPY", expiration=target_exp,
+            underlying=symbol, expiration=target_exp,
             underlying_price=Decimal(str(round(spot, 2))),
             calls=calls, puts=puts, fetched_at=datetime.now(timezone.utc),
         )
@@ -852,14 +918,27 @@ async def _run_options_scan() -> None:
         best_short_delta = signal_obj.target_delta or 0.20
 
         # Black-Scholes price at the strategy's own chosen strikes (fallback / no-subscription path)
+        # Net delta/vega (long leg minus short leg — the position is short the
+        # short_strike leg, long the long_strike leg, uniformly across all 4
+        # strategies) feed the portfolio-level concentration check below.
         try:
             short_px = pricer.call_price(spot, short_strike, T, RISK_FREE, vix_est) if is_call \
                        else pricer.put_price(spot, short_strike, T, RISK_FREE, vix_est)
             long_px  = pricer.call_price(spot, long_strike, T, RISK_FREE, vix_est) if is_call \
                        else pricer.put_price(spot, long_strike, T, RISK_FREE, vix_est)
             net_amount = round((short_px - long_px) * 100, 2)  # +credit / -debit, per contract $
+            _greek_opt = "call" if is_call else "put"
+            net_position_delta = (
+                pricer.delta(spot, long_strike, T, RISK_FREE, vix_est, _greek_opt)
+                - pricer.delta(spot, short_strike, T, RISK_FREE, vix_est, _greek_opt)
+            )
+            net_position_vega = (
+                pricer.vega(spot, long_strike, T, RISK_FREE, vix_est)
+                - pricer.vega(spot, short_strike, T, RISK_FREE, vix_est)
+            )
         except Exception:
             net_amount = 0.0
+            net_position_delta = net_position_vega = 0.0
 
         # Prefer the LIVE chain price when a quote is available — the limit then
         # tracks where the spread can actually fill instead of a theoretical mid.
@@ -871,7 +950,7 @@ async def _run_options_scan() -> None:
         broker = get_broker()
         if not is_debit:
             live = await _live_spread_quote(
-                broker, "SPY", target_exp.isoformat(), short_strike, long_strike, opt_type,
+                broker, symbol, target_exp.isoformat(), short_strike, long_strike, opt_type,
             )
             if live and live["net_credit"] > 0:
                 short_strike = live["short_strike"]
@@ -883,7 +962,7 @@ async def _run_options_scan() -> None:
                 credit_source = "live_chain"
             else:
                 yq = await _yf_options_quote(
-                    "SPY", target_exp.isoformat(), short_strike, long_strike, opt_type,
+                    symbol, target_exp.isoformat(), short_strike, long_strike, opt_type,
                 )
                 if yq and yq["net_credit"] > 0:
                     short_strike = yq["short_strike"]
@@ -933,7 +1012,7 @@ async def _run_options_scan() -> None:
             short_strike_delta=float(best_short_delta),
             spread_width=float(spread_width),
             credit_to_width_ratio=(net_amount / 100.0 / spread_width) if spread_width else 0.0,
-            earnings_days_away=60.0,   # SPY (ETF) — no single-name earnings event
+            earnings_days_away=60.0,   # SPY/QQQ (ETFs) — no single-name earnings event
             spy_realized_vol_20d=float(sigma),
             iv_minus_rv=float(vix_est - sigma),
         )
@@ -941,14 +1020,14 @@ async def _run_options_scan() -> None:
         signal_score = float(score_result.score)
         if not score_result.approved and not settings.execution_test_mode:
             logger.info(
-                "Options signal rejected by AI scorer: SPY %s score=%.3f — %s",
-                strategy_name, signal_score, score_result.rejection_reason,
+                "Options signal rejected by AI scorer: %s %s score=%.3f — %s",
+                symbol, strategy_name, signal_score, score_result.rejection_reason,
             )
             return
         if not score_result.approved:
             logger.warning(
-                "EXECUTION_TEST_MODE: routing options signal SPY %s despite AI score=%.3f",
-                strategy_name, signal_score,
+                "EXECUTION_TEST_MODE: routing options signal %s %s despite AI score=%.3f",
+                symbol, strategy_name, signal_score,
             )
 
         # ── Position sizing via RiskManager ─────────────────────────────────
@@ -984,6 +1063,45 @@ async def _run_options_scan() -> None:
             )
             return
 
+        # ── Single-underlying / sector concentration check ──────────────────
+        # SPY and QQQ both map to sector "Index" (portfolio_engine.SECTORS),
+        # so scanning both can't silently double correlated exposure past the
+        # sector cap. Deliberately narrower than RiskManager.approve_trade():
+        # that method also gates on portfolio delta/vega, but those limits
+        # have never been checked against a real trade before (approve_trade
+        # was never called from any live path) and a sanity check found a
+        # standard single 10-point-wide spread already exceeds the vega cap
+        # (0.15) on its own — a separate, pre-existing calibration issue, not
+        # something to silently work around here. Only the concentration
+        # logic is reused; net_position_delta/vega stay unused for now.
+        from app.services.portfolio_engine import sector_for
+        portfolio_risk = await _build_portfolio_risk_state(portfolio_value)
+        trade_sector = sector_for(symbol)
+        total_new_risk = max_loss_dollars * quantity
+        if portfolio_risk.portfolio_value > 0:
+            new_underlying_exposure = (
+                portfolio_risk.positions_by_underlying.get(symbol, 0.0) + total_new_risk
+            )
+            underlying_pct = new_underlying_exposure / portfolio_risk.portfolio_value
+            if underlying_pct > RiskManager.MAX_SINGLE_UNDERLYING:
+                logger.info(
+                    "Options signal blocked — %s concentration would be %.1f%% "
+                    "of portfolio (max %.0f%%)",
+                    symbol, underlying_pct * 100, RiskManager.MAX_SINGLE_UNDERLYING * 100,
+                )
+                return
+            new_sector_exposure = (
+                portfolio_risk.positions_by_sector.get(trade_sector, 0.0) + total_new_risk
+            )
+            sector_pct = new_sector_exposure / portfolio_risk.portfolio_value
+            if sector_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
+                logger.info(
+                    "Options signal blocked — sector %r (%s) concentration would be "
+                    "%.1f%% of portfolio (max %.0f%%)",
+                    trade_sector, symbol, sector_pct * 100, RiskManager.MAX_SECTOR_CONCENTRATION * 100,
+                )
+                return
+
         # ── Options Intelligence: real POP / EV / Kelly for this spread ─────────
         # Drives the frequency controller's quality filter with the true
         # probability of profit instead of a proxy. analyze_spread() clamps
@@ -1011,7 +1129,7 @@ async def _run_options_scan() -> None:
 
         signal = {
             "id":           str(uuid.uuid4()),
-            "ticker":       "SPY",
+            "ticker":       symbol,
             "asset_type":   "options",
             "strategy":     strategy_name,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1046,8 +1164,8 @@ async def _run_options_scan() -> None:
         }
 
         logger.info(
-            "Options signal: %s SPY %s %s/%s exp %s %s $%.2f (%s) score=%.3f qty=%d",
-            strategy_name, opt_type, short_strike, long_strike, target_exp,
+            "Options signal: %s %s %s %s/%s exp %s %s $%.2f (%s) score=%.3f qty=%d",
+            strategy_name, symbol, opt_type, short_strike, long_strike, target_exp,
             "debit" if is_debit else "credit", abs(net_amount), credit_source,
             signal_score, quantity,
         )

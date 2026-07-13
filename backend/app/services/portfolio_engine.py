@@ -87,7 +87,11 @@ def compute_portfolio_risk(
 def position_risk_dollars(trade) -> float:
     """
     Derive risk-at-stake from an open Trade row.
-      - Options spread: defined max loss = (width − credit) × 100 × qty.
+      - Credit spread: defined max loss = (width − credit) × 100 × qty.
+      - Debit spread (bull_call_debit_spread; credit_received is negative —
+        see backtester.py's entry-side convention): max loss is simply the
+        debit paid, not width-minus-credit — that formula would add the debit
+        to the width instead of isolating it as the actual capital at risk.
       - Equity: notional = entry_price × shares (worst-case proxy).
     """
     qty = int(getattr(trade, "quantity", None) or 1)
@@ -95,6 +99,8 @@ def position_risk_dollars(trade) -> float:
     credit = float(getattr(trade, "credit_received", 0) or 0)
     if spread_type.startswith("equity") or getattr(trade, "strategy", "") == "equity":
         return round(credit * qty, 2)   # entry price × shares
+    if credit < 0:
+        return round(abs(credit) * 100 * qty, 2)
     short_k = float(getattr(trade, "short_strike", 0) or 0)
     long_k = float(getattr(trade, "long_strike", 0) or 0)
     width = abs(short_k - long_k)
