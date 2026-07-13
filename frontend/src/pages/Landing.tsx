@@ -49,13 +49,67 @@ function Metric({ label, value, placeholder = true }: { label: string; value: st
   );
 }
 
-const PLAN_LIMITS: { feature: string; limit: string }[] = [
-  { feature: "Concurrent algos", limit: "5" },
-  { feature: "Open positions", limit: "25" },
-  { feature: "Broker connections", limit: "3" },
-  { feature: "Historical data", limit: "5 years" },
-  { feature: "Signal scans / day", limit: "500" },
-  { feature: "API rate", limit: "120 req/min" },
+type Plan = {
+  name: string;
+  price: string;
+  period: string;
+  tagline: string;
+  capabilities: { label: string; included: boolean }[];
+  limits: { feature: string; limit: string }[];
+  cta: { label: string; href: string; internal?: boolean };
+  featured?: boolean;
+};
+
+// Maps directly to the terminal's real manual/copilot/autopilot execution
+// modes (TerminalLayout.tsx) — Free is capped at manual (view-only), Pro
+// unlocks the two automated modes. Both plans currently route to the same
+// unauthenticated /terminal — see the note below the cards.
+const PLANS: Plan[] = [
+  {
+    name: "Free",
+    price: "$0",
+    period: "/mo",
+    tagline: "Log in and see what the terminal sees.",
+    capabilities: [
+      { label: "Manual mode — view every signal", included: true },
+      { label: "Signal attribution (source, timeframe, confidence)", included: true },
+      { label: "Live risk & guardrail status", included: true },
+      { label: "Copilot — approve signals to trade", included: false },
+      { label: "Autopilot — fully automated execution", included: false },
+    ],
+    limits: [
+      { feature: "Concurrent algos", limit: "1" },
+      { feature: "Open positions", limit: "5" },
+      { feature: "Broker connections", limit: "1" },
+      { feature: "Historical data", limit: "1 year" },
+      { feature: "Signal scans / day", limit: "50" },
+      { feature: "API rate", limit: "30 req/min" },
+    ],
+    cta: { label: "Start free", href: "/terminal", internal: true },
+  },
+  {
+    name: "Pro",
+    price: "$49",
+    period: "/mo",
+    tagline: "Everything in Free, plus automated execution.",
+    capabilities: [
+      { label: "Manual mode — view every signal", included: true },
+      { label: "Signal attribution (source, timeframe, confidence)", included: true },
+      { label: "Live risk & guardrail status", included: true },
+      { label: "Copilot — approve signals to trade", included: true },
+      { label: "Autopilot — fully automated execution", included: true },
+    ],
+    limits: [
+      { feature: "Concurrent algos", limit: "5" },
+      { feature: "Open positions", limit: "25" },
+      { feature: "Broker connections", limit: "3" },
+      { feature: "Historical data", limit: "5 years" },
+      { feature: "Signal scans / day", limit: "500" },
+      { feature: "API rate", limit: "120 req/min" },
+    ],
+    cta: { label: "Request access", href: "mailto:mangpijasuan@zomiok.org?subject=Olbos%20access%20request" },
+    featured: true,
+  },
 ];
 
 export default function Landing() {
@@ -199,30 +253,51 @@ export default function Landing() {
         <section className="landing-section" id="pricing">
           <div className="landing-container">
             <div className="landing-eyebrow">Pricing</div>
-            <h2 className="landing-h2">One plan, one price</h2>
+            <h2 className="landing-h2">Free to watch. Pay to automate.</h2>
             <p className="landing-lede">
-              Onboarding is by request, not self-serve checkout — there is no billing system wired
-              up yet. This is the plan we intend to charge, shown honestly instead of hidden.
+              There is no signup or billing system wired up yet — both plans currently open the
+              same terminal. This is the tier structure and Pro price we intend to charge,
+              shown honestly instead of hidden.
             </p>
-            <div className="pricing-card">
-              <div className="pricing-card-head">
-                <div className="pricing-card-name">Pro</div>
-                <div className="pricing-card-price">
-                  <span className="pricing-card-amount">$49</span>
-                  <span className="pricing-card-period">/mo</span>
-                </div>
-              </div>
-              <div className="pricing-card-limits">
-                {PLAN_LIMITS.map((l) => (
-                  <div className="pricing-card-limit" key={l.feature}>
-                    <span className="landing-cell-body">{l.feature}</span>
-                    <span className="pricing-card-limit-value">{l.limit}</span>
+            <div className="pricing-grid">
+              {PLANS.map((plan) => (
+                <div className={`pricing-card${plan.featured ? " featured" : ""}`} key={plan.name}>
+                  <div className="pricing-card-head">
+                    <div className="pricing-card-name">{plan.name}</div>
+                    <div className="pricing-card-price">
+                      <span className="pricing-card-amount">{plan.price}</span>
+                      <span className="pricing-card-period">{plan.period}</span>
+                    </div>
                   </div>
-                ))}
-              </div>
-              <a className="landing-cta-btn" href="mailto:mangpijasuan@zomiok.org?subject=Olbos%20access%20request">
-                Request access
-              </a>
+                  <p className="pricing-card-tagline">{plan.tagline}</p>
+                  <div className="pricing-card-capabilities">
+                    {plan.capabilities.map((c) => (
+                      <div
+                        className={`pricing-card-capability${c.included ? "" : " excluded"}`}
+                        key={c.label}
+                      >
+                        <span className="pricing-card-capability-mark" aria-hidden="true">
+                          {c.included ? "✓" : "—"}
+                        </span>
+                        {c.label}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pricing-card-limits">
+                    {plan.limits.map((l) => (
+                      <div className="pricing-card-limit" key={l.feature}>
+                        <span className="landing-cell-body">{l.feature}</span>
+                        <span className="pricing-card-limit-value">{l.limit}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {plan.cta.internal ? (
+                    <Link className="landing-cta-btn" to={plan.cta.href}>{plan.cta.label}</Link>
+                  ) : (
+                    <a className="landing-cta-btn" href={plan.cta.href}>{plan.cta.label}</a>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </section>
