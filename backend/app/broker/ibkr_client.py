@@ -42,6 +42,13 @@ FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
 RETRY_PRICE_STEP = 0.05          # On retry, lower limit by $0.05 (accept less credit)
 MAX_ORDER_RETRIES = 2            # Cancel + retry up to this many times
 
+# How long to wait for the Gateway to acknowledge a bracket's parent order
+# before submitting its children. The children reference the parent via
+# parentId, and IBKR rejects them with "Error 135: Can't find order with id"
+# if they arrive before the Gateway has registered the parent -- this bounds
+# that wait rather than racing it.
+BRACKET_ACK_TIMEOUT_SECONDS = 3.0
+
 def _fill_timeout() -> int:
     try:
         from app.core.config import settings
@@ -626,6 +633,25 @@ class IBKRClient(BrokerInterface):
                 f"${stop:.2f}" if stop else "—",
             )
             trade = self.ib.placeOrder(stock, parent)
+            # Gateway registration of the parent is asynchronous — submitting
+            # the children immediately can beat it there, and IBKR rejects
+            # both with "Error 135: Can't find order with id" (parentId not
+            # yet recognized), leaving the entry order dangling with no
+            # protective exits attached. Wait for the parent to reach an
+            # acknowledged status (or a bounded timeout) before firing the
+            # bracket's children.
+            ack_deadline = asyncio.get_event_loop().time() + BRACKET_ACK_TIMEOUT_SECONDS
+            while (
+                not trade.orderStatus.status
+                and asyncio.get_event_loop().time() < ack_deadline
+            ):
+                await asyncio.sleep(0.05)
+            if not trade.orderStatus.status:
+                logger.warning(
+                    "Bracket parent %s %s not acknowledged after %.0fs — "
+                    "submitting children anyway (may hit Error 135)",
+                    ticker, parent.orderId, BRACKET_ACK_TIMEOUT_SECONDS,
+                )
             for child in children:
                 self.ib.placeOrder(stock, child)
         else:

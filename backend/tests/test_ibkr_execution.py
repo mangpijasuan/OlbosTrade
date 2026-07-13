@@ -244,3 +244,86 @@ class TestPartialFills:
         assert result.status == "submitted"
         assert len(client.ib.cancelled) == 0
         assert len(client.ib.placed) == 1       # MKT does not retry
+
+
+# ── Equity bracket orders: parent-ack race (Error 135) ──────────────────────────
+#
+# Regression coverage for a live production bug: the take-profit/stop-loss
+# children reference the parent order via parentId, but nothing waited for
+# IBKR to actually register the parent before the children were submitted --
+# so the Gateway would reject both children with "Error 135: Can't find order
+# with id" a few hundred ms later, leaving the entry order dangling with no
+# protective exits attached. Confirmed twice in production logs on the same day
+# (same failure signature both times: children cancelled ~150-300ms after
+# PendingSubmit, parent timed out at 60s unfilled).
+#
+# Unlike FakeIB above (which reassigns orderId on every placeOrder call --
+# harmless for the single-order combo path it was built for, but it would
+# clobber the explicit parentId linkage this test needs to verify), this fake
+# preserves whatever orderId the caller set beforehand, matching real
+# ib_insync/IBKR semantics for pre-assigned order IDs.
+
+class _EquityFakeIB:
+    def __init__(self, parent_status: str):
+        self.placed: list = []
+        self._parent_status = parent_status
+        self.client = MagicMock()
+        self.client.getReqId.side_effect = iter(range(100, 200))
+
+    def isConnected(self):
+        return True
+
+    async def qualifyContractsAsync(self, contract):
+        contract.conId = 999
+        return [contract]
+
+    def placeOrder(self, contract, order):
+        # Preserve the caller-assigned orderId (real ib_insync does the same)
+        # instead of reassigning it, so parentId linkage stays verifiable.
+        is_parent = not getattr(order, "parentId", 0)
+        status = self._parent_status if is_parent else "Submitted"
+        trade = _Trade(order, _OrderStatus(status, 0, 0.0))
+        self.placed.append(trade)
+        return trade
+
+
+def _make_equity_client(parent_status: str) -> IBKRClient:
+    c = IBKRClient()
+    c._connected = True
+    c.ib = _EquityFakeIB(parent_status)
+    return c
+
+
+class TestEquityBracketAck:
+    @pytest.mark.asyncio
+    async def test_children_wait_for_parent_ack_before_sending(self):
+        # Parent acknowledges immediately (non-empty status) -- children should
+        # be sent right away, correctly linked via parentId.
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0):
+            client = _make_equity_client(parent_status="PreSubmitted")
+            await client.place_equity_order(
+                "NVDA", 10, "BUY", order_type="market",
+                stop=190.0, take_profit=210.0,
+            )
+        placed = client.ib.placed
+        assert len(placed) == 3   # parent + take-profit + stop-loss
+        parent = placed[0].order
+        tp, sl = placed[1].order, placed[2].order
+        assert parent.parentId in (0, None)
+        assert tp.parentId == parent.orderId
+        assert sl.parentId == parent.orderId
+
+    @pytest.mark.asyncio
+    async def test_unacknowledged_parent_times_out_then_still_sends_children(self):
+        # Parent never acknowledges (status stays empty) -- must not hang
+        # forever; bounded by BRACKET_ACK_TIMEOUT_SECONDS, then proceeds anyway.
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0), \
+             patch("app.broker.ibkr_client.BRACKET_ACK_TIMEOUT_SECONDS", 0.05):
+            client = _make_equity_client(parent_status="")
+            await client.place_equity_order(
+                "NVDA", 10, "BUY", order_type="market",
+                stop=190.0, take_profit=210.0,
+            )
+        # Children still get sent (matching current behaviour: log + proceed
+        # rather than silently dropping the bracket's protective exits).
+        assert len(client.ib.placed) == 3
