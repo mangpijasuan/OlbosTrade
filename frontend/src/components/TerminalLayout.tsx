@@ -432,7 +432,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
             </span>
             <span style={{
               fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
-              letterSpacing: "0.55em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1, whiteSpace: "nowrap",
+              letterSpacing: "0.276em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1, whiteSpace: "nowrap",
             }}>TERMINAL</span>
           </div>
         )}
