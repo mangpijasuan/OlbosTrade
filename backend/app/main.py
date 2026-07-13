@@ -124,11 +124,13 @@ _close_pending: dict[str, datetime] = {}
 CLOSE_GRACE_SECONDS = 300   # wait up to 5 min for a real exit price, then book unknown
 
 # Entry-side reconciliation: when a `pending` trade's order is still working we
-# wait this long for it to fill. After the window, an order with no broker
-# position and no fill execution is treated as terminated-unfilled and the
-# pending trade is cancelled (so unfilled/ProgramCancelled limit orders never
-# become phantom positions). Generous because DAY limit orders can sit unfilled.
-_fill_pending: dict[str, datetime] = {}
+# wait this long (measured from trade.entry_date, not process uptime -- a
+# restart must never reset this clock) for it to fill. After the window, an
+# order with no broker position and no fill execution is treated as
+# terminated-unfilled and the pending trade is cancelled (so unfilled/
+# ProgramCancelled limit orders never become phantom positions, or worse,
+# indefinitely block the duplicate-open guard for that underlying). Generous
+# because DAY limit orders can sit unfilled.
 FILL_GRACE_SECONDS = 1800   # 30 min for a working order to fill before cancelling
 
 # Heartbeat: monotonic timestamp of the last background-scheduler loop, used by the
@@ -1290,7 +1292,6 @@ async def _poll_fills() -> None:
 
         if not open_trades and not pending_trades:
             _close_pending.clear()
-            _fill_pending.clear()
             return
 
         # Fetch recent IBKR executions once — detailed per-fill records so we can
@@ -1329,6 +1330,16 @@ async def _poll_fills() -> None:
         # broker (or a fill execution is found). If, after the grace window, there
         # is still no position and no fill, the order terminated unfilled (DAY
         # expiry / ProgramCancel) → cancel it so it never becomes a phantom.
+        #
+        # The grace-period clock is derived from trade.entry_date (persisted),
+        # not an in-memory "first seen" timestamp — a backend restart mid-grace
+        # (e.g. a routine deploy) used to reset the in-memory clock, leaving a
+        # stuck pending trade blocking the duplicate-open guard for up to
+        # another full FILL_GRACE_SECONDS after the restart, on top of however
+        # long it had already been stuck. Confirmed in production: an
+        # unfilled NVDA bracket order stayed pending well past 30 minutes and
+        # blocked every subsequent NVDA signal with "skipped: already_open"
+        # because a deploy landed mid-grace-period and restarted its timer.
         for trade in pending_trades:
             underlying = (trade.underlying or "").upper()
             tid = str(trade.id)
@@ -1337,19 +1348,14 @@ async def _poll_fills() -> None:
             filled = underlying in live_symbols or bool(fills_by_symbol.get(underlying))
             if filled:
                 await trade_recorder.confirm_fill(trade_id=tid)
-                _fill_pending.pop(tid, None)
                 continue
-            first_seen = _fill_pending.setdefault(tid, now)
-            if (now - first_seen).total_seconds() >= FILL_GRACE_SECONDS:
+            entry_dt = trade.entry_date
+            if entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+            if (now - entry_dt).total_seconds() >= FILL_GRACE_SECONDS:
                 await trade_recorder.cancel_pending(
                     trade_id=tid, reason="order_unfilled_timeout",
                 )
-                _fill_pending.pop(tid, None)
-        # Drop fill markers for trades no longer pending
-        _pending_ids = {str(t.id) for t in pending_trades}
-        for tid in list(_fill_pending.keys()):
-            if tid not in _pending_ids:
-                _fill_pending.pop(tid, None)
 
         still_missing: set[str] = set()
 
