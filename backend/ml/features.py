@@ -96,11 +96,19 @@ def ror_label(trade) -> float:
     """
     Realized return-on-risk for a closed BacktestTrade — the training label.
 
-    max_loss = capital actually at risk (spread width minus credit received,
-    the same quantity main.py's options-scan path computes as max_loss_dollars
-    before gating on the scorer). Clipped to [-2, 2] to keep force-closed
-    end-of-backtest trades (pnl=0, could still produce a degenerate ratio if
-    max_loss rounds to ~0) and any other outliers from dominating the loss.
+    max_loss = capital actually at risk. For the three credit strategies this
+    is spread width minus credit received (the same quantity main.py's
+    options-scan path computes as max_loss_dollars before gating on the
+    scorer). bull_call_debit_spread has negative entry_credit (= -debit paid,
+    see backtester.py's entry-side comment) and a different risk profile: max
+    loss is simply the debit paid, not width-minus-credit — that formula
+    would add the debit to the width instead of isolating it. Clipped to
+    [-2, 2] to keep force-closed end-of-backtest trades (pnl=0, could still
+    produce a degenerate ratio if max_loss rounds to ~0) and any other
+    outliers from dominating the loss.
     """
-    max_loss = max((trade.spread_width - trade.entry_credit) * 100 * trade.contracts, 1.0)
+    if trade.entry_credit < 0:
+        max_loss = max(abs(trade.entry_credit) * 100 * trade.contracts, 1.0)
+    else:
+        max_loss = max((trade.spread_width - trade.entry_credit) * 100 * trade.contracts, 1.0)
     return float(np.clip(trade.pnl / max_loss, -2.0, 2.0))

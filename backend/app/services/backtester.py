@@ -315,6 +315,12 @@ class Backtester:
                 T_remaining = max(dte / 365, 0.001)
                 sigma = current_rv if current_rv > 0.05 else 0.15
 
+                # bull_call_debit_spread is long the (more valuable) long_strike
+                # leg and short the (cheaper) short_strike leg — the opposite
+                # cash-flow direction from the three credit strategies, which
+                # are short the more valuable leg. Every "buy back the short,
+                # keep the long" formula below has to flip for it.
+                _is_debit = trade.strategy == "bull_call_debit_spread"
                 try:
                     _use_calls = trade.strategy in ("bear_call_spread", "bull_call_debit_spread")
                     _pricer_fn = self.pricer.call_price if _use_calls else self.pricer.put_price
@@ -326,10 +332,14 @@ class Backtester:
                         fill_close, trade.long_strike, T_remaining,
                         RISK_FREE_RATE, sigma
                     )
-                    # Cost to close the spread (buy back short, sell long)
-                    current_val = max(current_short_val - current_long_val, 0.01)
+                    if _is_debit:
+                        # Value if sold to close = long leg owned - short leg owed.
+                        current_val = max(current_long_val - current_short_val, 0.01)
+                    else:
+                        # Cost to close the spread (buy back short, sell long)
+                        current_val = max(current_short_val - current_long_val, 0.01)
                 except Exception:
-                    current_val = trade.entry_credit * 0.5  # fallback
+                    current_val = abs(trade.entry_credit) * 0.5  # fallback
 
                 short_breached = abs(fill_close - trade.short_strike) < 2.0
 
@@ -341,11 +351,17 @@ class Backtester:
                 )
 
                 if exit_decision.should_exit or dte <= 0:
-                    # FIX #7: Exit fill uses VIX-adjusted slippage
+                    # FIX #7: Exit fill uses VIX-adjusted slippage.
+                    # Credit spreads close by buying back (side="BUY", fills
+                    # above mid — unfavorable to the buyer). The debit spread
+                    # closes by selling what it owns (side="SELL", fills below
+                    # mid — unfavorable to the seller); using "BUY" here would
+                    # apply slippage in the wrong direction for it.
                     spread_result = self.fill_sim.simulate_spread_fill(
                         legs=[
                             {"bid": max(current_val - 0.05, 0.01),
-                             "ask": current_val + 0.05, "side": "BUY"},
+                             "ask": current_val + 0.05,
+                             "side": "SELL" if _is_debit else "BUY"},
                         ],
                         contracts=trade.contracts,
                         vix=vix,
@@ -355,10 +371,18 @@ class Backtester:
                     exit_cost = exit_fill.gross_fill_price
                     commission = exit_fill.commission
 
-                    pnl = (
-                        (trade.entry_credit - exit_cost) * trade.contracts * 100
-                        - commission
-                    )
+                    if _is_debit:
+                        # entry_credit is negative (= -debit paid, see entry
+                        # side); profit = sale proceeds - debit paid.
+                        pnl = (
+                            (exit_cost + trade.entry_credit) * trade.contracts * 100
+                            - commission
+                        )
+                    else:
+                        pnl = (
+                            (trade.entry_credit - exit_cost) * trade.contracts * 100
+                            - commission
+                        )
 
                     trade.exit_date = current_date
                     trade.exit_cost = exit_cost
@@ -534,13 +558,26 @@ class Backtester:
 
             fill_short = spread_result.leg_fills[0]
             fill_long  = spread_result.leg_fills[1]
+            # short_strike/long_strike always mean "leg sold"/"leg bought" — for
+            # the three credit strategies the short leg is worth more, so this
+            # comes out positive (credit received). bull_call_debit_spread is
+            # long the more valuable (ATM) leg and short the cheaper (OTM) leg,
+            # so this comes out negative here — it already equals -(debit paid),
+            # no separate debit computation needed.
             net_credit = fill_short.gross_fill_price - fill_long.gross_fill_price
 
-            # Filter marginal trades — credit must be at least 20% of spread width
-            if net_credit <= 0.05:
-                continue
-            if spread_width > 0 and (net_credit / spread_width) < MIN_CREDIT_TO_WIDTH:
-                continue
+            # Filter marginal trades — premium must be at least 20% of spread width
+            if strategy_name == "bull_call_debit_spread":
+                net_debit = -net_credit
+                if net_debit <= 0.05:
+                    continue
+                if spread_width > 0 and (net_debit / spread_width) < MIN_CREDIT_TO_WIDTH:
+                    continue
+            else:
+                if net_credit <= 0.05:
+                    continue
+                if spread_width > 0 and (net_credit / spread_width) < MIN_CREDIT_TO_WIDTH:
+                    continue
 
             total_commission = fill_short.commission + fill_long.commission
 
