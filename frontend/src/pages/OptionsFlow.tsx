@@ -4,6 +4,12 @@
  * A real-time OPRA flow feed needs a paid subscription; this shows a periodic
  * snapshot of contracts trading at unusually high volume vs. open interest across
  * the watchlist. Polls /api/options-flow (server caches ~5 min).
+ *
+ * Card feed is the default view (dense info-card per contract); Table remains
+ * available as a toggle for a denser scan. Every field rendered here maps to a
+ * real backend field (see unusual_activity.py::flow_row) — there is no per-row
+ * timestamp, sweep/block classification, or position P/L in the source data, so
+ * none of those are shown or invented.
  */
 import React, { useEffect, useState } from "react";
 
@@ -14,8 +20,106 @@ interface FlowRow {
   iv: number | null; premium: number; sentiment: string;
 }
 
+type ViewMode = "cards" | "table";
+
 const usd = (n: number) =>
   "$" + Math.round(n).toLocaleString("en-US");
+
+function Cell({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontFamily: "var(--sans)", fontSize: 9.5, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--ink-faint)", marginBottom: 2 }}>
+        {label}
+      </div>
+      <div className="mono" style={{ fontSize: 12.5, fontWeight: 600, color: tone || "var(--ink)" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function FlowCard({ row, onPickTicker }: { row: FlowRow; onPickTicker: (t: string) => void }) {
+  const isCall = row.type === "CALL";
+  const tone = isCall ? "var(--green)" : "var(--red)";
+  // "Why is this flagged" signal — the real basis for inclusion (volume well
+  // above open interest, or brand-new open interest). Deliberately not
+  // labeled SWEEP/BLOCK: the source data has no true order-type/side field
+  // (see unusual_activity.py — "no true buy/sell side").
+  const unusualTag = row.vol_oi_ratio != null ? `${row.vol_oi_ratio}× VOL/OI` : "NEW OI";
+
+  return (
+    <div
+      style={{
+        background: "var(--bg-2)",
+        border: "1px solid var(--line-dim)",
+        borderLeft: `3px solid ${tone}`,
+        borderRadius: 3,
+        padding: "12px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      {/* Header: ticker + type + DTE, premium at right */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <button
+            className="mono"
+            onClick={() => onPickTicker(row.ticker)}
+            title={`Filter to ${row.ticker}`}
+            style={{
+              background: "transparent", border: "none", cursor: "pointer", padding: 0,
+              color: "var(--ink)", fontSize: 16, fontWeight: 700,
+            }}
+          >
+            {row.ticker}
+          </button>
+          <span style={{
+            fontFamily: "var(--sans)", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
+            padding: "2px 7px", borderRadius: 3, color: tone,
+            background: isCall ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
+            border: `1px solid ${tone}55`,
+          }}>
+            {row.type}
+          </span>
+          {row.dte != null && (
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>{row.dte}d</span>
+          )}
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: tone }}>{usd(row.premium)}</div>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 9, color: "var(--ink-faint)" }}>est. premium</div>
+        </div>
+      </div>
+
+      {/* Signal row: sentiment + the unusual-activity basis */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--ink-dim)", textTransform: "capitalize" }}>
+          {row.sentiment}
+        </span>
+        <span style={{
+          fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.04em",
+          color: "var(--amber)", border: "1px solid rgba(245,158,11,0.4)",
+          borderRadius: 2, padding: "1px 6px",
+        }}>
+          {unusualTag}
+        </span>
+      </div>
+
+      {/* Stat grid — every value is a real field from the scan row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "8px 10px" }}>
+        <Cell label="Strike" value={row.strike} />
+        <Cell label="Exp" value={row.expiry} />
+        <Cell label="Spot" value={row.spot != null ? row.spot.toFixed(2) : "—"} />
+        <Cell label="Last" value={`$${row.last_price.toFixed(2)}`} />
+        <Cell label="Volume" value={row.volume.toLocaleString("en-US")} />
+        <Cell label="Open Int." value={row.open_interest.toLocaleString("en-US")} />
+        <Cell label="Vol/OI" value={row.vol_oi_ratio != null ? `${row.vol_oi_ratio}×` : "NEW"} tone="var(--amber)" />
+        <Cell label="IV" value={row.iv != null ? `${(row.iv * 100).toFixed(0)}%` : "—"} />
+      </div>
+    </div>
+  );
+}
 
 export default function OptionsFlow() {
   const [rows, setRows] = useState<FlowRow[]>([]);
@@ -24,6 +128,7 @@ export default function OptionsFlow() {
   const [ticker, setTicker] = useState("");
   const [tickerInput, setTickerInput] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "call" | "put">("all");
+  const [view, setView] = useState<ViewMode>("cards");
 
   const load = () => {
     fetch("/api/options-flow?min_volume=200&ratio=2&top=150")
@@ -47,9 +152,14 @@ export default function OptionsFlow() {
     setTicker(tickerInput.trim().toUpperCase());
   };
 
+  const pickTicker = (t: string) => { setTicker(t); setTickerInput(t); };
+
   const shown = rows.filter(r =>
     (ticker === "" || r.ticker === ticker) &&
     (typeFilter === "all" || r.type === typeFilter.toUpperCase()));
+
+  // Newest-premium-first is already the backend's sort; cards read best in
+  // that same order (highest-conviction prints first).
 
   // Stats reflect the current filtered view, not the whole watchlist.
   const callCount = shown.filter(r => r.type === "CALL").length;
@@ -91,11 +201,35 @@ export default function OptionsFlow() {
           </div>
         )}
 
+        <div style={{ flex: 1 }} />
+
+        <div style={{ display: "flex", gap: 4 }} role="group" aria-label="View mode">
+          <button
+            className={`btn-t ${view === "cards" ? "active" : ""}`}
+            style={{ padding: "4px 10px", fontSize: 10 }}
+            aria-pressed={view === "cards"}
+            onClick={() => setView("cards")}
+          >
+            CARDS
+          </button>
+          <button
+            className={`btn-t ${view === "table" ? "active" : ""}`}
+            style={{ padding: "4px 10px", fontSize: 10 }}
+            aria-pressed={view === "table"}
+            onClick={() => setView("table")}
+          >
+            TABLE
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
         <form onSubmit={submitTicker} style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input
             value={tickerInput}
             onChange={e => setTickerInput(e.target.value)}
             placeholder="Ticker"
+            aria-label="Filter by ticker"
             style={{
               width: 80, fontFamily: "var(--mono)", fontSize: 12, textTransform: "uppercase",
               background: "var(--bg-2)", border: "1px solid var(--line-dim)", color: "var(--ink)",
@@ -128,7 +262,7 @@ export default function OptionsFlow() {
               <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP CALLS</span>
               {topCalls.map(([tk, premium], i) => (
                 <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--green)" }}
-                  onClick={() => { setTicker(tk); setTickerInput(tk); }}>
+                  onClick={() => pickTicker(tk)}>
                   {i + 1}. {tk} {usd(premium)}
                 </button>
               ))}
@@ -139,7 +273,7 @@ export default function OptionsFlow() {
               <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP PUTS</span>
               {topPuts.map(([tk, premium], i) => (
                 <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--red)" }}
-                  onClick={() => { setTicker(tk); setTickerInput(tk); }}>
+                  onClick={() => pickTicker(tk)}>
                   {i + 1}. {tk} {usd(premium)}
                 </button>
               ))}
@@ -161,6 +295,12 @@ export default function OptionsFlow() {
           {rows.length === 0
             ? "No unusual options activity right now (markets may be closed, or nothing above threshold)."
             : "No rows match the current ticker/type filter."}
+        </div>
+      ) : view === "cards" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
+          {shown.map((r, i) => (
+            <FlowCard key={`${r.ticker}-${r.strike}-${r.expiry}-${i}`} row={r} onPickTicker={pickTicker} />
+          ))}
         </div>
       ) : (
         <table className="t-table">
