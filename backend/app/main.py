@@ -195,6 +195,11 @@ async def on_startup() -> None:
         await kill_switch_service.rehydrate()
         logger.info("Kill switch wired to broker (engaged=%s)", kill_switch_service.is_engaged)
 
+        # Restore execution mode (manual/copilot/autopilot) from the DB so a
+        # restart can't silently reset an operator's chosen mode back to default.
+        from app.services.execution_mode import execution_mode_manager
+        await execution_mode_manager.rehydrate()
+
         # Account mode guard — log loudly at startup if the gateway's real account
         # doesn't match IBKR_TRADING_MODE (e.g. configured paper but logged into a
         # live account). Execution is independently fail-closed per order; this is

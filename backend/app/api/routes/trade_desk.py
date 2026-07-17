@@ -276,7 +276,7 @@ async def set_execution_mode(body: SetExecutionModeRequest):
         mode = ExecutionMode(body.mode)
     except ValueError:
         raise HTTPException(400, f"Invalid mode. Valid: manual, copilot, autopilot")
-    return execution_mode_manager.set_mode(mode)
+    return await execution_mode_manager.set_mode(mode)
 
 
 # ── Pending approvals (Copilot) ────────────────────────────────────────────────

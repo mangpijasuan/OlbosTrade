@@ -5,19 +5,19 @@ Manual   : Signals generated, NO orders sent. Review in Trade Desk.
 Copilot  : Signals queued as pending approvals. User approves → order sent.
 Autopilot: Signals pass guardrails → order sent immediately.
 
-Persists across restarts via /tmp/olbostrade_execution_mode.json.
+Persisted to the execution_events table (kind="mode_change") so mode survives
+a restart. Previously written to /tmp/olbostrade_exec_mode.json inside the
+container, wiped on every deploy — the same class of bug as the bracket-order
+ack race and pending-order grace-period timer fixed earlier. Mirrors the kill
+switch's own DB rehydrate() pattern (kill_switch.py).
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger(__name__)
-
-PERSIST_PATH = "/tmp/olbostrade_exec_mode.json"
 
 
 class ExecutionMode(str, Enum):
@@ -31,35 +31,68 @@ class ExecutionModeManager:
         self._mode = ExecutionMode.MANUAL
         self._changed_at = datetime.now(timezone.utc)
         self._changed_by = "default"
-        self._load()
-
-    def _load(self) -> None:
-        try:
-            data = json.loads(open(PERSIST_PATH).read())
-            self._mode = ExecutionMode(data.get("mode", "manual"))
-            logger.info("ExecutionModeManager restored — mode: %s", self._mode.value.upper())
-        except Exception:
-            logger.info("ExecutionModeManager initialized — mode: MANUAL (default)")
-
-    def _save(self) -> None:
-        try:
-            with open(PERSIST_PATH, "w") as f:
-                json.dump({"mode": self._mode.value}, f)
-        except Exception as e:
-            logger.warning("Could not persist execution mode: %s", e)
 
     @property
     def mode(self) -> ExecutionMode:
         return self._mode
 
-    def set_mode(self, mode: ExecutionMode, by: str = "user") -> dict:
+    async def set_mode(self, mode: ExecutionMode, by: str = "user") -> dict:
+        from app.core.database import AsyncSessionLocal
+        from app.models.execution_event import ExecutionEvent
+
         prev = self._mode
         self._mode = mode
         self._changed_at = datetime.now(timezone.utc)
         self._changed_by = by
-        self._save()
+
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    session.add(ExecutionEvent(
+                        kind="mode_change",
+                        status=mode.value,
+                        payload={
+                            "mode": mode.value,
+                            "changed_by": by,
+                            "changed_at": self._changed_at.isoformat(),
+                        },
+                    ))
+        except Exception as exc:
+            logger.error("Could not persist execution mode change: %s", exc)
+
         logger.info("Execution mode: %s → %s (by %s)", prev.value, mode.value, by)
         return self.summary()
+
+    async def rehydrate(self) -> None:
+        """
+        Restore the last-set mode from the DB on startup. Defaults to MANUAL
+        (the safe default) if there's no history or the read fails.
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.models.execution_event import ExecutionEvent
+        from sqlalchemy import select
+
+        try:
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(ExecutionEvent)
+                    .where(ExecutionEvent.kind == "mode_change")
+                    .order_by(ExecutionEvent.created_at.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
+            if row is not None:
+                self._mode = ExecutionMode(row.status)
+                self._changed_at = row.created_at
+                self._changed_by = (row.payload or {}).get("changed_by", "restored")
+                logger.info(
+                    "ExecutionModeManager restored — mode: %s", self._mode.value.upper()
+                )
+            else:
+                logger.info("ExecutionModeManager initialized — mode: MANUAL (default, no history)")
+        except Exception as exc:
+            logger.error(
+                "ExecutionModeManager rehydrate failed (defaulting to MANUAL): %s", exc
+            )
 
     def summary(self) -> dict:
         descriptions = {

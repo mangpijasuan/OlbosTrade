@@ -100,13 +100,23 @@ async def test_kill_switch_get_set():
 
 @pytest.mark.asyncio
 async def test_execution_mode_get_set_and_invalid():
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    txn = MagicMock()
+    txn.__aenter__ = AsyncMock(return_value=txn)
+    txn.__aexit__ = AsyncMock(return_value=False)
+    session.begin = MagicMock(return_value=txn)
+    session.add = MagicMock()
+
     out = await get_execution_mode()
     assert "mode" in out
-    ok = await set_execution_mode(SetExecutionModeRequest(mode="copilot"))
-    assert ok["mode"] == "copilot"
-    with pytest.raises(Exception):
-        await set_execution_mode(SetExecutionModeRequest(mode="bogus"))
-    await set_execution_mode(SetExecutionModeRequest(mode="manual"))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        ok = await set_execution_mode(SetExecutionModeRequest(mode="copilot"))
+        assert ok["mode"] == "copilot"
+        with pytest.raises(Exception):
+            await set_execution_mode(SetExecutionModeRequest(mode="bogus"))
+        await set_execution_mode(SetExecutionModeRequest(mode="manual"))
 
 
 # ── pending / approve / reject ────────────────────────────────────────────────────
@@ -191,7 +201,7 @@ async def test_execution_log_limit():
 # ── handle_signal dispatcher ──────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_handle_signal_manual_noop():
-    td.execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    td.execution_mode_manager._mode = ExecutionMode.MANUAL
     with patch.object(td, "_queue_pending_approval", new=AsyncMock()) as queue_mock:
         await handle_signal({"id": "x", "ticker": "SPY"})   # no error, nothing queued
     queue_mock.assert_not_called()
@@ -199,24 +209,24 @@ async def test_handle_signal_manual_noop():
 
 @pytest.mark.asyncio
 async def test_handle_signal_copilot_queues():
-    td.execution_mode_manager.set_mode(ExecutionMode.COPILOT)
+    td.execution_mode_manager._mode = ExecutionMode.COPILOT
     with patch.object(td, "_queue_pending_approval", new=AsyncMock()) as queue_mock:
         signal = {"id": "c1", "ticker": "SPY"}
         await handle_signal(signal)
     queue_mock.assert_awaited_once_with(signal)
-    td.execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    td.execution_mode_manager._mode = ExecutionMode.MANUAL
 
 
 @pytest.mark.asyncio
 async def test_handle_signal_autopilot_executes_and_logs_block():
-    td.execution_mode_manager.set_mode(ExecutionMode.AUTOPILOT)
+    td.execution_mode_manager._mode = ExecutionMode.AUTOPILOT
     with patch.object(td, "_execute_signal",
                       new=AsyncMock(return_value={"result": "blocked", "reason": "kill_switch"})), \
          patch.object(td, "_log_execution", new=AsyncMock()) as log_mock:
         await handle_signal({"id": "a1", "ticker": "SPY"})
     log_mock.assert_awaited_once()
     assert log_mock.await_args.args[0]["result"] == "blocked"
-    td.execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    td.execution_mode_manager._mode = ExecutionMode.MANUAL
 
 
 # ── options execution branch of _execute_signal ───────────────────────────────────

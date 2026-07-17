@@ -19,9 +19,9 @@ from app.services.execution_mode import ExecutionMode, execution_mode_manager
 
 @pytest.fixture(autouse=True)
 def _clean_state():
-    execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    execution_mode_manager._mode = ExecutionMode.MANUAL
     yield
-    execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    execution_mode_manager._mode = ExecutionMode.MANUAL
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +43,7 @@ def _req() -> ScanSignalRequest:
 
 async def test_autopilot_scan_signal_does_not_auto_execute(_queue_spy):
     """AUTOPILOT must NOT place a trade from a scan — it queues instead."""
-    execution_mode_manager.set_mode(ExecutionMode.AUTOPILOT)
+    execution_mode_manager._mode = ExecutionMode.AUTOPILOT
     with patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock:
         result = await submit_scan_signal(_req())
 
@@ -55,7 +55,7 @@ async def test_autopilot_scan_signal_does_not_auto_execute(_queue_spy):
 
 
 async def test_manual_scan_signal_queues_for_approval(_queue_spy):
-    execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    execution_mode_manager._mode = ExecutionMode.MANUAL
     with patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock:
         result = await submit_scan_signal(_req())
 
@@ -66,7 +66,7 @@ async def test_manual_scan_signal_queues_for_approval(_queue_spy):
 
 
 async def test_copilot_scan_signal_goes_to_copilot_queue(_queue_spy):
-    execution_mode_manager.set_mode(ExecutionMode.COPILOT)
+    execution_mode_manager._mode = ExecutionMode.COPILOT
     with patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock:
         result = await submit_scan_signal(_req())
 
@@ -77,7 +77,7 @@ async def test_copilot_scan_signal_goes_to_copilot_queue(_queue_spy):
 
 
 async def test_ticker_is_normalized_uppercase(_queue_spy):
-    execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+    execution_mode_manager._mode = ExecutionMode.MANUAL
     result = await submit_scan_signal(_req())
     queued = _queue_spy.await_args.args[0]
     assert queued["ticker"] == "SPY"
