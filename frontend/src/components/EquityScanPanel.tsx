@@ -13,6 +13,8 @@ import React, { useEffect, useState, useRef } from "react";
 import WatchlistManager from "./WatchlistManager";
 import IBKRLiveControl from "./IBKRLiveControl";
 import SignalAttribution from "./SignalAttribution";
+import SignalDivergence from "./SignalDivergence";
+import type { SignalAttributionData } from "../types/signal";
 import { useLiveData } from "../hooks/useLiveData";
 
 interface Candidate {
@@ -462,6 +464,10 @@ export default function EquityScanPanel() {
   const [executingCandidates, setExecutingCandidates] = useState<Set<string>>(new Set());
   const [showWatchlistManager, setShowWatchlistManager] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
+  // Background scanner's own signals, keyed by ticker (most recent per ticker),
+  // fetched so a candidate here can be checked for divergence against the
+  // independently-generated signal for the same symbol (see SignalDivergence).
+  const [backgroundSignals, setBackgroundSignals] = useState<Record<string, any>>({});
   const gridRef = useRef<HTMLDivElement>(null);
 
   const isMobile = windowWidth < 768;
@@ -572,6 +578,28 @@ export default function EquityScanPanel() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // Fetch the background scanner's recent signals for divergence comparison.
+  useEffect(() => {
+    const loadBackgroundSignals = async () => {
+      try {
+        const response = await fetch("/api/equity/signals?limit=50");
+        const data = await response.json();
+        const byTicker: Record<string, any> = {};
+        for (const sig of data.signals || []) {
+          // Signals are returned most-recent-first — keep only the first
+          // (latest) seen per ticker.
+          if (!byTicker[sig.ticker]) byTicker[sig.ticker] = sig;
+        }
+        setBackgroundSignals(byTicker);
+      } catch (e) {
+        console.error("Failed to load background signals:", e);
+      }
+    };
+    loadBackgroundSignals();
+    const interval = setInterval(loadBackgroundSignals, 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Auto-refresh logic
   useEffect(() => {
     if (!autoRefresh) return;
@@ -664,6 +692,36 @@ export default function EquityScanPanel() {
   };
 
   const filtered = getFilteredAndSorted();
+
+  // Build attribution for this scan-panel candidate and, if the background
+  // scanner has independently generated a signal for the same ticker, for
+  // that signal too — SignalDivergence renders only when the two disagree.
+  const buildDivergencePair = (cand: Candidate): {
+    signalA: SignalAttributionData;
+    signalB: SignalAttributionData | null;
+  } => {
+    const signalA: SignalAttributionData = {
+      direction: cand.action,
+      source: cand.pricing_source
+        ? `Equity Scan Engine (${cand.pricing_source.replace(/_/g, " ")})`
+        : "Equity Scan Engine",
+      timeframe: null,
+      confidence: typeof cand.confidence === "number" ? cand.confidence : null,
+      updatedAt: (cand as unknown as { last_update?: string }).last_update ?? null,
+      authority: "advisory",
+    };
+    const bg = backgroundSignals[cand.ticker];
+    if (!bg || bg.action === "HOLD") return { signalA, signalB: null };
+    const signalB: SignalAttributionData = {
+      direction: bg.action,
+      source: bg.source || "Equity Signal Scanner",
+      timeframe: null,
+      confidence: typeof bg.confidence === "number" ? bg.confidence : null,
+      updatedAt: bg.generated_at ?? null,
+      authority: "unknown",
+    };
+    return { signalA, signalB };
+  };
 
   // Live IBKR data integration
   const { isConnected: liveConnected, lastUpdate: lastLiveUpdate } = useLiveData(
@@ -999,6 +1057,7 @@ export default function EquityScanPanel() {
         >
           {filtered.map((cand) => {
             const evColor = cand.expected_value > 300 ? "var(--green)" : cand.expected_value > 150 ? "var(--amber)" : "var(--ink-faint)";
+            const { signalA, signalB } = buildDivergencePair(cand);
 
             return (
               <div
@@ -1034,21 +1093,7 @@ export default function EquityScanPanel() {
                     >
                       {cand.ticker}
                     </span>
-                    <SignalAttribution
-                      data={{
-                        direction: cand.action,
-                        source: cand.pricing_source
-                          ? `Equity Scan Engine (${cand.pricing_source.replace(/_/g, " ")})`
-                          : "Equity Scan Engine",
-                        // Repository verified: equity candidates carry no
-                        // bar-timeframe field — left unknown, not guessed.
-                        timeframe: null,
-                        confidence: typeof cand.confidence === "number" ? cand.confidence : null,
-                        updatedAt: (cand as unknown as { last_update?: string }).last_update ?? null,
-                        authority: "advisory",
-                      }}
-                      size="sm"
-                    />
+                    <SignalAttribution data={signalA} size="sm" />
                   </div>
                   <span
                     style={{
@@ -1061,6 +1106,12 @@ export default function EquityScanPanel() {
                     ${cand.expected_value.toFixed(0)}
                   </span>
                 </div>
+
+                {signalB && (
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <SignalDivergence symbol={cand.ticker} signalA={signalA} signalB={signalB} />
+                  </div>
+                )}
 
                 <div
                   style={{

@@ -55,12 +55,14 @@ class EquityScanCandidate:
     orderflow_score: float = 0.0
     iv_overlay_boost: float = 0.0
     reasons: dict = field(default_factory=dict)
+    source: str = "Equity Scan Engine"
 
     def as_dict(self) -> dict:
         """Serialize candidate to dict for API response."""
         return {
             "ticker": self.ticker,
             "action": self.action,
+            "source": self.source,
             "confidence": self.confidence,
             "expected_value": round(self.expected_value, 2),
             "ev_per_risk": round(self.ev_per_risk, 4),
@@ -241,7 +243,7 @@ async def _compute_iv_rank_for_ticker(ticker: str, broker=None) -> tuple[float, 
         return 0.0, 0.0
 
 
-async def _yf_bars_for_ticker(ticker: str, limit: int = 120) -> list[dict]:
+async def _yf_bars_for_ticker(ticker: str, limit: int = 250) -> list[dict]:
     """Fetch OHLCV bars from yfinance."""
     import yfinance as yf
 
@@ -292,8 +294,10 @@ async def scan_options_for_ticker(
         logger.debug("Earnings gate triggered for %s", ticker)
         return None
 
-    # Fetch bars
-    bars = await _yf_bars_for_ticker(ticker, limit=120)
+    # Fetch bars. Needs >=200 so EMA200 computes — with 120 it was always NaN,
+    # forcing above_ema200=False and skewing every signal ~1pt bearish versus
+    # the background scanner's own 250-bar fetch (main.py's _run_equity_scan).
+    bars = await _yf_bars_for_ticker(ticker, limit=250)
     if len(bars) < 30:
         logger.debug("Insufficient bars for %s: %d", ticker, len(bars))
         return None

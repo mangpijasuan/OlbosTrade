@@ -28,6 +28,7 @@ interface Signal {
   iv_overlay_boost: number;
   earnings_gated: boolean;
   reason?: string;
+  source?: string;
   trade_plan?: TradePlan;
   indicators?: {
     rsi?: number;
@@ -58,7 +59,10 @@ function ConfidenceBar({ value }: { value: number }) {
 function toAttribution(sig: Signal): SignalAttributionData {
   return {
     direction: sig.action,
-    source: "Equity Scan Engine",
+    // These signals come from the background scanner (main.py), not the
+    // equity_scan_engine.py-backed scan panel — read the producer's own
+    // "source" field rather than guessing which engine generated it.
+    source: sig.source ?? "unknown",
     // Repository verified: /api/equity/signals does not return a bar-timeframe
     // field on the signal payload — do not fabricate one.
     timeframe: null,

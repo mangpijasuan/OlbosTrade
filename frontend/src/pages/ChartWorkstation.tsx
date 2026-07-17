@@ -348,8 +348,10 @@ export default function ChartWorkstation() {
       .finally(() => setChartLoading(false));
   }, [symbol, timeframe]);
 
+  // No fallback to signals[0] — a symbol with no signal of its own must show
+  // an explicit "no signal" state, not another ticker's trade plan.
   const selectedSignal = useMemo(
-    () => signals.find((item) => item.ticker === symbol) || signals[0] || null,
+    () => signals.find((item) => item.ticker === symbol) || null,
     [signals, symbol],
   );
   const selectedSnapshot = watchSnapshots[symbol];
@@ -492,7 +494,7 @@ export default function ChartWorkstation() {
                 marginBottom: 12,
               }} className="workstation-metrics-grid">
                 {[
-                  { label: "Signal", value: selectedSignal?.action || "HOLD", tone: selectedSignal?.action === "BUY" ? "var(--green)" : selectedSignal?.action === "SELL" ? "var(--red)" : "var(--ink-dim)" },
+                  { label: "Signal", value: selectedSignal ? selectedSignal.action : "NO SIGNAL", tone: selectedSignal?.action === "BUY" ? "var(--green)" : selectedSignal?.action === "SELL" ? "var(--red)" : "var(--ink-dim)" },
                   { label: "Confidence", value: selectedSignal ? `${Math.round(selectedSignal.confidence * 100)}%` : "—", tone: "var(--amber)" },
                   { label: "IV Rank", value: ivRank?.iv_rank != null ? `${Math.round(ivRank.iv_rank)}` : "—", tone: "var(--cyan)" },
                   { label: "RSI", value: selectedSignal?.indicators?.rsi != null ? selectedSignal.indicators.rsi.toFixed(1) : "—", tone: "var(--ink)" },
@@ -538,6 +540,16 @@ export default function ChartWorkstation() {
 
           <div className="workstation-bottom-grid">
             <InfoCard title="TA Trade Plan">
+              {!selectedSignal && (
+                <div style={{
+                  marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
+                  color: "var(--ink-dim)", padding: "8px 10px",
+                  border: "1px solid var(--line-dim)", background: "var(--bg-3)",
+                }}>
+                  No signal for {symbol} — levels below are chart-derived
+                  (recent support/resistance), not the signal engine's own plan.
+                </div>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }} className="workstation-plan-grid">
                 {[
                   { label: "Entry", value: fmtMoney(entry, 2), tone: "var(--cyan)" },

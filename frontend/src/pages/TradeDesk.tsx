@@ -184,7 +184,11 @@ function ApprovalsQueue() {
                   <SignalAttribution
                     data={{
                       direction: s.action || s.strategy?.toUpperCase() || "BUY",
-                      source: s.spread ? "Options Scan Engine" : "Equity Scan Engine",
+                      // Pending-approval payloads now carry their own "source"
+                      // field from whichever producer queued them (background
+                      // scanner or scan panel) — read it directly instead of
+                      // guessing equity-vs-options from spread presence.
+                      source: s.source ?? "unknown",
                       // Repository verified: pending-approval payloads carry no
                       // bar-timeframe field — left unknown rather than guessed.
                       timeframe: null,

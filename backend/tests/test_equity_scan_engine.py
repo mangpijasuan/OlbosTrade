@@ -3,13 +3,47 @@ Kelly sizing, and the entry ladder."""
 
 from __future__ import annotations
 
+import inspect
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.services.equity_scan_engine import (
+    EquityScanCandidate,
     _build_entry_ladder,
     _compute_kelly_fraction,
     _compute_pop_from_distance,
+    _yf_bars_for_ticker,
+    scan_options_for_ticker,
 )
+
+
+# ── Bar depth (ARCHITECTURE_AUDIT.md finding #4) ─────────────────────────────
+def test_default_bar_limit_is_250_not_120():
+    # With 120 bars EMA200 is always NaN, forcing above_ema200=False and
+    # skewing every signal ~1pt bearish vs. the background scanner's own
+    # 250-bar fetch (main.py's _run_equity_scan). Both must match.
+    assert inspect.signature(_yf_bars_for_ticker).parameters["limit"].default == 250
+
+
+@pytest.mark.asyncio
+async def test_scan_options_for_ticker_fetches_250_bars():
+    with patch("app.services.equity_scan_engine._yf_bars_for_ticker",
+               new=AsyncMock(return_value=[])) as bars_mock, \
+         patch("app.services.equity_scan_engine.earnings_gate", return_value=False):
+        await scan_options_for_ticker("AAPL")
+    bars_mock.assert_awaited_once_with("AAPL", limit=250)
+
+
+# ── Signal attribution (ARCHITECTURE_AUDIT.md finding #4) ────────────────────
+def test_candidate_default_source_is_equity_scan_engine():
+    candidate = EquityScanCandidate(
+        ticker="AAPL", action="BUY", confidence=0.6, expected_value=10.0,
+        ev_per_risk=0.5, pop=0.6, kelly_fraction=0.1, entry_price=100.0,
+        stop_price=95.0, target_price=110.0, max_loss=5.0, max_profit=10.0,
+    )
+    assert candidate.source == "Equity Scan Engine"
+    assert candidate.as_dict()["source"] == "Equity Scan Engine"
 
 
 # ── _compute_pop_from_distance ───────────────────────────────────────────────
