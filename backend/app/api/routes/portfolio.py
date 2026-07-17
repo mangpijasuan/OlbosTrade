@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.core.config import settings
+from app.services.account_state import get_account_value
 
 router = APIRouter()
 
@@ -15,6 +15,8 @@ async def portfolio_heat():
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
     from app.services.portfolio_engine import compute_portfolio_risk, position_risk_dollars, sector_for
+
+    account_value = await get_account_value()
 
     positions: list[dict] = []
     try:
@@ -30,9 +32,9 @@ async def portfolio_heat():
             })
     except Exception as exc:
         return {"error": str(exc),
-                **compute_portfolio_risk([], settings.starting_capital)}
+                **compute_portfolio_risk([], account_value)}
 
-    return compute_portfolio_risk(positions, settings.starting_capital)
+    return compute_portfolio_risk(positions, account_value)
 
 
 @router.get("/allocation")

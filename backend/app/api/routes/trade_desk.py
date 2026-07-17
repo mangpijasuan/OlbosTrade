@@ -37,15 +37,10 @@ async def _fetch_portfolio_state() -> PortfolioState:
     from app.core.config import settings as _cfg
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
+    from app.services.account_state import get_account_value
     from sqlalchemy import select, func
 
-    current_value = _cfg.starting_capital
-    try:
-        from app.broker.broker_factory import get_broker
-        _acct = await get_broker().get_account_summary()
-        current_value = float(_acct.net_liquidation or _cfg.starting_capital)
-    except Exception:
-        pass  # broker unreachable — fall back to config value, acceptable
+    current_value = await get_account_value()
 
     today = date.today()
     week_start = today - timedelta(days=today.weekday())

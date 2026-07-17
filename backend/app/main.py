@@ -489,10 +489,13 @@ async def _run_equity_scan() -> None:
             earnings_gate, score_equity_signal,
         )
         from app.services.orderflow_engine import get_orderflow_score
+        from app.services.account_state import get_account_value
         from app.api.routes.equity import _recent_signals   # shared in-memory store
 
         watchlist = settings.get_equity_watchlist()
         routable: list = []   # qualifying signals to rank + route highest-first
+        # One live account fetch per scan cycle, not per-ticker.
+        account_value = await get_account_value()
 
         for ticker in watchlist[:5]:   # cap at 5 per background tick
             try:
@@ -525,7 +528,7 @@ async def _run_equity_scan() -> None:
                 trade_plan = {}
                 if routable_signal:
                     trade_plan = compute_equity_trade_plan(
-                        ind, action, portfolio_value=settings.starting_capital,
+                        ind, action, portfolio_value=account_value,
                     )
 
                 signal = {
@@ -1039,11 +1042,8 @@ async def _run_options_scan(symbol: str = "SPY") -> None:
         # mode's risk-per-trade %, and the regime's options size multiplier —
         # same machinery the equity path uses.
         from app.services.risk_manager import RiskManager
-        try:
-            acct = await broker.get_account_summary()
-            portfolio_value = float(acct.net_liquidation or settings.starting_capital)
-        except Exception:
-            portfolio_value = settings.starting_capital
+        from app.services.account_state import get_account_value
+        portfolio_value = await get_account_value()
         risk_pct    = trading_mode_manager.config.risk_per_trade_pct
         regime_mult = float(getattr(_current_regime, "options_size_multiplier", 1.0))
         # Volatility-based sizing: scale the regime budget inversely with vol so
