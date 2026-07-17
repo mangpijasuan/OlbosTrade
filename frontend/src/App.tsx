@@ -46,7 +46,6 @@ const PAGES: Record<string, React.ComponentType> = {
   risk:      RiskCenter,
   journal:   Journal,
   analytics: ModeAnalytics,
-  csp:       IncomeStrategiesCenter,
   scan:      ScanCenter,
   settings:  SystemCenter,
 

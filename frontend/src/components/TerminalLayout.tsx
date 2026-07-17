@@ -75,7 +75,6 @@ const NAV_MODEL: NavGroup[] = [
   { id: "options", label: "Options Desk", icon: "flow", children: [
     { key: "options:chain",  label: "Options Chain" },
     { key: "scan",           label: "Spread Scanner" },
-    { key: "csp",            label: "CSP Screener" },
     { key: "options:income", label: "Income Strategies" },
     { key: "options:flow",   label: "Options Flow" },
   ]},
