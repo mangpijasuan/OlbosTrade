@@ -89,6 +89,7 @@ from app.api.routes import intel
 from app.api.routes import chart
 from app.api.routes import alerts
 from app.api.routes import ibkr_live
+from app.api.routes import forecasts
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -175,6 +176,7 @@ app.include_router(chart.router,       prefix="/api/chart",        tags=["Chart 
 app.include_router(alerts.router,      prefix="/api/alerts",       tags=["Smart Alerts"])
 app.include_router(alerts.notif_router,prefix="/api/notifications",tags=["Notifications"])
 app.include_router(ibkr_live.router,   prefix="/api/ibkr",         tags=["IBKR Live Data"])
+app.include_router(forecasts.router,   prefix="/api/forecasts",    tags=["Probabilistic Intelligence"])
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────

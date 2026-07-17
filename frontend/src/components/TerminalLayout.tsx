@@ -47,8 +47,8 @@ const ICONS: Record<string, string> = {
 
 // Grouped navigation. A group is either a leaf (has `key`, navigates directly)
 // or a section (has `children`, expands to sub-items). Each leaf `key` routes
-// through the alias map in App.tsx — existing pages keep working; not-yet-built
-// items land on a shared "coming soon" placeholder.
+// through the alias map in App.tsx. Every visible leaf must resolve to a real
+// workspace; unfinished destinations stay out of production navigation.
 type NavLeaf  = { key: string; label: string };
 type NavGroup = { id: string; label: string; icon: string; key?: string; children?: NavLeaf[] };
 
@@ -58,8 +58,7 @@ const NAV_MODEL: NavGroup[] = [
     { key: "markets:heatmaps",   label: "Heatmaps" },
     { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:chart",      label: "Chart" },
-    { key: "markets:news",       label: "News & Catalysts" },
-    { key: "markets:calendar",   label: "Calendar" },
+    { key: "markets:news",       label: "News & Events" },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:copilot",   label: "Copilot Review" },
@@ -77,29 +76,27 @@ const NAV_MODEL: NavGroup[] = [
     { key: "options:chain",  label: "Options Chain" },
     { key: "scan",           label: "Spread Scanner" },
     { key: "csp",            label: "CSP Screener" },
-    { key: "options:cc",     label: "Covered Calls" },
-    { key: "options:wheel",  label: "Wheel Lab" },
+    { key: "options:income", label: "Income Strategies" },
     { key: "options:flow",   label: "Options Flow" },
   ]},
   { id: "risk", label: "Portfolio & Risk", icon: "risk", key: "risk", children: [
-    { key: "risk:heat",     label: "Portfolio Heat" },
-    { key: "risk:exposure", label: "Exposure" },
-    { key: "risk:var",      label: "Stress & VaR" },
-    { key: "risk:drawdown", label: "Drawdown" },
+    { key: "risk:heat",     label: "Risk Overview" },
     { key: "risk:rules",    label: "Risk Rules" },
   ]},
-  { id: "lab", label: "Research Lab", icon: "lab", children: [
+  { id: "lab", label: "Research", icon: "lab", children: [
+    { key: "lab:scenario",   label: "Scenario Lab" },
+    { key: "lab:strategy",   label: "Strategy Research" },
+    { key: "lab:market",     label: "Market & Regime" },
+    { key: "lab:models",     label: "Model Health" },
+    { key: "lab:intel",      label: "Intelligence" },
     { key: "backtest",       label: "Backtests" },
-    { key: "lab:walkforward",label: "Walk-Forward" },
-    { key: "lab:ml",         label: "ML Models" },
-    { key: "lab",            label: "Paper Validation" },
   ]},
   { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal" },
   { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics" },
-  { id: "data", label: "Data & Integrations", icon: "data", children: [
-    { key: "data:broker",  label: "Broker Gateway" },
-    { key: "data:market",  label: "Market Data" },
-    { key: "data:quality", label: "Data Quality" },
+  { id: "system", label: "System", icon: "data", children: [
+    { key: "system:broker",  label: "Broker" },
+    { key: "system:market",  label: "Market Data" },
+    { key: "system:quality", label: "Data Quality" },
   ]},
 ];
 
@@ -138,7 +135,7 @@ function TickerCell({ label, snap }: { label: string; snap: SnapShot }) {
   );
 }
 
-// A single row in the account popover menu (Settings / Help / Log out).
+// A single row in the operational system popover.
 function AccountMenuItem({ icon, label, onClick, danger = false }: {
   icon: string; label: string; onClick: () => void; danger?: boolean;
 }) {
@@ -624,12 +621,10 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
       {/* Grouped nav */}
       {NAV_MODEL.map(renderGroup)}
 
-      {/* Settings / account — pinned bottom, above kill switch */}
+      {/* Operational system access — pinned above the kill switch. */}
       <div style={{ flex: 1 }} />
 
-      {/* Account plate — avatar initials + name, opens a small account menu.
-          TODO: source from a real auth/user backend once one exists (see
-          Settings.tsx's "presentational only" note); hardcoded for now. */}
+      {/* No account/auth controls are shown until a real identity backend exists. */}
       <div
         onMouseEnter={() => setHovered("account")}
         onMouseLeave={() => setHovered(null)}
@@ -637,7 +632,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
       >
         <button
           onClick={() => setAccountMenuOpen(o => !o)}
-          title="Mangpi Jasuan — Account"
+          title="Open system status"
           style={{
             width: "100%", height: 44, display: "flex", alignItems: "center",
             justifyContent: showLabels ? "flex-start" : "center",
@@ -653,15 +648,15 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
             display: "flex", alignItems: "center", justifyContent: "center",
             fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700,
           }}>
-            MJ
+            SYS
           </span>
           {showLabels && (
             <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.3, overflow: "hidden" }}>
               <span style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                Mangpi Jasuan
+                System
               </span>
               <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", letterSpacing: "0.06em" }}>
-                ACCOUNT
+                OPERATIONS
               </span>
             </span>
           )}
@@ -673,7 +668,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
             whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em",
             textTransform: "uppercase", color: "var(--ink)", zIndex: 100, pointerEvents: "none",
           }}>
-            Mangpi Jasuan
+            System
           </div>
         )}
 
@@ -696,17 +691,13 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
               zIndex: 100, overflow: "hidden",
             }}>
               <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line-dim)" }}>
-                <div style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--ink)" }}>Mangpi Jasuan</div>
+                <div style={{ fontFamily: "var(--sans)", fontSize: 12, color: "var(--ink)" }}>System Operations</div>
                 <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
-                  mangpijasuan@zomiok.org
+                  broker · data · health
                 </div>
               </div>
-              <AccountMenuItem icon="settings" label="Settings"
+              <AccountMenuItem icon="settings" label="System"
                 onClick={() => { setAccountMenuOpen(false); onNav("settings"); }} />
-              <AccountMenuItem icon="help" label="Help"
-                onClick={() => setAccountMenuOpen(false)} />
-              <AccountMenuItem icon="logout" label="Log out" danger
-                onClick={() => setAccountMenuOpen(false)} />
             </div>
           </>
         )}

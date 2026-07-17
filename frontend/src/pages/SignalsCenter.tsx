@@ -8,26 +8,19 @@ import TabBar from "../components/TabBar";
 import ErrorBoundary from "../components/ErrorBoundary";
 import EquitySignals from "./EquitySignals";
 import Strategy from "./Strategy";
-import OptionsFlow from "./OptionsFlow";
-import IncomeMatrix from "./IncomeMatrix";
 
 const TABS = [
   { key: "signals", label: "Live Signals" },
-  { key: "flow", label: "Options Flow" },
-  { key: "income", label: "Income Matrix" },
-  { key: "strategies", label: "Strategies" },
+  { key: "strategies", label: "Strategy Library" },
 ];
 
 export default function SignalsCenter({ initialTab = "signals" }: { initialTab?: string }) {
   const [tab, setTab] = useState(initialTab);
   return (
     <div>
-      <TabBar tabs={TABS} active={tab} onChange={setTab} />
+      <TabBar tabs={TABS} active={tab} onChange={setTab} label="Signal views" />
       <ErrorBoundary label="Signals">
-        {tab === "signals" ? <EquitySignals />
-          : tab === "flow" ? <OptionsFlow />
-          : tab === "income" ? <IncomeMatrix />
-          : <Strategy />}
+        {tab === "signals" ? <EquitySignals /> : <Strategy />}
       </ErrorBoundary>
     </div>
   );

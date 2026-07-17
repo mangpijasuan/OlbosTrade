@@ -133,6 +133,8 @@ export const api = {
   getComparison: () => request("/api/research/comparison"),
   runComparison: (body: object) => request("/api/research/run-comparison", { method: "POST", body: JSON.stringify(body) }),
   getModelPerformance: () => request("/api/research/model-performance"),
+  getForecast: <T = unknown>(symbol: string, horizon: number) =>
+    request<T>(`/api/forecasts/symbols/${encodeURIComponent(symbol)}?horizon=${horizon}`),
 
   // ── Journal ───────────────────────────────────────────────────────────────
   createJournalEntry: (body: object) => request("/api/journal/entry", { method: "POST", body: JSON.stringify(body) }),
