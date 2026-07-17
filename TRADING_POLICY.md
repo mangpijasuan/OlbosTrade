@@ -91,6 +91,16 @@ alignment**, market-structure, breakout confirmation, and a setup scanner.
 calendar, and insider intelligence. **Smart Alerts** (`services/alerts/`) adds a
 rule engine + Notification Center.
 
+**Regime staleness:** the classifier reclassifies every 30 minutes; if it goes
+more than 2 hours without a successful reclassify (`MAX_REGIME_AGE_SECONDS` in
+`main.py`) — or has never classified at all — the regime resets to `UNKNOWN`
+before the next equity or options scan. `UNKNOWN` is fail-open for both asset
+types at reduced size (`REGIME_CONFIG[RegimeType.UNKNOWN]`), never fail-closed;
+that asymmetry (equities proceeding on unknown regime, options refusing to
+scan at all) was a bug, not a deliberate safety margin. Real danger is still
+covered separately by the kill switch and `CRISIS` classification, both of
+which remain fail-closed.
+
 ## Options analysis
 IV / IV rank / greeks / POP / expected move / EV / breakeven. *Status:* ✅
 (`options_intelligence`, signal scorer).

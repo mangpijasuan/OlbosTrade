@@ -144,6 +144,13 @@ _scheduler_last_tick: float = 0.0
 # 8 of 13 charter symbols were never scanned by autopilot at all).
 _equity_scan_offset: int = 0
 
+# _reclassify_regime() logs and returns on data failure, silently keeping
+# whatever classification is already in _current_regime — with no age check,
+# a regime from hours ago (or a permanently-failing reclassify) could gate
+# strategy selection indefinitely. 2 hours is 4x the 30-min reclassify
+# interval — generous for a transient yfinance outage, not indefinite.
+MAX_REGIME_AGE_SECONDS = 2 * 60 * 60
+
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
@@ -343,6 +350,11 @@ async def _background_scheduler() -> None:
                 await _guarded(_reclassify_regime(), "regime", 45)
                 last_regime = now
 
+            # Missing or stale regime → reset to UNKNOWN (fail-open, reduced
+            # size) before either scan branch gates on it, so both branches
+            # see the same policy for "we don't actually know the regime".
+            _ensure_fresh_regime()
+
             # Every 15 min: equity signal scan.
             # Run when regime allows equities, OR when regime is not yet classified
             # (treated as UNKNOWN — reduced size, but signals are still generated).
@@ -485,6 +497,55 @@ async def _reclassify_regime() -> None:
 
     except Exception as exc:
         logger.warning("Regime reclassify failed: %s", exc, exc_info=True)
+
+
+def _ensure_fresh_regime() -> None:
+    """
+    Reset _current_regime to a synthetic UNKNOWN classification if it's
+    missing or older than MAX_REGIME_AGE_SECONDS.
+
+    Previously an unclassified regime (None) was fail-open for equities but
+    fail-closed for options (_run_options_scan returns immediately when
+    _current_regime is None) — two different policies for the same "we don't
+    actually know the regime" state, with no staleness check at all once a
+    classification existed. This unifies both paths onto UNKNOWN's own
+    fail-open, reduced-size policy (REGIME_CONFIG[RegimeType.UNKNOWN]) —
+    CRISIS/kill-switch already cover the fail-closed case for real danger.
+    """
+    global _current_regime
+    from datetime import datetime, timezone
+    from app.services.regime_classifier import RegimeState, RegimeType, REGIME_CONFIG
+
+    now = datetime.now(timezone.utc)
+    if _current_regime is not None:
+        age_s = (now - _current_regime.classified_at).total_seconds()
+        if age_s <= MAX_REGIME_AGE_SECONDS:
+            return
+        logger.warning(
+            "Regime classification is stale (%.0fs old, was %s) — "
+            "resetting to UNKNOWN until the next successful reclassify",
+            age_s, _current_regime.regime.value,
+        )
+    else:
+        logger.info("No regime classification yet — using UNKNOWN until the first reclassify")
+
+    config = REGIME_CONFIG[RegimeType.UNKNOWN]
+    _current_regime = RegimeState(
+        regime=RegimeType.UNKNOWN,
+        description=config["description"],
+        confidence=0.0,
+        strategies_allowed=config["strategies_allowed"],
+        equity_strategies_allowed=config.get("equity_strategies_allowed", []),
+        size_multiplier=config["size_multiplier"],
+        equity_size_multiplier=config.get("equity_size_multiplier", 0.5),
+        options_size_multiplier=config.get("options_size_multiplier", config["size_multiplier"]),
+        signal_threshold=config["signal_threshold_override"],
+        iron_condor_allowed=config["iron_condor_allowed"],
+        credit_spread_allowed=config["credit_spread_allowed"],
+        classified_at=now,
+        features_used=None,
+        reasoning=["regime missing or stale — reset to UNKNOWN by the staleness gate"],
+    )
 
 
 def _rotate_watchlist_window(watchlist: list, offset: int, size: int = 5) -> tuple:
