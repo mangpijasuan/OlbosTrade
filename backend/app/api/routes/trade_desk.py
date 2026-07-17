@@ -138,11 +138,91 @@ async def _strategy_health_for(strategy: str):
         logger.warning("Strategy health check failed for %s: %s", strategy, exc)
         return None
 
-# ── In-memory pending approvals (Copilot mode) ────────────────────────────────
-# Populated by main.py background scanner when mode == copilot
-# { signal_id: { ...signal_data, "asset_type": "equity"|"options" } }
-_pending_approvals: dict[str, dict] = {}
-_execution_log:     list[dict]      = []   # history of all auto/manual executions
+# ── Persisted pending approvals + execution log (Copilot mode / audit trail) ──
+# Backed by the execution_events table so a deploy mid-Copilot-session doesn't
+# silently drop pending approvals, and the execution log — the only audit trail
+# of what autopilot actually did — survives restarts. Mirrors the kill switch's
+# own DB-persistence pattern (GuardrailEvent, kill_switch.py).
+
+async def _queue_pending_approval(signal: dict) -> None:
+    """Queue a signal for Copilot/manual approval."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+
+    signal_id = signal.get("id") or str(uuid.uuid4())
+    signal["id"] = signal_id
+    signal["queued_at"] = datetime.now(timezone.utc).isoformat()
+    signal["status"] = "pending_approval"
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            session.add(ExecutionEvent(
+                kind="pending_approval",
+                signal_id=signal_id,
+                ticker=signal.get("ticker"),
+                asset_type=signal.get("asset_type"),
+                status="pending",
+                payload=signal,
+            ))
+
+
+async def _get_pending_approvals() -> list[dict]:
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(
+            select(ExecutionEvent)
+            .where(ExecutionEvent.kind == "pending_approval", ExecutionEvent.status == "pending")
+            .order_by(ExecutionEvent.created_at.desc())
+        )).scalars().all()
+    return [r.payload for r in rows]
+
+
+async def _resolve_pending_approval(signal_id: str, resolution: str) -> Optional[dict]:
+    """Mark a pending approval approved/rejected and return its payload, or None if not found/already resolved."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            row = (await session.execute(
+                select(ExecutionEvent).where(
+                    ExecutionEvent.kind == "pending_approval",
+                    ExecutionEvent.signal_id == signal_id,
+                    ExecutionEvent.status == "pending",
+                )
+            )).scalar_one_or_none()
+            if row is None:
+                return None
+            payload = row.payload
+            row.status = resolution
+    return payload
+
+
+async def _log_execution(entry: dict) -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+
+    try:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                session.add(ExecutionEvent(
+                    kind="execution",
+                    signal_id=entry.get("signal_id") or entry.get("id"),
+                    ticker=entry.get("ticker"),
+                    asset_type=entry.get("asset_type"),
+                    status=entry.get("result"),
+                    payload=entry,
+                ))
+    except Exception as exc:
+        logger.critical(
+            "CRITICAL: execution result for %s could not be persisted to the "
+            "execution log: %s — result was: %s",
+            entry.get("ticker"), exc, entry,
+        )
 
 
 class SetExecutionModeRequest(BaseModel):
@@ -204,7 +284,7 @@ async def set_execution_mode(body: SetExecutionModeRequest):
 @router.get("/pending")
 async def get_pending():
     """List signals awaiting user approval in Copilot mode."""
-    items = sorted(_pending_approvals.values(),
+    items = sorted(await _get_pending_approvals(),
                    key=lambda x: x.get("queued_at", ""), reverse=True)
     return {
         "mode":    execution_mode_manager.mode.value,
@@ -216,23 +296,22 @@ async def get_pending():
 @router.post("/approve/{signal_id}")
 async def approve_signal(signal_id: str):
     """User approves a pending signal → executes order."""
-    if signal_id not in _pending_approvals:
+    signal = await _resolve_pending_approval(signal_id, "approved")
+    if signal is None:
         raise HTTPException(404, "Signal not found in pending queue")
 
-    signal = _pending_approvals.pop(signal_id)
     result = await _execute_signal(signal, approved_by="user")
-    _execution_log.insert(0, {**result, "signal_id": signal_id, "approved_by": "user"})
-    del _execution_log[200:]
+    await _log_execution({**result, "signal_id": signal_id, "approved_by": "user"})
     return result
 
 
 @router.post("/reject/{signal_id}")
 async def reject_signal(signal_id: str):
     """User rejects a pending signal — no order sent."""
-    if signal_id not in _pending_approvals:
+    signal = await _resolve_pending_approval(signal_id, "rejected")
+    if signal is None:
         raise HTTPException(404, "Signal not found in pending queue")
 
-    signal = _pending_approvals.pop(signal_id)
     entry = {
         "signal_id":   signal_id,
         "ticker":      signal.get("ticker"),
@@ -242,8 +321,7 @@ async def reject_signal(signal_id: str):
         "rejected_at": datetime.now(timezone.utc).isoformat(),
         "rejected_by": "user",
     }
-    _execution_log.insert(0, entry)
-    del _execution_log[200:]
+    await _log_execution(entry)
     return entry
 
 
@@ -272,8 +350,7 @@ async def manual_trade(req: ManualTradeRequest):
     result = await _execute_signal(signal, approved_by="manual")
     if result.get("result") == "error":
         raise HTTPException(500, result.get("error", "execution error"))
-    _execution_log.insert(0, result)
-    del _execution_log[200:]
+    await _log_execution(result)
     return result
 
 
@@ -281,7 +358,21 @@ async def manual_trade(req: ManualTradeRequest):
 
 @router.get("/execution-log")
 async def get_execution_log(limit: int = 50):
-    return {"log": _execution_log[:limit], "total": len(_execution_log)}
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select, func
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(
+            select(ExecutionEvent)
+            .where(ExecutionEvent.kind == "execution")
+            .order_by(ExecutionEvent.created_at.desc())
+            .limit(limit)
+        )).scalars().all()
+        total = (await session.execute(
+            select(func.count()).where(ExecutionEvent.kind == "execution")
+        )).scalar_one()
+    return {"log": [r.payload for r in rows], "total": total}
 
 
 # ── Internal execution helper ──────────────────────────────────────────────────
@@ -674,10 +765,7 @@ async def handle_signal(signal: dict) -> None:
         return   # Signal already written to _recent_signals — nothing more to do
 
     elif mode == ExecutionMode.COPILOT:
-        signal_id = signal.get("id", str(uuid.uuid4()))
-        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
-        signal["status"]    = "pending_approval"
-        _pending_approvals[signal_id] = signal
+        await _queue_pending_approval(signal)
 
     elif mode == ExecutionMode.AUTOPILOT:
         # All risk checks (kill switch, guardrails, duplicate) happen inside _execute_signal.
@@ -690,8 +778,7 @@ async def handle_signal(signal: dict) -> None:
                 "Autopilot %s for %s: %s",
                 result["result"], signal.get("ticker"), result.get("reason"),
             )
-        _execution_log.insert(0, result)
-        del _execution_log[200:]
+        await _log_execution(result)
 
 
 # ── Scan panel signal submission ────────────────────────────────────────────────
@@ -747,9 +834,7 @@ async def submit_scan_signal(req: ScanSignalRequest):
 
     if mode == ExecutionMode.MANUAL:
         # Queue for user approval
-        signal["status"] = "pending_approval"
-        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
-        _pending_approvals[signal_id] = signal
+        await _queue_pending_approval(signal)
         return {
             "signal_id": signal_id,
             "ticker": req.ticker,
@@ -759,9 +844,7 @@ async def submit_scan_signal(req: ScanSignalRequest):
 
     elif mode == ExecutionMode.COPILOT:
         # Copilot decides
-        signal["status"] = "pending_approval"
-        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
-        _pending_approvals[signal_id] = signal
+        await _queue_pending_approval(signal)
         return {
             "signal_id": signal_id,
             "ticker": req.ticker,
@@ -776,9 +859,7 @@ async def submit_scan_signal(req: ScanSignalRequest):
         # from scans is gated off. To re-enable, restore the _execute_signal call
         # below and add tests for the scan → _execute_signal path.
         #   result = await _execute_signal(signal, approved_by="scan_autopilot")
-        signal["status"] = "pending_approval"
-        signal["queued_at"] = datetime.now(timezone.utc).isoformat()
-        _pending_approvals[signal_id] = signal
+        await _queue_pending_approval(signal)
         logger.info(
             "Scan signal %s for %s queued (autopilot scan-execute disabled pending tests)",
             signal_id, req.ticker,

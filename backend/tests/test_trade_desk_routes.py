@@ -34,13 +34,6 @@ def _account_guard_ok():
         yield
 
 
-@pytest.fixture(autouse=True)
-def _clear_state():
-    td._pending_approvals.clear()
-    td._execution_log.clear()
-    yield
-
-
 def _clean():
     return PortfolioState(current_value=100_000.0, starting_capital=100_000.0,
                           daily_pnl=0.0, weekly_pnl=0.0, monthly_pnl=0.0,
@@ -119,50 +112,58 @@ async def test_execution_mode_get_set_and_invalid():
 # ── pending / approve / reject ────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_pending_lists_queue():
-    td._pending_approvals["s1"] = {"id": "s1", "ticker": "SPY", "queued_at": "2026-01-01"}
-    out = await get_pending()
+    with patch.object(td, "_get_pending_approvals",
+                      new=AsyncMock(return_value=[{"id": "s1", "ticker": "SPY", "queued_at": "2026-01-01"}])):
+        out = await get_pending()
     assert out["count"] == 1 and out["pending"][0]["ticker"] == "SPY"
 
 
 @pytest.mark.asyncio
 async def test_approve_signal_executes():
-    td._pending_approvals["s1"] = {"id": "s1", "ticker": "SPY", "asset_type": "equity"}
-    with patch.object(td, "_execute_signal",
-                      new=AsyncMock(return_value={"result": "submitted", "ticker": "SPY"})):
+    with patch.object(td, "_resolve_pending_approval",
+                      new=AsyncMock(return_value={"id": "s1", "ticker": "SPY", "asset_type": "equity"})), \
+         patch.object(td, "_execute_signal",
+                      new=AsyncMock(return_value={"result": "submitted", "ticker": "SPY"})), \
+         patch.object(td, "_log_execution", new=AsyncMock()) as log_mock:
         out = await approve_signal("s1")
     assert out["result"] == "submitted"
-    assert "s1" not in td._pending_approvals
-    assert td._execution_log[0]["approved_by"] == "user"
+    log_mock.assert_awaited_once()
+    assert log_mock.await_args.args[0]["approved_by"] == "user"
 
 
 @pytest.mark.asyncio
 async def test_approve_signal_not_found():
-    with pytest.raises(Exception):
-        await approve_signal("missing")
+    with patch.object(td, "_resolve_pending_approval", new=AsyncMock(return_value=None)):
+        with pytest.raises(Exception):
+            await approve_signal("missing")
 
 
 @pytest.mark.asyncio
 async def test_reject_signal():
-    td._pending_approvals["s2"] = {"id": "s2", "ticker": "QQQ", "action": "BUY"}
-    out = await reject_signal("s2")
+    with patch.object(td, "_resolve_pending_approval",
+                      new=AsyncMock(return_value={"id": "s2", "ticker": "QQQ", "action": "BUY"})), \
+         patch.object(td, "_log_execution", new=AsyncMock()) as log_mock:
+        out = await reject_signal("s2")
     assert out["result"] == "rejected" and out["rejected_by"] == "user"
-    assert "s2" not in td._pending_approvals
+    log_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_reject_signal_not_found():
-    with pytest.raises(Exception):
-        await reject_signal("nope")
+    with patch.object(td, "_resolve_pending_approval", new=AsyncMock(return_value=None)):
+        with pytest.raises(Exception):
+            await reject_signal("nope")
 
 
 # ── manual trade + execution log ──────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_manual_trade_success_logs():
     with patch.object(td, "_execute_signal",
-                      new=AsyncMock(return_value={"result": "submitted", "ticker": "AAPL"})):
+                      new=AsyncMock(return_value={"result": "submitted", "ticker": "AAPL"})), \
+         patch.object(td, "_log_execution", new=AsyncMock()) as log_mock:
         out = await manual_trade(ManualTradeRequest(ticker="aapl", action="buy", shares=5))
     assert out["result"] == "submitted"
-    assert len(td._execution_log) == 1
+    log_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -175,8 +176,15 @@ async def test_manual_trade_error_raises():
 
 @pytest.mark.asyncio
 async def test_execution_log_limit():
-    td._execution_log.extend([{"i": i} for i in range(5)])
-    out = await get_execution_log(limit=3)
+    rows = [MagicMock(payload={"i": i}) for i in range(3)]
+    list_result = MagicMock(scalars=MagicMock(return_value=MagicMock(all=lambda: rows)))
+    count_result = MagicMock(scalar_one=MagicMock(return_value=5))
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.execute = AsyncMock(side_effect=[list_result, count_result])
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        out = await get_execution_log(limit=3)
     assert len(out["log"]) == 3 and out["total"] == 5
 
 
@@ -184,25 +192,30 @@ async def test_execution_log_limit():
 @pytest.mark.asyncio
 async def test_handle_signal_manual_noop():
     td.execution_mode_manager.set_mode(ExecutionMode.MANUAL)
-    await handle_signal({"id": "x", "ticker": "SPY"})   # no error, nothing queued
-    assert td._pending_approvals == {}
+    with patch.object(td, "_queue_pending_approval", new=AsyncMock()) as queue_mock:
+        await handle_signal({"id": "x", "ticker": "SPY"})   # no error, nothing queued
+    queue_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_handle_signal_copilot_queues():
     td.execution_mode_manager.set_mode(ExecutionMode.COPILOT)
-    await handle_signal({"id": "c1", "ticker": "SPY"})
-    assert "c1" in td._pending_approvals
-    assert td._pending_approvals["c1"]["status"] == "pending_approval"
+    with patch.object(td, "_queue_pending_approval", new=AsyncMock()) as queue_mock:
+        signal = {"id": "c1", "ticker": "SPY"}
+        await handle_signal(signal)
+    queue_mock.assert_awaited_once_with(signal)
+    td.execution_mode_manager.set_mode(ExecutionMode.MANUAL)
 
 
 @pytest.mark.asyncio
 async def test_handle_signal_autopilot_executes_and_logs_block():
     td.execution_mode_manager.set_mode(ExecutionMode.AUTOPILOT)
     with patch.object(td, "_execute_signal",
-                      new=AsyncMock(return_value={"result": "blocked", "reason": "kill_switch"})):
+                      new=AsyncMock(return_value={"result": "blocked", "reason": "kill_switch"})), \
+         patch.object(td, "_log_execution", new=AsyncMock()) as log_mock:
         await handle_signal({"id": "a1", "ticker": "SPY"})
-    assert td._execution_log[0]["result"] == "blocked"
+    log_mock.assert_awaited_once()
+    assert log_mock.await_args.args[0]["result"] == "blocked"
     td.execution_mode_manager.set_mode(ExecutionMode.MANUAL)
 
 

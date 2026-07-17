@@ -4,6 +4,7 @@ from app.models.strategy_snapshot import StrategySnapshot
 from app.models.reconciliation_snapshot import ReconciliationSnapshot
 from app.models.watchlist import Watchlist, WatchlistSymbol
 from app.models.alert import AlertRule, Notification
+from app.models.execution_event import ExecutionEvent
 
 __all__ = [
     "StrategyProfile",
@@ -14,4 +15,5 @@ __all__ = [
     "WatchlistSymbol",
     "AlertRule",
     "Notification",
+    "ExecutionEvent",
 ]

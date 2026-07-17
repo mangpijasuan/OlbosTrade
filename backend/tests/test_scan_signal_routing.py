@@ -19,13 +19,18 @@ from app.services.execution_mode import ExecutionMode, execution_mode_manager
 
 @pytest.fixture(autouse=True)
 def _clean_state():
-    td._pending_approvals.clear()
-    td._execution_log.clear()
     execution_mode_manager.set_mode(ExecutionMode.MANUAL)
     yield
-    td._pending_approvals.clear()
-    td._execution_log.clear()
     execution_mode_manager.set_mode(ExecutionMode.MANUAL)
+
+
+@pytest.fixture(autouse=True)
+def _queue_spy():
+    """Scan-signal routing only needs to prove *whether* a signal was queued for
+    approval, not how the queue is persisted — that's covered separately in
+    test_execution_events_helpers.py. Patch the persistence call to a spy."""
+    with patch.object(td, "_queue_pending_approval", new=AsyncMock()) as mock:
+        yield mock
 
 
 def _req() -> ScanSignalRequest:
@@ -36,7 +41,7 @@ def _req() -> ScanSignalRequest:
     )
 
 
-async def test_autopilot_scan_signal_does_not_auto_execute():
+async def test_autopilot_scan_signal_does_not_auto_execute(_queue_spy):
     """AUTOPILOT must NOT place a trade from a scan — it queues instead."""
     execution_mode_manager.set_mode(ExecutionMode.AUTOPILOT)
     with patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock:
@@ -45,32 +50,34 @@ async def test_autopilot_scan_signal_does_not_auto_execute():
     exec_mock.assert_not_called()
     assert result["status"] == "pending_approval"
     # signal is queued, not executed
-    assert result["signal_id"] in td._pending_approvals
-    assert td._execution_log == []
+    _queue_spy.assert_awaited_once()
+    assert _queue_spy.await_args.args[0]["id"] == result["signal_id"]
 
 
-async def test_manual_scan_signal_queues_for_approval():
+async def test_manual_scan_signal_queues_for_approval(_queue_spy):
     execution_mode_manager.set_mode(ExecutionMode.MANUAL)
     with patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock:
         result = await submit_scan_signal(_req())
 
     exec_mock.assert_not_called()
     assert result["status"] == "pending_approval"
-    assert result["signal_id"] in td._pending_approvals
+    _queue_spy.assert_awaited_once()
+    assert _queue_spy.await_args.args[0]["id"] == result["signal_id"]
 
 
-async def test_copilot_scan_signal_goes_to_copilot_queue():
+async def test_copilot_scan_signal_goes_to_copilot_queue(_queue_spy):
     execution_mode_manager.set_mode(ExecutionMode.COPILOT)
     with patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock:
         result = await submit_scan_signal(_req())
 
     exec_mock.assert_not_called()
     assert result["status"] == "pending_copilot"
-    assert result["signal_id"] in td._pending_approvals
+    _queue_spy.assert_awaited_once()
+    assert _queue_spy.await_args.args[0]["id"] == result["signal_id"]
 
 
-async def test_ticker_is_normalized_uppercase():
+async def test_ticker_is_normalized_uppercase(_queue_spy):
     execution_mode_manager.set_mode(ExecutionMode.MANUAL)
     result = await submit_scan_signal(_req())
-    queued = td._pending_approvals[result["signal_id"]]
+    queued = _queue_spy.await_args.args[0]
     assert queued["ticker"] == "SPY"
