@@ -138,6 +138,12 @@ FILL_GRACE_SECONDS = 1800   # 30 min for a working order to fill before cancelli
 # Executive Summary's "Trading Agent — Running" health check.
 _scheduler_last_tick: float = 0.0
 
+# Equity scan only ever samples 5 tickers per tick (broker/API rate limits) —
+# this rotates which 5, so all watchlist symbols get scanned over several
+# cycles instead of the same first-5 forever (previously watchlist[:5] meant
+# 8 of 13 charter symbols were never scanned by autopilot at all).
+_equity_scan_offset: int = 0
+
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
@@ -481,8 +487,27 @@ async def _reclassify_regime() -> None:
         logger.warning("Regime reclassify failed: %s", exc, exc_info=True)
 
 
+def _rotate_watchlist_window(watchlist: list, offset: int, size: int = 5) -> tuple:
+    """
+    Pick the next `size` tickers to scan starting at `offset`, wrapping around
+    the watchlist, and return (window, next_offset).
+
+    Previously the background scan always took watchlist[:5] — with a 13-symbol
+    charter watchlist and a 5-per-tick cap, 8 symbols were never scanned by
+    autopilot at all. Rotating means every symbol gets scanned over multiple
+    cycles instead of the same first 5 forever.
+    """
+    if not watchlist:
+        return [], offset
+    n = len(watchlist)
+    start = offset % n
+    window = [watchlist[(start + i) % n] for i in range(min(size, n))]
+    return window, start + size
+
+
 async def _run_equity_scan() -> None:
     """Background scan — writes results into the same in-memory store as POST /api/equity/scan."""
+    global _equity_scan_offset
     try:
         logger.info("Background equity signal scan starting")
         import uuid
@@ -502,7 +527,12 @@ async def _run_equity_scan() -> None:
         # One live account fetch per scan cycle, not per-ticker.
         account_value = await get_account_value()
 
-        for ticker in watchlist[:5]:   # cap at 5 per background tick
+        # Rotate the scanned window each tick (5 per cycle, cap unchanged) so
+        # every watchlist symbol gets scanned over multiple cycles instead of
+        # always the same first 5.
+        scan_window, _equity_scan_offset = _rotate_watchlist_window(watchlist, _equity_scan_offset)
+
+        for ticker in scan_window:
             try:
                 if earnings_gate(ticker, settings.earnings_gate_days):
                     continue
