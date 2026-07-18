@@ -27,6 +27,8 @@ export const api = {
   getBacktestHistory: (limit?: number) =>
     request(`/api/backtest/history${limit ? `?limit=${limit}` : ""}`),
   compareStrategies: (body: object) => request("/api/backtest/compare", { method: "POST", body: JSON.stringify(body) }),
+  getBaselineComparison: (symbol: string, start: string, end: string) =>
+    request(`/api/backtest/baseline-comparison?symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`),
 
   // ── Market Data ───────────────────────────────────────────────────────────
   getSnapshot: (symbol: string) => request(`/api/market/snapshot/${symbol}`),

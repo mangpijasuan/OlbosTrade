@@ -291,3 +291,21 @@ async def compare_strategies(req: BacktestCompareRequest):
         "run_ids": run_ids,
         "message": "Poll each run_id via GET /api/backtest/{run_id}/results",
     }
+
+
+@router.get("/baseline-comparison")
+async def baseline_comparison(symbol: str, start: str, end: str, starting_capital: float = 25000.0):
+    """
+    Research-only comparison of our equity signal engine against simple
+    rule-based baselines (Buy & Hold, SMA cross, RSI threshold, MACD cross)
+    over one symbol's history. Stateless -- computed on demand, nothing
+    persisted, same pattern as the Scenario Lab forecast endpoint.
+    """
+    from app.services.baseline_comparison_engine import generate_comparison
+
+    try:
+        return await asyncio.to_thread(generate_comparison, symbol, start, end, starting_capital)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"comparison data unavailable: {exc}") from exc
