@@ -55,6 +55,7 @@ const PAGES: Record<string, React.ComponentType> = {
   "trade:orders":    () => <TradeDesk initialTab="signals" />,
   "trade:positions": () => <TradeDesk initialTab="positions" />,
   "trade:logs":      () => <TradeDesk initialTab="pnl" />,
+  "trade:execlog":   () => <TradeDesk initialTab="approvals" />,
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
   "strat:builder":   StrategyBuilder,
   "strat:alerts":    Alerts,

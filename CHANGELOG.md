@@ -1,5 +1,106 @@
 # Changelog
 
+## Unreleased — UI/UX Phase 4: landing trust + attribution display
+
+Frontend-only public-page honesty from `docs/ui-ux-phase1-4/PLAN.md` Phase 4.
+No trading, risk, execution, sizing, or authentication logic changed. No backend
+`source` field added (deferred pending operator approval).
+
+### Changed
+- **Landing Free/Pro:** both CTAs are **Open paper terminal** → `/terminal`.
+  Removed personal `mailto:` Pro CTA. Capability lists match what the terminal
+  actually exposes today; numeric limits labeled **(planned)** / not enforced.
+- **Landing footer:** removed five disabled Privacy/Terms/… stubs; replaced with
+  “Disclosures coming soon” + Sign In.
+- **Landing divergence copy:** scoped to the equity scan panel (where
+  `SignalDivergence` is actually wired), not a global promise.
+
+### Known limitations
+- Background scanner `/api/equity/signals` may still omit `source`; UI continues
+  to show “unknown” / “Source unavailable” via `SignalAttribution` rather than
+  inventing an engine name. Populating `source`/`engine` on the payload remains
+  an optional backend follow-up.
+
+## Unreleased — UI/UX Phase 3: speak human
+
+Frontend-only glossary and polish from `docs/ui-ux-phase1-4/PLAN.md` Phase 3.
+No trading, risk, execution, sizing, or authentication logic changed.
+
+### Added
+- **MetricHint** (`MetricHint.tsx`) — one-line hover glossary for Sharpe, Sortino,
+  Calmar, Max DD, POP, EV, Kelly, MAE, MFE, IV Rank, Net Theta, consecutive
+  losses, and related labels. Wired into Executive Summary tiles, Trade Desk
+  approvals + P&L/position headers, Dashboard stats/guardrails, and Chart IV Rank.
+- **Chart legend** on ChartWorkstation (SMA-20, VWAP, volume, price levels).
+- **CSS loading skeleton** (`.skeleton-block` / `.skeleton-shimmer`) replacing
+  bare `LOADING CHART…` text; respects `prefers-reduced-motion`.
+- **`.signal-badge`** bullish/bearish/neutral classes so direction chips are not
+  styled with trading-style `mode-badge` classes.
+
+### Changed
+- Dashboard **Net Theta / day** → **Net Theta (daily)**; **Consec. Loss**
+  displays as **Consecutive losses** via the glossary helper.
+
+## Unreleased — UI/UX Phase 2: first 60 seconds
+
+Frontend-only density and wayfinding from `docs/ui-ux-phase1-4/PLAN.md` Phase 2.
+No trading, risk, execution, sizing, or authentication logic changed.
+
+### Added
+- **Welcome banner** on Command Center (`WelcomeBanner.tsx`) — three steps
+  (Broker → Manual mode → Signals), dismissible via `olbos.welcome.dismissed`.
+- **TerminalNavContext** so pages can deep-link through the shell without
+  prop-drilling.
+- **Core vs Advanced nav** filter (`filterNavForDisplay`) with a sidebar
+  **Show advanced** toggle (`olbos.nav.advanced`). Deep-linked advanced pages
+  stay visible even when Advanced is collapsed.
+
+### Changed
+- **ExecutiveSummary** defaults to KPI cards + Portfolio Heat + a short
+  Performance strip (Win Rate, Profit Factor, Max DD, Current DD). Strategy
+  Health, Meta-Strategy, Capital Allocation, Stress & VaR, System Health, and
+  extra ratios sit behind **Show advanced analytics**
+  (`olbos.execSummary.advanced`).
+- Sidebar Core defaults: Command Center, Markets (Chart + Watchlists), Trade
+  Desk, Strategies → Signals, Portfolio & Risk, System → Broker. Options Desk,
+  Research, Journal, Performance, and other leaves move under Advanced.
+
+## Unreleased — UI/UX Phase 1: trust labels
+
+Frontend-only honesty fixes from `docs/ui-ux-phase1-4/PLAN.md` Phase 1.
+No trading, risk, execution, sizing, or authentication logic changed.
+
+### Fixed
+- **ChartWorkstation** no longer shows `AUTOPILOT READY` whenever the kill
+  switch is off. The top strip reads the real execution mode
+  (`MANUAL` / `COPILOT` / `AUTOPILOT`) and only shows `HALTED` when the kill
+  switch is active.
+- **ChartWorkstation** bare BUY/SELL chips (and the selected-signal cell)
+  now use `SignalAttribution` instead of misusing `mode-badge`
+  conservative/scalper classes. Cross-ticker `signals[0]` fallback remains
+  removed.
+- **“TA Trade Plan”** renamed to **Trade plan** when a scanner signal is
+  present (with source when the payload provides it) or **Chart levels**
+  when levels are support/resistance fallbacks. ENTRY and RESISTANCE no
+  longer share the same color.
+- **Sidebar Kill Switch** engages the existing `KillSwitchButton` confirm
+  modal instead of navigating to the Risk page.
+- **Status bar** shows the active workspace label (e.g. `MARKETS · CHART`)
+  instead of a hardcoded `TRADE DESK` on every page.
+- **Header execution control** is a single Manual / Copilot / Autopilot
+  tri-state (same API as Trade Desk), replacing dual COPILOT/AUTOPILOT
+  ON/OFF chips that hid the state machine.
+- **Nav / tab labels:** Trade Desk “Orders” → **Desk signals**; “Execution
+  Logs” (which opened P&L) → **P&L Breakdown**; new **Execution Log** leaf
+  opens the approvals/execution-log surface; Trade Desk tab “Risk profile”
+  → **Trading style**.
+
+### Added
+- Pure helpers + Vitest coverage for execution-mode display, chart
+  attribution mapping, and status-bar nav labels
+  (`frontend/src/utils/chartWorkstationDisplay.ts`,
+  `frontend/src/utils/navLabels.ts`).
+
 ## Unreleased — Frontend trust/UX revision + public landing page
 
 Improved presentation and visibility of existing trading, signal, and risk states.

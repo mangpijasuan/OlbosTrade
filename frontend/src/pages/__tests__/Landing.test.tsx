@@ -38,6 +38,17 @@ describe("Landing", () => {
     signInLinks.forEach((link) => expect(link).toHaveAttribute("href", "/terminal"));
   });
 
+  it("sends Free and Pro plan CTAs to the same paper terminal without a personal mailto", () => {
+    renderLanding();
+    const planCtas = screen.getAllByRole("link", { name: /open paper terminal/i });
+    expect(planCtas.length).toBe(2);
+    planCtas.forEach((cta) => expect(cta).toHaveAttribute("href", "/terminal"));
+    const bodyText = document.body.textContent || "";
+    expect(bodyText).not.toMatch(/mailto:/i);
+    expect(bodyText).not.toMatch(/mangpijasuan@/i);
+    expect(bodyText).toMatch(/not enforced/i);
+  });
+
   it("labels every performance metric as unpublished/placeholder instead of fabricating numbers", () => {
     renderLanding();
     expect(screen.getByText("Not published")).toBeInTheDocument();
@@ -58,11 +69,11 @@ describe("Landing", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("exposes footer legal links as explicitly non-functional placeholders, not invented URLs", () => {
+  it("footer is honest — no disabled legal stubs pretending to be links", () => {
     renderLanding();
-    const privacy = screen.getByText("Privacy");
-    expect(privacy.tagName.toLowerCase()).not.toBe("a");
-    expect(privacy).toHaveAttribute("title", "Not published");
+    expect(screen.getByText(/disclosures coming soon/i)).toBeInTheDocument();
+    expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Not published")).not.toBeInTheDocument();
   });
 
   it("mobile nav toggle is keyboard accessible and reports its expanded state", () => {

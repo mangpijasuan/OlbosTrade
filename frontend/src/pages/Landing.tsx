@@ -60,38 +60,16 @@ type Plan = {
   featured?: boolean;
 };
 
-// Maps directly to the terminal's real manual/copilot/autopilot execution
-// modes (TerminalLayout.tsx) — Free is capped at manual (view-only), Pro
-// unlocks the two automated modes. Both plans currently route to the same
-// unauthenticated /terminal — see the note below the cards.
+// Both plans currently open the same unauthenticated /terminal — there is no
+// billing or Free/Pro gate in this repository. Capability lists below describe
+// what the terminal can do today; numeric Pro limits are the intended future
+// tier and are labeled as not enforced.
 const PLANS: Plan[] = [
   {
     name: "Free",
     price: "$0",
     period: "/mo",
-    tagline: "Log in and see what the terminal sees.",
-    capabilities: [
-      { label: "Manual mode — view every signal", included: true },
-      { label: "Signal attribution (source, timeframe, confidence)", included: true },
-      { label: "Live risk & guardrail status", included: true },
-      { label: "Copilot — approve signals to trade", included: false },
-      { label: "Autopilot — fully automated execution", included: false },
-    ],
-    limits: [
-      { feature: "Concurrent algos", limit: "1" },
-      { feature: "Open positions", limit: "5" },
-      { feature: "Broker connections", limit: "1" },
-      { feature: "Historical data", limit: "1 year" },
-      { feature: "Signal scans / day", limit: "50" },
-      { feature: "API rate", limit: "30 req/min" },
-    ],
-    cta: { label: "Start free", href: "/terminal", internal: true },
-  },
-  {
-    name: "Pro",
-    price: "$49",
-    period: "/mo",
-    tagline: "Everything in Free, plus automated execution.",
+    tagline: "Open the paper terminal — same workspace as Pro until billing ships.",
     capabilities: [
       { label: "Manual mode — view every signal", included: true },
       { label: "Signal attribution (source, timeframe, confidence)", included: true },
@@ -100,14 +78,36 @@ const PLANS: Plan[] = [
       { label: "Autopilot — fully automated execution", included: true },
     ],
     limits: [
-      { feature: "Concurrent algos", limit: "5" },
-      { feature: "Open positions", limit: "25" },
-      { feature: "Broker connections", limit: "3" },
-      { feature: "Historical data", limit: "5 years" },
-      { feature: "Signal scans / day", limit: "500" },
-      { feature: "API rate", limit: "120 req/min" },
+      { feature: "Concurrent algos", limit: "1 (planned)" },
+      { feature: "Open positions", limit: "5 (planned)" },
+      { feature: "Broker connections", limit: "1 (planned)" },
+      { feature: "Historical data", limit: "1 year (planned)" },
+      { feature: "Signal scans / day", limit: "50 (planned)" },
+      { feature: "API rate", limit: "30 req/min (planned)" },
     ],
-    cta: { label: "Request access", href: "mailto:mangpijasuan@zomiok.org?subject=Olbos%20access%20request" },
+    cta: { label: "Open paper terminal", href: "/terminal", internal: true },
+  },
+  {
+    name: "Pro",
+    price: "$49",
+    period: "/mo",
+    tagline: "Intended paid tier — billing not live; same terminal as Free today.",
+    capabilities: [
+      { label: "Manual mode — view every signal", included: true },
+      { label: "Signal attribution (source, timeframe, confidence)", included: true },
+      { label: "Live risk & guardrail status", included: true },
+      { label: "Copilot — approve signals to trade", included: true },
+      { label: "Autopilot — fully automated execution", included: true },
+    ],
+    limits: [
+      { feature: "Concurrent algos", limit: "5 (planned)" },
+      { feature: "Open positions", limit: "25 (planned)" },
+      { feature: "Broker connections", limit: "3 (planned)" },
+      { feature: "Historical data", limit: "5 years (planned)" },
+      { feature: "Signal scans / day", limit: "500 (planned)" },
+      { feature: "API rate", limit: "120 req/min (planned)" },
+    ],
+    cta: { label: "Open paper terminal", href: "/terminal", internal: true },
     featured: true,
   },
 ];
@@ -222,7 +222,7 @@ export default function Landing() {
               <Cell title="Kill switch" body="One control halts new order submission immediately and asks the broker layer to cancel open orders and flatten positions." />
               <Cell title="Live vs. paper visibility" body="The operator terminal always shows which broker and environment (paper or live) is active — never inferred silently." />
               <Cell title="Signal attribution" body="Every directional signal in the terminal shows its source, timeframe, confidence, and freshness — a bare BUY/SELL label is treated as a defect." />
-              <Cell title="Divergence disclosure" body="When two independently-computed signals for the same symbol disagree, the terminal shows the disagreement explicitly instead of resolving it visually." />
+              <Cell title="Divergence disclosure" body="On the equity scan panel, when the scan engine and the background scanner disagree for the same symbol, the terminal shows the disagreement explicitly instead of resolving it visually." />
               <Cell title="Manual oversight" body="Autopilot can be turned off at any time; Manual and Copilot modes keep a human in the approval loop." />
               <Cell title="Explainability" body="The signal model's training pipeline runs a SHAP-based economic-direction check at train time and on live signals, to catch backwards feature logic." />
               <Cell title="No validated track record yet" body="Olbos Trading System has not completed a validated paper-trading evaluation period. We say so plainly instead of implying otherwise." />
@@ -253,11 +253,12 @@ export default function Landing() {
         <section className="landing-section" id="pricing">
           <div className="landing-container">
             <div className="landing-eyebrow">Pricing</div>
-            <h2 className="landing-h2">Free to watch. Pay to automate.</h2>
+            <h2 className="landing-h2">Free to explore. Pro when billing ships.</h2>
             <p className="landing-lede">
-              There is no signup or billing system wired up yet — both plans currently open the
-              same terminal. This is the tier structure and Pro price we intend to charge,
-              shown honestly instead of hidden.
+              There is no signup or billing system wired up yet — both plans open the same
+              paper terminal today, including Manual, Copilot, and Autopilot controls. The
+              $49 Pro price and higher limits below are the intended future tier, shown
+              honestly and marked as planned / not enforced.
             </p>
             <div className="pricing-grid">
               {PLANS.map((plan) => (
@@ -314,7 +315,7 @@ export default function Landing() {
               </div>
               <div className="landing-trust-item">
                 <span className="landing-trust-mark">&rarr;</span>
-                <span className="landing-cell-body">When two signals disagree for the same symbol, that disagreement is surfaced — never silently resolved.</span>
+                <span className="landing-cell-body">On the equity scan results, when the scan engine and the background scanner disagree for the same symbol, that disagreement is surfaced — never silently resolved.</span>
               </div>
               <div className="landing-trust-item">
                 <span className="landing-trust-mark">&rarr;</span>
@@ -361,12 +362,10 @@ export default function Landing() {
               }}>TRADING SYSTEM</span>
             </div>
             <div className="landing-footer-links">
-              <span className="disabled" title="Not published">Privacy</span>
-              <span className="disabled" title="Not published">Terms</span>
-              <span className="disabled" title="Not published">Risk Disclosure</span>
-              <span className="disabled" title="Not published">Contact</span>
+              <span className="landing-cell-body" style={{ fontSize: 12, color: "var(--ink-faint)" }}>
+                Disclosures coming soon
+              </span>
               <Link to="/terminal">Sign In</Link>
-              <span className="disabled" title="Not published">Company Info</span>
             </div>
           </div>
           <p className="landing-disclosure">

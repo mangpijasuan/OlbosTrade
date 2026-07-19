@@ -1,15 +1,23 @@
 /**
  * Trade Desk — unified execution hub covering paper + live trading.
- * Tabs: SIGNALS | POSITIONS | APPROVALS | P&L BREAKDOWN | RISK PROFILE
+ * Tabs: DESK SIGNALS | POSITIONS | APPROVALS | P&L BREAKDOWN | TRADING STYLE
  * Execution modes: MANUAL (signals only) · COPILOT (you approve) · AUTOPILOT (auto-execute)
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import TradingModeSelector from "../components/TradingModeSelector";
 import SignalAttribution from "../components/SignalAttribution";
+import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 import type { SignalAttributionData } from "../types/signal";
 import { api } from "../api/client";
 
+function HintedTh({ label }: { label: string }) {
+  return (
+    <th>
+      {resolveMetricHint(label) ? <MetricHint id={label} /> : label}
+    </th>
+  );
+}
 type ExecMode = "manual" | "copilot" | "autopilot";
 type Tab = "signals" | "positions" | "approvals" | "pnl" | "mode";
 
@@ -215,17 +223,27 @@ function ApprovalsQueue() {
                 {s.intelligence && (
                   <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap",
                     fontFamily: "var(--mono)", fontSize: 10 }}>
-                    <span style={{ color: "var(--ink-dim)" }}>POP <b style={{
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      <MetricHint id="POP" />{" "}
+                      <b style={{
                       color: (s.intelligence.pop ?? 0) >= 0.7 ? "var(--green)" : "var(--amber)" }}>
                       {((s.intelligence.pop ?? 0) * 100).toFixed(0)}%</b></span>
-                    <span style={{ color: "var(--ink-dim)" }}>EV <b style={{
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      <MetricHint id="EV" />{" "}
+                      <b style={{
                       color: (s.intelligence.expected_value ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
                       ${(s.intelligence.expected_value ?? 0).toFixed(0)}</b></span>
-                    <span style={{ color: "var(--ink-dim)" }}>Kelly <b style={{ color: "var(--cyan)" }}>
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      <MetricHint id="Kelly" />{" "}
+                      <b style={{ color: "var(--cyan)" }}>
                       {((s.intelligence.kelly_fraction ?? 0) * 100).toFixed(1)}%</b></span>
-                    <span style={{ color: "var(--ink-dim)" }}>P(touch) <b style={{ color: "var(--ink)" }}>
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      <MetricHint id="P(touch)" />{" "}
+                      <b style={{ color: "var(--ink)" }}>
                       {((s.intelligence.prob_touch_short ?? 0) * 100).toFixed(0)}%</b></span>
-                    <span style={{ color: "var(--ink-dim)" }}>Δ <b style={{ color: "var(--ink)" }}>
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      <MetricHint id="Δ" />{" "}
+                      <b style={{ color: "var(--ink)" }}>
                       {(s.intelligence.delta_short ?? 0).toFixed(2)}</b></span>
                   </div>
                 )}
@@ -378,7 +396,7 @@ function PnLBreakdown() {
         <table className="t-table">
           <thead><tr>
             {["Symbol","Strategy","Entry","Exit","Hold","Credit","Net P&L","MFE","MAE","Capture","Commission","Slip Est.","Exit Reason"].map(h => (
-              <th key={h}>{h}</th>
+              <HintedTh key={h} label={h} />
             ))}
           </tr></thead>
           <tbody>
@@ -440,11 +458,11 @@ export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "signals",   label: "Signals" },
+    { key: "signals",   label: "Desk signals" },
     { key: "positions", label: "Positions" },
     { key: "approvals", label: "Approvals" },
     { key: "pnl",       label: "P&L breakdown" },
-    { key: "mode",      label: "Risk profile" },
+    { key: "mode",      label: "Trading style" },
   ];
 
   return (
@@ -493,7 +511,9 @@ export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab
             )}
             <table className="t-table">
               <thead><tr>
-                {["Entry Date","Symbol","Qty","Strategy","Status","Entry Price","P&L","MFE","MAE","Capture","Hold Days","Exit Reason"].map(h => <th key={h}>{h}</th>)}
+                {["Entry Date","Symbol","Qty","Strategy","Status","Entry Price","P&L","MFE","MAE","Capture","Hold Days","Exit Reason"].map(h => (
+                  <HintedTh key={h} label={h} />
+                ))}
               </tr></thead>
               <tbody>
                 {tradesLoading ? (
@@ -543,7 +563,9 @@ export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab
         {tab === "positions" && (
           <table className="t-table">
             <thead><tr>
-              {["Symbol","Type","Strategy","Entry Credit","Unreal P&L","MFE","MAE","Hold Days","Status","Mode"].map(h => <th key={h}>{h}</th>)}
+              {["Symbol","Type","Strategy","Entry Credit","Unreal P&L","MFE","MAE","Hold Days","Status","Mode"].map(h => (
+                <HintedTh key={h} label={h} />
+              ))}
             </tr></thead>
             <tbody>
               {(positions || []).length === 0 ? (
@@ -582,7 +604,7 @@ export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab
         {/* RISK PROFILE */}
         {tab === "mode" && (
           <div style={{ padding: 20, maxWidth: 720 }}>
-            <div className="panel-title" style={{ marginBottom: 16 }}>Market Regime & Risk Profile</div>
+            <div className="panel-title" style={{ marginBottom: 16 }}>Market Regime & Trading Style</div>
             <div style={{
               fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
               padding: "8px 12px", background: "var(--bg-3)", marginBottom: 20,

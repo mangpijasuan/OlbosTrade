@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 
 import TerminalLayout from "../TerminalLayout";
 
@@ -9,6 +9,7 @@ vi.mock("../../api/client", () => ({
     getExecutionMode: vi.fn().mockResolvedValue({ mode: "manual" }),
     getTradeDeskKillSwitch: vi.fn().mockResolvedValue({ engaged: false }),
     getKillSwitchStatus: vi.fn().mockResolvedValue({ engaged: false }),
+    setTradeDeskKillSwitch: vi.fn().mockResolvedValue({ engaged: true }),
     getPortfolioState: vi.fn().mockResolvedValue({ state: {} }),
   },
 }));
@@ -84,5 +85,53 @@ describe("TerminalLayout ticker strip", () => {
     await waitFor(() => expect(screen.getByText("page content")).toBeInTheDocument());
     expect(screen.queryByText(/failed to render/i)).not.toBeInTheDocument();
     expect(screen.queryByText("REGIME")).not.toBeInTheDocument();
+  });
+
+  it("shows a human status label for the active page, not a hardcoded TRADE DESK", async () => {
+    render(
+      <TerminalLayout activePage="markets:chart" onNav={() => {}}>
+        <div>page content</div>
+      </TerminalLayout>
+    );
+
+    await waitFor(() => expect(screen.getByText("page content")).toBeInTheDocument());
+    expect(screen.getByText("MARKETS · CHART")).toBeInTheDocument();
+    // The old bug was a second status span always reading TRADE DESK.
+    const matches = screen.queryAllByText("TRADE DESK");
+    expect(matches.length).toBe(0);
+  });
+
+  it("renders a tri-state execution mode control instead of dual ON/OFF chips", async () => {
+    render(
+      <TerminalLayout activePage="dashboard" onNav={() => {}}>
+        <div>page content</div>
+      </TerminalLayout>
+    );
+
+    await waitFor(() => expect(screen.getByText("page content")).toBeInTheDocument());
+    const modeGroup = screen.getByRole("group", { name: /execution mode/i });
+    expect(modeGroup).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^manual$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^copilot$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^autopilot$/i })).toBeInTheDocument();
+    // Old dual chips were "COPILOT ON" / "AUTOPILOT OFF" inside the header control.
+    expect(modeGroup).not.toHaveTextContent(/COPILOT ON/i);
+    expect(modeGroup).not.toHaveTextContent(/AUTOPILOT OFF/i);
+  });
+
+  it("sidebar kill switch engages confirm dialog instead of navigating to risk", async () => {
+    const onNav = vi.fn();
+    render(
+      <TerminalLayout activePage="dashboard" onNav={onNav}>
+        <div>page content</div>
+      </TerminalLayout>
+    );
+
+    await waitFor(() => expect(screen.getByText("page content")).toBeInTheDocument());
+    const kill = screen.getByRole("button", { name: /engage kill switch/i });
+    fireEvent.click(kill);
+    expect(onNav).not.toHaveBeenCalledWith("risk");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/engage kill switch\?/i)).toBeInTheDocument();
   });
 });

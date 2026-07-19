@@ -14,6 +14,9 @@ import React, { useState, useEffect } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import GlobalRiskStatus from "./GlobalRiskStatus";
 import ErrorBoundary from "./ErrorBoundary";
+import KillSwitchButton from "./KillSwitchButton";
+import { statusLabelForPage, filterNavForDisplay, type NavGroup } from "../utils/navLabels";
+import { TerminalNavProvider } from "./TerminalNavContext";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -49,30 +52,28 @@ const ICONS: Record<string, string> = {
 // or a section (has `children`, expands to sub-items). Each leaf `key` routes
 // through the alias map in App.tsx. Every visible leaf must resolve to a real
 // workspace; unfinished destinations stay out of production navigation.
-type NavLeaf  = { key: string; label: string };
-type NavGroup = { id: string; label: string; icon: string; key?: string; children?: NavLeaf[] };
-
 const NAV_MODEL: NavGroup[] = [
   { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
   { id: "markets",   label: "Markets",        icon: "markets", children: [
-    { key: "markets:heatmaps",   label: "Heatmaps" },
-    { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:chart",      label: "Chart" },
-    { key: "markets:news",       label: "News & Events" },
+    { key: "markets:watchlists", label: "Watchlists" },
+    { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
+    { key: "markets:news",       label: "News & Events", advanced: true },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:copilot",   label: "Copilot Review" },
-    { key: "trade:orders",    label: "Orders" },
+    { key: "trade:orders",    label: "Desk signals" },
     { key: "trade:positions", label: "Positions" },
-    { key: "trade:logs",      label: "Execution Logs" },
+    { key: "trade:logs",      label: "P&L Breakdown" },
+    { key: "trade:execlog",   label: "Execution Log" },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
     { key: "equity",        label: "Signals" },
-    { key: "strat:cards",   label: "Strategy Cards" },
-    { key: "strat:builder", label: "Strategy Builder" },
-    { key: "strat:alerts",  label: "Alerts" },
+    { key: "strat:cards",   label: "Strategy Cards", advanced: true },
+    { key: "strat:builder", label: "Strategy Builder", advanced: true },
+    { key: "strat:alerts",  label: "Alerts", advanced: true },
   ]},
-  { id: "options", label: "Options Desk", icon: "flow", children: [
+  { id: "options", label: "Options Desk", icon: "flow", advanced: true, children: [
     { key: "options:chain",  label: "Options Chain" },
     { key: "scan",           label: "Spread Scanner" },
     { key: "options:income", label: "Income Strategies" },
@@ -82,7 +83,7 @@ const NAV_MODEL: NavGroup[] = [
     { key: "risk:heat",     label: "Risk Overview" },
     { key: "risk:rules",    label: "Risk Rules" },
   ]},
-  { id: "lab", label: "Research", icon: "lab", children: [
+  { id: "lab", label: "Research", icon: "lab", advanced: true, children: [
     { key: "lab:scenario",   label: "Scenario Lab" },
     { key: "lab:strategy",   label: "Strategy Research" },
     { key: "lab:market",     label: "Market & Regime" },
@@ -90,15 +91,16 @@ const NAV_MODEL: NavGroup[] = [
     { key: "lab:intel",      label: "Intelligence" },
     { key: "backtest",       label: "Backtests" },
   ]},
-  { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal" },
-  { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics" },
+  { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal", advanced: true },
+  { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics", advanced: true },
   { id: "system", label: "System", icon: "data", children: [
     { key: "system:broker",  label: "Broker" },
-    { key: "system:market",  label: "Market Data" },
-    { key: "system:quality", label: "Data Quality" },
+    { key: "system:market",  label: "Market Data", advanced: true },
+    { key: "system:quality", label: "Data Quality", advanced: true },
   ]},
 ];
 
+const NAV_ADVANCED_KEY = "olbos.nav.advanced";
 // Which group owns a given active leaf key (for header highlight + auto-open).
 function groupIdForKey(key: string): string | null {
   for (const g of NAV_MODEL) {
@@ -157,27 +159,54 @@ function AccountMenuItem({ icon, label, onClick, danger = false }: {
   );
 }
 
-// Header pill for a global AI mode (Copilot / Autopilot).
-function ModeChip({ label, on, onColor, onClick }: {
-  label: string; on: boolean; onColor: string; onClick: () => void;
+// Header control for execution mode — single tri-state (Manual / Copilot / Autopilot).
+function ExecutionModeControl({
+  mode,
+  onChange,
+}: {
+  mode: "manual" | "copilot" | "autopilot";
+  onChange: (m: "manual" | "copilot" | "autopilot") => void;
 }) {
+  const options: { key: "manual" | "copilot" | "autopilot"; label: string; onColor: string }[] = [
+    { key: "manual", label: "MANUAL", onColor: "var(--ink-dim)" },
+    { key: "copilot", label: "COPILOT", onColor: "var(--cyan)" },
+    { key: "autopilot", label: "AUTOPILOT", onColor: "var(--amber)" },
+  ];
   return (
-    <button
-      onClick={onClick}
-      title={`${label} — click to toggle`}
+    <div
+      role="group"
+      aria-label="Execution mode"
+      title="Execution mode: Manual (signals only) → Copilot (approve each trade) → Autopilot (auto within guardrails). Leaving Autopilot returns to Copilot; choose Manual to stop approvals."
       style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        height: 22, padding: "0 9px", borderRadius: 11,
-        background: on ? "var(--cyan-dim)" : "transparent",
-        border: `1px solid ${on ? onColor : "var(--line-dim)"}`,
-        color: on ? onColor : "var(--ink-faint)",
-        fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.1em",
-        cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
+        display: "inline-flex", alignItems: "center", gap: 2,
+        height: 22, padding: 2, borderRadius: 11,
+        border: "1px solid var(--line-dim)", background: "var(--bg-3)",
       }}
     >
-      <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? onColor : undefined }} />
-      {label} {on ? "ON" : "OFF"}
-    </button>
+      {options.map((opt) => {
+        const on = mode === opt.key;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => onChange(opt.key)}
+            aria-pressed={on}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              height: 18, padding: "0 8px", borderRadius: 9,
+              background: on ? "var(--cyan-dim)" : "transparent",
+              border: `1px solid ${on ? opt.onColor : "transparent"}`,
+              color: on ? opt.onColor : "var(--ink-faint)",
+              fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
+              cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
+            }}
+          >
+            <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? opt.onColor : undefined }} />
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -206,11 +235,8 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
   const [ivr,  setIvr]  = useState<number | null>(null);
   const [mode, setMode] = useState("balanced");
   // Execution mode (manual / copilot / autopilot) — the real backend tri-state.
-  // The two header chips project onto it: Copilot on = copilot OR autopilot;
-  // Autopilot on = autopilot. Defaults to manual (matches the no-execute gate).
+  // Header shows a single three-way control so the state machine is visible.
   const [execMode, setExecMode] = useState<"manual" | "copilot" | "autopilot">("manual");
-  const copilotOn   = execMode === "copilot" || execMode === "autopilot";
-  const autopilotOn = execMode === "autopilot";
 
   const setExec = (m: "manual" | "copilot" | "autopilot") => {
     setExecMode(m); // optimistic
@@ -223,8 +249,6 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
       .then(d => { if (d.mode) setExecMode(d.mode); })
       .catch(() => {});
   };
-  const toggleCopilot   = () => setExec(copilotOn ? "manual" : "copilot");
-  const toggleAutopilot = () => setExec(autopilotOn ? "copilot" : "autopilot");
   const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
 
   const fetchSnapshot = (sym: string, setter: (s: SnapShot) => void) => {
@@ -441,13 +465,12 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         </div>
       </div>
 
-      {/* AI mode chips — pinned right, before market status */}
+      {/* Execution mode — single tri-state control */}
       <div style={{
         display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
         padding: "0 12px", borderLeft: "1px solid var(--line-dim)",
       }}>
-        <ModeChip label="COPILOT" on={copilotOn}   onColor="var(--cyan)"  onClick={toggleCopilot} />
-        <ModeChip label="AUTOPILOT" on={autopilotOn} onColor="var(--amber)" onClick={toggleAutopilot} />
+        <ExecutionModeControl mode={execMode} onChange={setExec} />
       </div>
 
       {/* Market status + clock — pinned right */}
@@ -487,10 +510,32 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
   // Accordion state: which group section is expanded. Auto-opens the group that
   // owns the active page.
   const [openGroup, setOpenGroup] = useState<string | null>(() => groupIdForKey(active));
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    try {
+      return localStorage.getItem(NAV_ADVANCED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+
   useEffect(() => {
     const g = groupIdForKey(active);
     if (g) setOpenGroup(g);
   }, [active]);
+
+  const toggleAdvanced = () => {
+    setShowAdvanced((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(NAV_ADVANCED_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  const visibleNav = filterNavForDisplay(NAV_MODEL, showAdvanced, active);
 
   // On mobile, labels always show (it's a full overlay panel); on desktop they
   // appear only when expanded (icon rail otherwise).
@@ -617,8 +662,30 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
   return (
     <div style={containerStyle}>
 
-      {/* Grouped nav */}
-      {NAV_MODEL.map(renderGroup)}
+      {/* Grouped nav — Core by default; Advanced leaves/groups behind toggle */}
+      {visibleNav.map(renderGroup)}
+
+      {showLabels && (
+        <button
+          type="button"
+          onClick={toggleAdvanced}
+          aria-expanded={showAdvanced}
+          style={{
+            width: "100%", height: 32, display: "flex", alignItems: "center",
+            paddingLeft: 14, gap: 8, marginTop: 4,
+            background: "transparent", border: "none",
+            borderTop: "1px solid var(--line-dim)",
+            color: "var(--ink-dim)", cursor: "pointer",
+            fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.08em",
+            textTransform: "uppercase",
+          }}
+        >
+          <span style={{ transform: showAdvanced ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
+            <Icon d="M9 18l6-6-6-6" size={11} />
+          </span>
+          {showAdvanced ? "Hide advanced" : "Show advanced"}
+        </button>
+      )}
 
       {/* Operational system access — pinned above the kill switch. */}
       <div style={{ flex: 1 }} />
@@ -702,67 +769,15 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         )}
       </div>
 
-      {/* Kill switch at bottom */}
+      {/* Kill switch at bottom — engages confirm modal; does not navigate away */}
       <div
-        onMouseEnter={() => setHovered("kill")}
-        onMouseLeave={() => setHovered(null)}
-        style={{ position: "relative", width: "100%" }}
-      >
-        <button
-          onClick={() => onNav("risk")}
-          title="Open the kill switch (press &amp; hold to engage on the Risk page)"
-          style={{
-          width: "100%",
-          height: 38,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: expanded ? "flex-start" : "center",
-          paddingLeft: expanded ? 14 : 0,
-          gap: expanded ? 10 : 0,
-          background: "transparent",
-          border: "none",
-          borderLeft: "2px solid transparent",
+        style={{
+          position: "relative", width: "100%",
           borderTop: "1px solid var(--line-dim)",
-          color: "var(--red)",
-          cursor: "pointer",
-          opacity: 0.8,
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          transition: "all 0.1s",
-        }}>
-          <span style={{ flexShrink: 0 }}>
-            <Icon d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" size={15} />
-          </span>
-          {expanded && (
-            <span style={{
-              fontFamily: "var(--mono)", fontSize: 11,
-              letterSpacing: "0.08em", textTransform: "uppercase",
-            }}>
-              Kill Switch
-            </span>
-          )}
-        </button>
-        {!expanded && hovered === "kill" && (
-          <div style={{
-            position: "absolute",
-            left: 52,
-            top: "50%",
-            transform: "translateY(-50%)",
-            background: "rgba(239,68,68,0.15)",
-            border: "1px solid rgba(239,68,68,0.4)",
-            padding: "4px 10px",
-            whiteSpace: "nowrap",
-            fontFamily: "var(--mono)",
-            fontSize: 10,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "var(--red)",
-            zIndex: 100,
-            pointerEvents: "none",
-          }}>
-            Kill Switch
-          </div>
-        )}
+          paddingTop: 4, paddingBottom: 4,
+        }}
+      >
+        <KillSwitchButton variant="sidebar" expanded={showLabels} />
       </div>
     </div>
   );
@@ -770,6 +785,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 function StatusBar({ page }: { page: string }) {
+  const label = statusLabelForPage(page, NAV_MODEL);
   return (
     <div style={{
       height: 28,
@@ -785,8 +801,7 @@ function StatusBar({ page }: { page: string }) {
       letterSpacing: "0.08em",
       flexShrink: 0,
     }}>
-      <span style={{ color: "var(--cyan)", textTransform: "uppercase" }}>{page}</span>
-      <span>TRADE DESK</span>
+      <span style={{ color: "var(--cyan)", textTransform: "uppercase" }}>{label}</span>
       <span id="broker-status-bar">IBKR GATEWAY</span>
       <span>SPY · QQQ · IWM · NVDA · AAPL</span>
       <div style={{ flex: 1 }} />
@@ -813,6 +828,7 @@ export default function TerminalLayout({ children, activePage, onNav }: {
   };
 
   return (
+    <TerminalNavProvider onNav={handleNav}>
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <ErrorBoundary label="Ticker strip">
         <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
@@ -849,5 +865,6 @@ export default function TerminalLayout({ children, activePage, onNav }: {
       </div>
       <StatusBar page={activePage} />
     </div>
+    </TerminalNavProvider>
   );
 }

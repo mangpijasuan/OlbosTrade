@@ -15,6 +15,8 @@ import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk }       from "../hooks/useRisk";
 import ExecutiveSummary  from "../components/ExecutiveSummary";
 import ErrorBoundary     from "../components/ErrorBoundary";
+import WelcomeBanner, { WELCOME_DISMISS_KEY } from "../components/WelcomeBanner";
+import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 import { useIsMobile }   from "../hooks/useIsMobile";
 
 // ── Equity chart canvas ───────────────────────────────────────────────────────
@@ -139,7 +141,9 @@ function StatCell({ label, value, sub, color }: {
 }) {
   return (
     <div style={{ padding: "14px 16px", borderRight: "1px solid var(--line-dim)" }}>
-      <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
+      <div className="kicker" style={{ marginBottom: 6 }}>
+        {resolveMetricHint(label) ? <MetricHint id={label} /> : label}
+      </div>
       <div className="data-val" style={{ color: color || "var(--ink)" }}>{value}</div>
       {sub && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 3 }}>{sub}</div>}
     </div>
@@ -229,6 +233,13 @@ export default function Dashboard() {
   const [allPoints, setAllPoints]   = useState<ChartPoint[]>([]);
   const [curveLoading, setCurveLoading] = useState(true);
   const [curveSource, setCurveSource]   = useState<"trades" | "backtest" | "none">("none");
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try {
+      return localStorage.getItem(WELCOME_DISMISS_KEY) !== "1";
+    } catch {
+      return true;
+    }
+  });
 
   // Load equity curve data
   const loadCurve = useCallback(async () => {
@@ -297,8 +308,23 @@ export default function Dashboard() {
     ? visiblePoints[visiblePoints.length - 1].value - visiblePoints[0].value
     : 0;
 
+  const dismissWelcome = () => {
+    try {
+      localStorage.setItem(WELCOME_DISMISS_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setShowWelcome(false);
+  };
+
   return (
-    <div style={{ display: "grid", gridTemplateRows: "auto auto 1fr auto", height: "100%", overflow: "auto", gap: 0 }}>
+    <div style={{ display: "grid", gridTemplateRows: "auto auto auto 1fr auto", height: "100%", overflow: "auto", gap: 0 }}>
+
+      {showWelcome && (
+        <ErrorBoundary label="Welcome">
+          <WelcomeBanner onDismiss={dismissWelcome} />
+        </ErrorBoundary>
+      )}
 
       {/* Executive summary header */}
       <ErrorBoundary label="Executive Summary">
@@ -330,7 +356,7 @@ export default function Dashboard() {
         />
         <StatCell label="Buying Power"     value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
         <StatCell label="Net Delta"        value={(greeks?.net_delta || 0).toFixed(3)} />
-        <StatCell label="Net Theta / day"  value={(greeks?.net_theta || 0).toFixed(3)} color="var(--cyan)" />
+        <StatCell label="Net Theta (daily)"  value={(greeks?.net_theta || 0).toFixed(3)} color="var(--cyan)" />
         <StatCell
           label="Open Positions"
           value={String(portfolio?.open_positions ?? managedPositions.length)}
@@ -445,7 +471,9 @@ export default function Dashboard() {
                 return (
                   <div key={g.label}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>{g.label}</span>
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
+                        {resolveMetricHint(g.label) ? <MetricHint id={g.label} /> : g.label}
+                      </span>
                       <span style={{ fontFamily: "var(--mono)", fontSize: 10, color }}>
                         {g.val.toFixed(1)}{g.unit} / {g.max}{g.unit}
                       </span>

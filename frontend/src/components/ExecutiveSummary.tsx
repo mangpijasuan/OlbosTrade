@@ -11,6 +11,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
+import MetricHint, { resolveMetricHint } from "./MetricHint";
 
 // ── Inline icon set ─────────────────────────────────────────────────────────
 const ICON: Record<string, string> = {
@@ -110,9 +111,12 @@ function Kpi({ label, value, sub, color, icon }:
 
 // ── Small metric tile ───────────────────────────────────────────────────────
 function Tile({ label, value, color }: { label: string; value: string; color?: string }) {
+  const hinted = !!resolveMetricHint(label);
   return (
     <div style={{ background: "var(--bg-2)", padding: "11px 13px" }}>
-      <div className="kicker" style={{ fontSize: 8.5, marginBottom: 5 }}>{label}</div>
+      <div className="kicker" style={{ fontSize: 8.5, marginBottom: 5 }}>
+        {hinted ? <MetricHint id={label} /> : label}
+      </div>
       <div className="mono" style={{ fontSize: 15, fontWeight: 600, color: color || "var(--ink)" }}>{value}</div>
     </div>
   );
@@ -185,6 +189,25 @@ export default function ExecutiveSummary() {
   const [alloc, setAlloc] = useState<AllocResp | null>(null);
   const [scen, setScen] = useState<ScenariosResp | null>(null);
   const [varRep, setVarRep] = useState<VarResp | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    try {
+      return localStorage.getItem("olbos.execSummary.advanced") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleAdvanced = () => {
+    setShowAdvanced((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("olbos.execSummary.advanced", next ? "1" : "0");
+      } catch {
+        /* ignore quota / private mode */
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const j = (u: string) => fetch(u).then(r => r.json()).catch(() => null);
@@ -214,6 +237,15 @@ export default function ExecutiveSummary() {
         <span className="mono" style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.16em", color: "var(--ink)" }}>
           EXECUTIVE SUMMARY
         </span>
+        <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="btn-t"
+          onClick={toggleAdvanced}
+          aria-expanded={showAdvanced}
+        >
+          {showAdvanced ? "Hide advanced analytics" : "Show advanced analytics"}
+        </button>
       </div>
 
       {/* KPI cards */}
@@ -229,7 +261,7 @@ export default function ExecutiveSummary() {
 
       {/* Performance + Portfolio Heat */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
-        {/* Performance */}
+        {/* Performance — short strip by default */}
         <div className="exec-card">
           <PanelHead icon="perf" title="Performance"
             right={perf && perf.sample_size_warning
@@ -242,20 +274,24 @@ export default function ExecutiveSummary() {
               color={perf && perf.win_rate >= 0.5 ? "var(--green)" : "var(--ink)"} />
             <Tile label="Profit Factor" value={perf ? perf.profit_factor.toFixed(2) : "—"}
               color={perf && perf.profit_factor >= 1.5 ? "var(--green)" : "var(--ink)"} />
-            <Tile label="Sharpe" value={perf ? perf.sharpe.toFixed(2) : "—"}
-              color={perf && perf.sharpe >= 1 ? "var(--cyan)" : "var(--ink)"} />
-            <Tile label="Sortino" value={perf ? perf.sortino.toFixed(2) : "—"}
-              color={perf && perf.sortino >= 1 ? "var(--cyan)" : "var(--ink)"} />
-            <Tile label="Calmar" value={perf ? perf.calmar.toFixed(2) : "—"} />
             <Tile label="Max DD" value={perf ? `${perf.max_drawdown_pct}%` : "—"}
               color={perf && perf.max_drawdown_pct > 15 ? "var(--red)" : "var(--ink)"} />
             <Tile label="Current DD" value={perf ? `${perf.current_drawdown_pct}%` : "—"}
               color={perf && perf.current_drawdown_pct > 8 ? "var(--red)" : "var(--ink)"} />
-            <Tile label="Rolling DD (30)" value={perf ? `${perf.rolling_max_dd_30_pct}%` : "—"}
-              color={perf && perf.rolling_max_dd_30_pct > 10 ? "var(--amber)" : "var(--ink)"} />
-            <Tile label="Expectancy" value={perf ? money(perf.expectancy) : "—"}
-              color={perf ? pnlColor(perf.expectancy) : undefined} />
-            <Tile label="Avg Hold" value={perf ? `${perf.avg_hold_days}d` : "—"} />
+            {showAdvanced && (
+              <>
+                <Tile label="Sharpe" value={perf ? perf.sharpe.toFixed(2) : "—"}
+                  color={perf && perf.sharpe >= 1 ? "var(--cyan)" : "var(--ink)"} />
+                <Tile label="Sortino" value={perf ? perf.sortino.toFixed(2) : "—"}
+                  color={perf && perf.sortino >= 1 ? "var(--cyan)" : "var(--ink)"} />
+                <Tile label="Calmar" value={perf ? perf.calmar.toFixed(2) : "—"} />
+                <Tile label="Rolling DD (30)" value={perf ? `${perf.rolling_max_dd_30_pct}%` : "—"}
+                  color={perf && perf.rolling_max_dd_30_pct > 10 ? "var(--amber)" : "var(--ink)"} />
+                <Tile label="Expectancy" value={perf ? money(perf.expectancy) : "—"}
+                  color={perf ? pnlColor(perf.expectancy) : undefined} />
+                <Tile label="Avg Hold" value={perf ? `${perf.avg_hold_days}d` : "—"} />
+              </>
+            )}
           </div>
         </div>
 
@@ -294,6 +330,8 @@ export default function ExecutiveSummary() {
         </div>
       </div>
 
+      {showAdvanced && (
+        <>
       {/* Strategy · Meta · Allocation · Stress — 2-column grid to use the width */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14, alignItems: "start" }}>
       {/* Strategy health */}
@@ -414,6 +452,8 @@ export default function ExecutiveSummary() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

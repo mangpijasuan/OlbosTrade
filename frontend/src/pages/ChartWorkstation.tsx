@@ -2,11 +2,20 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import MarketBiasPanel from "../components/MarketBiasPanel";
 import MarketStructurePanel from "../components/MarketStructurePanel";
+import SignalAttribution from "../components/SignalAttribution";
 import SignalDetailDrawer from "../components/SignalDetailDrawer";
 import SetupScannerPanel from "../components/SetupScannerPanel";
 import TimeframeAlignmentPanel from "../components/TimeframeAlignmentPanel";
 import { usePaperTrade } from "../hooks/usePaperTrade";
 import { useRisk } from "../hooks/useRisk";
+import {
+  chartLevelColors,
+  formatExecutionModeDisplay,
+  toChartSignalAttribution,
+  tradePlanCardTitle,
+  type ExecMode,
+} from "../utils/chartWorkstationDisplay";
+import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 
 type Timeframe = "5m" | "15m" | "1h" | "1d";
 
@@ -31,6 +40,8 @@ interface Signal {
   action: "BUY" | "SELL" | "HOLD";
   confidence: number;
   generated_at: string;
+  /** Producer name from payload when present — never invent client-side. */
+  source?: string | null;
   reasons?: string[];
   trade_plan?: {
     entry_price?: number;
@@ -154,6 +165,45 @@ function ChartCanvas({
 
   return (
     <div style={{ position: "relative", height }}>
+      <div
+        aria-label="Chart legend"
+        style={{
+          position: "absolute",
+          left: 12,
+          top: 10,
+          zIndex: 2,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          padding: "8px 10px",
+          background: "rgba(6,11,23,0.82)",
+          border: "1px solid var(--line-dim)",
+          pointerEvents: "none",
+        }}
+      >
+        {[
+          { label: "SMA-20", color: "#f4c64f", style: "solid" as const },
+          { label: "VWAP", color: "#8e7cfb", style: "dashed" as const },
+          { label: "Volume", color: "rgba(148,163,184,0.7)", style: "bar" as const },
+          ...levels.map((level) => ({ label: level.label, color: level.color, style: "level" as const })),
+        ].map((item) => (
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 18,
+                height: item.style === "bar" ? 8 : 2,
+                background: item.style === "dashed" ? "transparent" : item.color,
+                borderTop: item.style === "dashed" ? `2px dashed ${item.color}` : undefined,
+                boxShadow: item.style === "level" ? `0 0 0 1px ${item.color}` : undefined,
+              }}
+            />
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", letterSpacing: "0.04em" }}>
+              {item.label}
+            </span>
+          </div>
+        ))}
+      </div>
       <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "100%", display: "block" }}>
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
@@ -301,6 +351,7 @@ export default function ChartWorkstation() {
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [signalDrawerOpen, setSignalDrawerOpen] = useState(false);
+  const [execMode, setExecMode] = useState<ExecMode>("manual");
 
   const loadWatchlist = async () => {
     const entries = await Promise.all(
@@ -329,6 +380,17 @@ export default function ChartWorkstation() {
     loadWatchlist();
     loadSignals();
     (api.getRegime() as Promise<any>).then(setRegime).catch(() => setRegime(null));
+    const loadExec = () =>
+      (api.getExecutionMode() as Promise<{ mode?: string }>)
+        .then((d) => {
+          if (d.mode === "manual" || d.mode === "copilot" || d.mode === "autopilot") {
+            setExecMode(d.mode);
+          }
+        })
+        .catch(() => {});
+    loadExec();
+    const ei = setInterval(loadExec, 15000);
+    return () => clearInterval(ei);
   }, []);
 
   useEffect(() => {
@@ -362,16 +424,19 @@ export default function ChartWorkstation() {
   const entry = selectedSignal?.trade_plan?.entry_price ?? latestBar?.close ?? 0;
   const stop = selectedSignal?.trade_plan?.stop_price ?? support;
   const target = selectedSignal?.trade_plan?.target_price ?? resistance;
+  const levelColors = chartLevelColors();
   const levels = [
-    { label: "TA ENTRY", value: entry, color: "#f4c64f" },
-    { label: "TA TARGET", value: target, color: "#ff5f6d" },
-    { label: "SUPPORT", value: support, color: "#5ba6ff" },
-    { label: "RESISTANCE", value: resistance, color: "#f4c64f" },
+    { label: "ENTRY", value: entry, color: levelColors.entry },
+    { label: "TARGET", value: target, color: levelColors.target },
+    { label: "SUPPORT", value: support, color: levelColors.support },
+    { label: "RESISTANCE", value: resistance, color: levelColors.resistance },
   ].filter((level) => level.value > 0);
 
   const actionableSignals = signals.filter((item) => item.action !== "HOLD");
   const netLiq = portfolio?.account_value ?? portfolio?.starting_capital ?? 0;
   const dayPnl = guardrailStatus?.daily_pnl ?? portfolio?.total_pnl ?? 0;
+  const execDisplay = formatExecutionModeDisplay(execMode, Boolean(killSwitch?.active));
+  const planTitle = tradePlanCardTitle(Boolean(selectedSignal), selectedSignal?.source);
 
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -381,7 +446,7 @@ export default function ChartWorkstation() {
         gap: 10,
       }} className="workstation-top-strip">
         {[
-          { label: "Exec Mode", value: killSwitch?.active ? "HALTED" : "AUTOPILOT READY", tone: killSwitch?.active ? "var(--red)" : "var(--amber)" },
+          { label: execDisplay.label, value: execDisplay.value, tone: execDisplay.tone },
           { label: "Day P&L", value: fmtSigned(dayPnl), tone: dayPnl >= 0 ? "var(--green)" : "var(--red)" },
           { label: "Portfolio", value: fmtMoney(netLiq, 2), tone: "var(--cyan)" },
           { label: "Reconciliation", value: reconciliation?.clean ? "CLEAN" : "WATCH", tone: reconciliation?.clean ? "var(--green)" : "var(--amber)" },
@@ -493,32 +558,33 @@ export default function ChartWorkstation() {
                 gap: 10,
                 marginBottom: 12,
               }} className="workstation-metrics-grid">
+                <div style={{ background: "var(--bg-3)", padding: "10px 12px", border: "1px solid var(--line-dim)" }}>
+                  <div className="kicker" style={{ marginBottom: 8 }}>Signal</div>
+                  {selectedSignal ? (
+                    <SignalAttribution data={toChartSignalAttribution(selectedSignal)} size="sm" />
+                  ) : (
+                    <div className="data-val sm" style={{ color: "var(--ink-dim)" }}>NO SIGNAL</div>
+                  )}
+                </div>
                 {[
-                  { label: "Signal", value: selectedSignal ? selectedSignal.action : "NO SIGNAL", tone: selectedSignal?.action === "BUY" ? "var(--green)" : selectedSignal?.action === "SELL" ? "var(--red)" : "var(--ink-dim)" },
                   { label: "Confidence", value: selectedSignal ? `${Math.round(selectedSignal.confidence * 100)}%` : "—", tone: "var(--amber)" },
                   { label: "IV Rank", value: ivRank?.iv_rank != null ? `${Math.round(ivRank.iv_rank)}` : "—", tone: "var(--cyan)" },
                   { label: "RSI", value: selectedSignal?.indicators?.rsi != null ? selectedSignal.indicators.rsi.toFixed(1) : "—", tone: "var(--ink)" },
                   { label: "Volume x", value: selectedSignal?.indicators?.volume_ratio != null ? selectedSignal.indicators.volume_ratio.toFixed(2) : "—", tone: "var(--ink)" },
                 ].map((item) => (
                   <div key={item.label} style={{ background: "var(--bg-3)", padding: "10px 12px", border: "1px solid var(--line-dim)" }}>
-                    <div className="kicker" style={{ marginBottom: 8 }}>{item.label}</div>
+                    <div className="kicker" style={{ marginBottom: 8 }}>
+                      {resolveMetricHint(item.label) ? <MetricHint id={item.label} /> : item.label}
+                    </div>
                     <div className="data-val sm" style={{ color: item.tone }}>{item.value}</div>
                   </div>
                 ))}
               </div>
 
-              <div style={{ border: "1px solid var(--line-dim)", background: "linear-gradient(180deg, rgba(6,11,23,0.45), rgba(6,11,23,0.9))" }}>
+              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-3)" }}>
                 {chartLoading ? (
-                  <div style={{
-                    height: 460,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontFamily: "var(--mono)",
-                    fontSize: 11,
-                    color: "var(--ink-faint)",
-                  }}>
-                    LOADING CHART…
+                  <div className="skeleton-block" style={{ height: 460 }} aria-busy="true" aria-label="Loading chart">
+                    <div className="skeleton-shimmer" />
                   </div>
                 ) : (
                   <ChartCanvas bars={chartBars} levels={levels} />
@@ -539,7 +605,16 @@ export default function ChartWorkstation() {
           </section>
 
           <div className="workstation-bottom-grid">
-            <InfoCard title="TA Trade Plan">
+            <InfoCard title={planTitle}>
+              {selectedSignal?.source && selectedSignal.source !== "unknown" && (
+                <div style={{
+                  marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
+                  color: "var(--ink-dim)", padding: "8px 10px",
+                  border: "1px solid var(--line-dim)", background: "var(--bg-3)",
+                }}>
+                  Source: {selectedSignal.source}
+                </div>
+              )}
               {!selectedSignal && (
                 <div style={{
                   marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
@@ -623,14 +698,9 @@ export default function ChartWorkstation() {
                     cursor: "pointer",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "var(--mono)", fontSize: 16, color: "var(--ink)", fontWeight: 700 }}>{item.ticker}</span>
-                    <span className={`mode-badge ${item.action === "BUY" ? "conservative" : item.action === "SELL" ? "scalper" : "balanced"}`}>
-                      {item.action}
-                    </span>
-                    <span style={{ marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 12, color: "var(--amber)" }}>
-                      {Math.round(item.confidence * 100)}%
-                    </span>
+                    <SignalAttribution data={toChartSignalAttribution(item)} size="sm" />
                   </div>
                   <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
                     {normalizeReasons(item.reasons).slice(0, 3).join(" · ") || "Signal narrative not available yet."}
