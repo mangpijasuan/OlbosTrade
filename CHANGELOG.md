@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — Options Signal cards on Strategies → Signals
+
+- Strategies → Signals: OPTIONS | EQUITIES toggle beside broker/Greeks strip
+- Options cards mirror equity layout: strategy, BUY_SPREAD/SELL_SPREAD
+  attribution, POP/confidence, IV rank + Greeks pills, credit/debit · max
+  loss · breakeven, contracts/DTE
+- Backend: in-memory store + `GET /api/options/signals` and
+  `POST /api/options/signals/scan` (SPY/QQQ); background scanner persists
+  into the same store
+
+### Fixed
+- **`POST /api/options/signals/scan` no longer dispatches to execution.**
+  It originally called `_run_options_scan()` the same way the scheduled
+  background scanner does, ending in `handle_signal()` — meaning a UI
+  action that looks like "refresh the signal feed" could submit a real
+  order if Autopilot happened to be the active execution mode, with no
+  indication of that on the page. `_run_options_scan()` now takes an
+  `execute` flag (default `True`, unchanged for the scheduler); the preview
+  endpoint passes `execute=False`, computing and persisting the same
+  strategy/strike recommendation but never reaching `handle_signal()`. Only
+  the scheduled background scanner executes. Verified live against the test
+  container in Autopilot mode. Known limitation: iron_condor still never
+  appears (execution or display) — its 4-leg structure isn't wired into the
+  current spread data model.
+
 ## Unreleased — UI/UX Phase 4: landing trust + attribution display
 
 Frontend-only public-page honesty from `docs/ui-ux-phase1-4/PLAN.md` Phase 4.

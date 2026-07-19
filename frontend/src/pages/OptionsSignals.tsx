@@ -1,0 +1,326 @@
+/**
+ * OptionsSignals — options spread signal cards (mirrors EquitySignals layout).
+ * Data from GET /api/options/signals (background Options Signal Scanner).
+ */
+
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
+import SignalAttribution from "../components/SignalAttribution";
+import type { SignalAttributionData } from "../types/signal";
+
+interface Spread {
+  option_type?: string;
+  short_strike?: number;
+  long_strike?: number;
+  expiration?: string;
+  dte?: number;
+  net_credit?: number;
+  max_loss?: number;
+  breakeven?: number;
+}
+
+interface OptionsIntelligence {
+  pop?: number;
+  delta_short?: number;
+  theta_short?: number;
+  vega_short?: number;
+  kelly_fraction?: number;
+  reward_risk?: number;
+}
+
+interface OptionsSignal {
+  id: string;
+  ticker: string;
+  generated_at: string;
+  action: "BUY_SPREAD" | "SELL_SPREAD" | string;
+  confidence: number;
+  pop?: number | null;
+  kelly_fraction?: number | null;
+  signal_score?: number;
+  quantity?: number;
+  iv_rank?: number;
+  regime?: string;
+  strategy?: string;
+  source?: string;
+  spread?: Spread;
+  intelligence?: OptionsIntelligence | null;
+}
+
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  const color = pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{
+        flex: 1, height: 4, background: "var(--bg-4)", borderRadius: 2, overflow: "hidden",
+      }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2 }} />
+      </div>
+      <span style={{ color, fontFamily: "var(--mono)", fontSize: 11, fontWeight: 600, minWidth: 36 }}>
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{
+      background: "var(--bg-3)", borderRadius: 3, padding: "3px 8px",
+      fontFamily: "var(--mono)", fontSize: 9, display: "flex", gap: 5, alignItems: "center",
+    }}>
+      <span style={{ color: "var(--ink-dim)", letterSpacing: "0.08em" }}>{label}</span>
+      <span style={{ color: "var(--ink)", fontWeight: 600 }}>{value}</span>
+    </div>
+  );
+}
+
+function PriceCell({ label, value, color, prefix = "$" }: {
+  label: string; value?: number | string; color: string; prefix?: string;
+}) {
+  const display = typeof value === "number"
+    ? `${prefix}${value.toFixed(2)}`
+    : (value ?? "—");
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em" }}>
+        {label}
+      </span>
+      <span style={{ color, fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
+        {display}
+      </span>
+    </div>
+  );
+}
+
+function formatStrikePair(spread?: Spread): string {
+  if (!spread?.short_strike || !spread?.long_strike) return "";
+  const ot = (spread.option_type || "").toUpperCase().slice(0, 1) || "?";
+  return `${spread.short_strike}/${spread.long_strike}${ot}`;
+}
+
+function formatExp(expiration?: string): string {
+  if (!expiration) return "";
+  const d = new Date(expiration);
+  if (Number.isNaN(d.getTime())) return expiration.slice(0, 10);
+  return d.toLocaleDateString(undefined, { month: "2-digit", day: "2-digit" });
+}
+
+function toAttribution(sig: OptionsSignal): SignalAttributionData {
+  const dte = sig.spread?.dte;
+  return {
+    direction: sig.action,
+    source: sig.source ?? "unknown",
+    timeframe: typeof dte === "number" ? `DTE ${dte}` : null,
+    confidence: sig.confidence,
+    updatedAt: sig.generated_at,
+    authority: "unknown",
+  };
+}
+
+function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
+  const spread = sig.spread || {};
+  const intel = sig.intelligence || {};
+  const isDebit = sig.action === "BUY_SPREAD";
+  const net = spread.net_credit;
+  const border =
+    isDebit ? "rgba(34,197,94,0.25)" :
+    sig.action === "SELL_SPREAD" ? "rgba(239,68,68,0.25)" :
+    "var(--line-dim)";
+
+  const pop = sig.pop ?? intel.pop ?? sig.confidence;
+
+  return (
+    <div style={{
+      background: "var(--bg-2)",
+      border: `1px solid ${border}`,
+      borderRadius: 6,
+      padding: "14px 16px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{
+            color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700,
+          }}>
+            {sig.ticker}
+            {formatStrikePair(spread) ? (
+              <span style={{ color: "var(--ink-dim)", fontWeight: 500, fontSize: 12, marginLeft: 8 }}>
+                {formatStrikePair(spread)}
+              </span>
+            ) : null}
+          </span>
+          {sig.strategy && (
+            <span style={{
+              color: "var(--cyan)", fontFamily: "var(--mono)", fontSize: 9,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+            }}>
+              {sig.strategy.replace(/_/g, " ")}
+              {formatExp(spread.expiration) ? ` · ${formatExp(spread.expiration)}` : ""}
+            </span>
+          )}
+        </div>
+        <SignalAttribution data={toAttribution(sig)} size="sm" />
+        <span style={{ flex: 1 }} />
+        <span style={{
+          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 9,
+        }}>
+          {new Date(sig.generated_at).toLocaleTimeString()}
+        </span>
+      </div>
+
+      {/* Confidence / POP */}
+      <div>
+        <div style={{ color: "var(--ink-dim)", fontSize: 9, fontFamily: "var(--mono)", marginBottom: 4, letterSpacing: "0.08em" }}>
+          {sig.pop != null ? "POP" : "CONFIDENCE"}
+        </div>
+        <ConfidenceBar value={pop} />
+      </div>
+
+      {/* Greeks / IV pills */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {sig.iv_rank !== undefined && <StatPill label="IV RANK" value={sig.iv_rank.toFixed(0)} />}
+        {sig.signal_score !== undefined && <StatPill label="SCORE" value={sig.signal_score.toFixed(3)} />}
+        {intel.delta_short !== undefined && <StatPill label="Δ" value={intel.delta_short.toFixed(2)} />}
+        {intel.vega_short !== undefined && <StatPill label="V" value={intel.vega_short.toFixed(3)} />}
+        {intel.theta_short !== undefined && <StatPill label="θ" value={intel.theta_short.toFixed(3)} />}
+        {sig.kelly_fraction != null && <StatPill label="KELLY" value={`${(sig.kelly_fraction * 100).toFixed(0)}%`} />}
+      </div>
+
+      {/* Spread levels */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+        gap: 8, background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
+      }}>
+        <PriceCell
+          label={isDebit ? "DEBIT" : "CREDIT"}
+          value={net !== undefined ? Math.abs(net) : undefined}
+          color="var(--ink)"
+        />
+        <PriceCell
+          label="MAX LOSS"
+          value={spread.max_loss}
+          color="var(--red)"
+        />
+        <PriceCell
+          label="BREAKEVEN"
+          value={spread.breakeven}
+          color="var(--green)"
+        />
+        <div style={{
+          gridColumn: "1/-1", display: "flex", gap: 16, flexWrap: "wrap",
+          fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 4,
+        }}>
+          {sig.quantity !== undefined && (
+            <span>CONTRACTS: <b style={{ color: "var(--ink)" }}>{sig.quantity}</b></span>
+          )}
+          {spread.dte !== undefined && (
+            <span>DTE <b style={{ color: "var(--cyan)" }}>{spread.dte}</b></span>
+          )}
+          {intel.reward_risk !== undefined && (
+            <span>R:R <b style={{ color: "var(--cyan)" }}>{intel.reward_risk.toFixed(2)}x</b></span>
+          )}
+          {spread.short_strike !== undefined && spread.long_strike !== undefined && (
+            <span>
+              STRIKES <b style={{ color: "var(--ink)" }}>
+                {spread.short_strike}/{spread.long_strike}
+              </b>
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function OptionsSignals() {
+  const [signals, setSignals] = useState<OptionsSignal[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadSignals = () => {
+    (api.getOptionsSignals() as Promise<{ signals?: OptionsSignal[] }>)
+      .then(d => setSignals(d.signals || []))
+      .catch(e => setError(String(e)));
+  };
+
+  useEffect(() => {
+    loadSignals();
+    const t = setInterval(loadSignals, 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  const runScan = async () => {
+    setScanning(true);
+    setError(null);
+    try {
+      const d = await (api.scanOptionsSignals() as Promise<{ signals?: OptionsSignal[] }>);
+      setSignals(d.signals || []);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const actionable = signals.filter(
+    s => s.action === "BUY_SPREAD" || s.action === "SELL_SPREAD",
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div>
+          <h2 style={{ margin: 0, color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16 }}>
+            OPTIONS SIGNALS
+          </h2>
+          <p style={{ margin: "4px 0 0", color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11 }}>
+            {actionable.length} actionable · {signals.length} total
+          </p>
+        </div>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={runScan}
+          disabled={scanning}
+          style={{
+            background: scanning ? "var(--bg-3)" : "var(--cyan)",
+            color: scanning ? "var(--ink-faint)" : "var(--bg)",
+            border: "none", borderRadius: 4,
+            padding: "8px 16px",
+            fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.08em",
+            cursor: scanning ? "default" : "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {scanning ? "SCANNING..." : "RUN SCAN"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{
+          background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
+          borderRadius: 4, padding: "10px 14px",
+          fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)",
+        }}>
+          {error}
+        </div>
+      )}
+
+      {signals.length === 0 ? (
+        <div style={{
+          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
+          textAlign: "center", padding: 40,
+        }}>
+          No options signals yet. Click RUN SCAN to generate spread signals (SPY / QQQ).
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+          {signals.map(sig => <OptionsSignalCard key={sig.id} sig={sig} />)}
+        </div>
+      )}
+    </div>
+  );
+}

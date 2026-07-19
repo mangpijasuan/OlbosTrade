@@ -1,6 +1,7 @@
 /**
- * EquitySignals page — displays equity signal cards with confidence, orderflow,
- * IV overlay boost, and entry/stop/target levels.
+ * EquitySignals page — live signal feed with EQUITIES | OPTIONS toggle.
+ * Equity cards: confidence, orderflow, IV boost, entry/stop/target.
+ * Options cards: OptionsSignals (spread premium, Greeks, contracts, DTE).
  */
 
 import React, { useEffect, useState } from "react";
@@ -8,6 +9,9 @@ import BrokerStatus from "../components/BrokerStatus";
 import PortfolioGreeks from "../components/PortfolioGreeks";
 import SignalAttribution from "../components/SignalAttribution";
 import type { SignalAttributionData } from "../types/signal";
+import OptionsSignals from "./OptionsSignals";
+
+type AssetTab = "equities" | "options";
 
 interface TradePlan {
   entry_price?: number;
@@ -201,7 +205,42 @@ function PriceCell({ label, value, color }: { label: string; value?: number; col
   );
 }
 
-export default function EquitySignals() {
+function AssetToggle({ tab, onChange }: { tab: AssetTab; onChange: (t: AssetTab) => void }) {
+  const btn = (id: AssetTab, label: string) => {
+    const active = tab === id;
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(id)}
+        style={{
+          background: active ? "var(--bg-3)" : "transparent",
+          color: active ? "var(--ink)" : "var(--ink-faint)",
+          border: active ? "1px solid var(--line)" : "1px solid transparent",
+          borderRadius: 4,
+          padding: "6px 14px",
+          fontFamily: "var(--mono)",
+          fontSize: 11,
+          letterSpacing: "0.1em",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div style={{
+      display: "inline-flex", gap: 4, padding: 3,
+      background: "var(--bg-2)", border: "1px solid var(--line-dim)", borderRadius: 6,
+    }}>
+      {btn("options", "OPTIONS")}
+      {btn("equities", "EQUITIES")}
+    </div>
+  );
+}
+
+function EquitySignalsGrid() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -235,8 +274,7 @@ export default function EquitySignals() {
   const actionable = signals.filter(s => s.action !== "HOLD" && !s.earnings_gated);
 
   return (
-    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16, maxWidth: 1200 }}>
-      {/* Header */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <div>
           <h2 style={{ margin: 0, color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16 }}>
@@ -264,12 +302,6 @@ export default function EquitySignals() {
         </button>
       </div>
 
-      {/* Broker + Greeks */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <BrokerStatus />
-        <PortfolioGreeks />
-      </div>
-
       {error && (
         <div style={{
           background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
@@ -280,7 +312,6 @@ export default function EquitySignals() {
         </div>
       )}
 
-      {/* Signal cards — actionable first */}
       {signals.length === 0 ? (
         <div style={{
           color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
@@ -295,6 +326,22 @@ export default function EquitySignals() {
           }
         </div>
       )}
+    </div>
+  );
+}
+
+export default function EquitySignals() {
+  const [tab, setTab] = useState<AssetTab>("equities");
+
+  return (
+    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16, maxWidth: 1200 }}>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
+        <AssetToggle tab={tab} onChange={setTab} />
+        <div style={{ flex: 1, minWidth: 220 }}><BrokerStatus /></div>
+        <div style={{ flex: 1, minWidth: 220 }}><PortfolioGreeks /></div>
+      </div>
+
+      {tab === "equities" ? <EquitySignalsGrid /> : <OptionsSignals />}
     </div>
   );
 }

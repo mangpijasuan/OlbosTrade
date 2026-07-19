@@ -17,8 +17,8 @@ const DEFAULT_STALE_AFTER_MS = 15 * 60 * 1000; // 15 minutes
 
 function directionTone(direction: string): string {
   const d = direction.toUpperCase();
-  if (d === "BUY" || d === "BULLISH") return "var(--green)";
-  if (d === "SELL" || d === "BEARISH") return "var(--red)";
+  if (d === "BUY" || d === "BUY_SPREAD" || d === "BULLISH") return "var(--green)";
+  if (d === "SELL" || d === "SELL_SPREAD" || d === "BEARISH") return "var(--red)";
   if (d === "HOLD" || d === "NEUTRAL") return "var(--ink-dim)";
   return "var(--amber)"; // unrecognized direction string — flag, don't hide
 }

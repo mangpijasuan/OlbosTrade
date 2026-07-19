@@ -856,9 +856,16 @@ async def _build_portfolio_risk_state(portfolio_value: float):
     )
 
 
-async def _run_options_scan(symbol: str = "SPY") -> None:
+async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
     """
     Generate options spread signals for `symbol` based on the current regime.
+
+    `execute=False` (used by the on-demand preview endpoint,
+    POST /api/options/signals/scan) computes and persists the same signal —
+    same strategy classification, strikes, credit/debit, Greeks — but skips
+    the handle_signal() dispatch, so a "show me current signals" UI action
+    can never itself submit a real order. The scheduled background scanner
+    always calls this with the default execute=True.
 
     The regime itself is still classified from SPY alone (_reclassify_regime) —
     scanning QQQ reuses that same regime/VIX/IV-rank state as a shared proxy
@@ -1274,8 +1281,14 @@ async def _run_options_scan(symbol: str = "SPY") -> None:
             signal_score, quantity,
         )
 
-        from app.api.routes.trade_desk import handle_signal
-        await handle_signal(signal)
+        # Persist for the Options Signals UI (mirrors equity._recent_signals).
+        from app.api.routes.options import _recent_options_signals
+        _recent_options_signals.insert(0, signal)
+        del _recent_options_signals[200:]
+
+        if execute:
+            from app.api.routes.trade_desk import handle_signal
+            await handle_signal(signal)
 
     except Exception as exc:
         logger.warning("Options scan failed: %s", exc)

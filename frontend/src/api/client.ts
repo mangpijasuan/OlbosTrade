@@ -123,6 +123,8 @@ export const api = {
   // ── Equity Workstation ────────────────────────────────────────────────────
   scanEquitySignals: () => request("/api/equity/scan", { method: "POST" }),
   getEquitySignals: (limit?: number) => request(`/api/equity/signals${limit ? `?limit=${limit}` : ""}`),
+  getOptionsSignals: (limit?: number) => request(`/api/options/signals${limit ? `?limit=${limit}` : ""}`),
+  scanOptionsSignals: () => request("/api/options/signals/scan", { method: "POST" }),
   getEquityChart: (symbol: string, params?: { timeframe?: string; limit?: number }) => {
     const search = new URLSearchParams();
     if (params?.timeframe) search.set("timeframe", params.timeframe);

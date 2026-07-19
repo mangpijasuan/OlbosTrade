@@ -4,9 +4,11 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.services.options_intelligence import analyze_spread
-
 router = APIRouter()
+
+# In-memory options signal store (mirrors equity._recent_signals).
+# Populated by the background options scanner in main._run_options_scan.
+_recent_options_signals: list[dict] = []
 
 
 class SpreadAnalyzeRequest(BaseModel):
@@ -20,11 +22,45 @@ class SpreadAnalyzeRequest(BaseModel):
     r: float = 0.05
 
 
+@router.get("/signals")
+async def list_options_signals(limit: int = 50):
+    """Return recent options spread signals (most recent first)."""
+    return {
+        "signals": _recent_options_signals[:limit],
+        "total": len(_recent_options_signals),
+    }
+
+
+@router.post("/signals/scan")
+async def trigger_options_signal_scan():
+    """
+    Compute one options signal preview cycle for SPY and QQQ — same strategy
+    classification, strikes, and Greeks the background scanner produces, but
+    execute=False so this on-demand "show me current signals" UI action can
+    never itself dispatch to handle_signal()/order submission. Only the
+    scheduled background scanner (main.py's _background_scheduler) executes.
+    """
+    # Lazy import — main imports this module at startup.
+    from app.main import _run_options_scan
+
+    for symbol in ("SPY", "QQQ"):
+        try:
+            await _run_options_scan(symbol, execute=False)
+        except Exception:
+            # Keep going so one symbol's failure doesn't blank the other.
+            pass
+
+    return {
+        "signals": _recent_options_signals[:50],
+        "total": len(_recent_options_signals),
+    }
 
 
 @router.post("/analyze")
 async def analyze(req: SpreadAnalyzeRequest):
     """Return POP / prob-touch / expected move / Greeks / EV / Kelly for a spread."""
+    from app.services.options_intelligence import analyze_spread
+
     try:
         intel = analyze_spread(
             spot=req.spot, short_strike=req.short_strike, long_strike=req.long_strike,
