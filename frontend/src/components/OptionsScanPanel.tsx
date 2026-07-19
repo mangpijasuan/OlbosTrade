@@ -14,6 +14,7 @@ import WatchlistManager from "./WatchlistManager";
 import IBKRLiveControl from "./IBKRLiveControl";
 import SignalAttribution from "./SignalAttribution";
 import { useLiveData } from "../hooks/useLiveData";
+import { apiAuthHeaders } from "../api/client";
 
 interface Candidate {
   ticker: string;
@@ -436,7 +437,7 @@ export default function OptionsScanPanel() {
       try {
         const response = await fetch("/api/trade-desk/signal", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: apiAuthHeaders(),
           body: JSON.stringify({
             ticker: candidate.ticker,
             action: candidate.action,

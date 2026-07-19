@@ -271,13 +271,21 @@ class KillSwitch:
     async def reset(self, authorization_code: str = "") -> dict:
         """
         Reset kill switch after manual review.
-        Requires explicit authorization to prevent accidental re-enable.
+        Requires authorization_code matching settings.kill_switch_reset_code.
         """
-        if authorization_code != "OLBOSTRADE_MANUAL_RESET":
+        from app.core.config import settings
+
+        expected = (settings.kill_switch_reset_code or "").strip()
+        if not expected:
             return {
                 "reset": False,
-                "reason": "Invalid authorization code. "
-                          "Pass authorization_code='OLBOSTRADE_MANUAL_RESET' to confirm.",
+                "reason": "Kill-switch reset is not configured. "
+                          "Set KILL_SWITCH_RESET_CODE on the server.",
+            }
+        if not authorization_code or authorization_code != expected:
+            return {
+                "reset": False,
+                "reason": "Invalid authorization code.",
             }
 
         async with self._lock:
@@ -294,7 +302,7 @@ class KillSwitch:
             async with AsyncSessionLocal() as session:
                 session.add(GuardrailEvent(
                     event_type="kill_switch_reset",
-                    notes="manual reset via OLBOSTRADE_MANUAL_RESET",
+                    notes="manual reset via authorization_code",
                 ))
                 await session.commit()
         except Exception as exc:

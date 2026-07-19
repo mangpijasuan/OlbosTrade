@@ -81,3 +81,19 @@ async def test_ticker_is_normalized_uppercase(_queue_spy):
     result = await submit_scan_signal(_req())
     queued = _queue_spy.await_args.args[0]
     assert queued["ticker"] == "SPY"
+
+
+async def test_equity_shares_reach_queued_trade_plan(_queue_spy):
+    """Composer/scan size must land in trade_plan so approve does not default to 1."""
+    execution_mode_manager._mode = ExecutionMode.COPILOT
+    req = ScanSignalRequest(
+        ticker="AAPL", action="BUY", entry_price=150.0,
+        stop_price=145.0, target_price=160.0, shares=25,
+        source="equity_desk_composer",
+    )
+    result = await submit_scan_signal(req)
+    queued = _queue_spy.await_args.args[0]
+    assert result["shares"] == 25
+    assert queued["asset_type"] == "equity"
+    assert queued["trade_plan"]["shares"] == 25
+    assert queued["trade_plan"]["entry_price"] == 150.0

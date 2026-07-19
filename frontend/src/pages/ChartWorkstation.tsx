@@ -337,11 +337,33 @@ function InfoCard({ title, children, action }: { title: string; children: React.
   );
 }
 
-export default function ChartWorkstation() {
+export default function ChartWorkstation({
+  symbol: controlledSymbol,
+  onSymbolChange,
+  compact = false,
+}: {
+  /** When set, symbol is controlled by the parent (Equity Desk). */
+  symbol?: string;
+  onSymbolChange?: (symbol: string) => void;
+  /** Hide top strip + left watch rail — discovery lives in Equity Desk. */
+  compact?: boolean;
+} = {}) {
   const { positions, portfolio } = usePaperTrade();
   const { guardrailStatus, reconciliation, killSwitch } = useRisk();
 
-  const [symbol, setSymbol] = useState("AAPL");
+  const [internalSymbol, setInternalSymbol] = useState(controlledSymbol || "AAPL");
+  const symbol = controlledSymbol ?? internalSymbol;
+  const setSymbol = (next: string) => {
+    if (controlledSymbol === undefined) setInternalSymbol(next);
+    onSymbolChange?.(next);
+  };
+
+  useEffect(() => {
+    if (controlledSymbol != null && controlledSymbol !== internalSymbol) {
+      setInternalSymbol(controlledSymbol);
+    }
+  }, [controlledSymbol]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [watchSnapshots, setWatchSnapshots] = useState<Record<string, WatchSnapshot>>({});
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -439,7 +461,8 @@ export default function ChartWorkstation() {
   const planTitle = tradePlanCardTitle(Boolean(selectedSignal), selectedSignal?.source);
 
   return (
-    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ padding: compact ? 0 : 16, display: "flex", flexDirection: "column", gap: 14, height: compact ? "100%" : undefined }}>
+      {!compact && (
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
@@ -457,8 +480,10 @@ export default function ChartWorkstation() {
           </div>
         ))}
       </div>
+      )}
 
-      <div className="workstation-grid">
+      <div className="workstation-grid" style={compact ? { gridTemplateColumns: "1fr", flex: 1, minHeight: 0 } : undefined}>
+        {!compact && (
         <div className="workstation-col">
           <InfoCard title="Market Watch">
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -522,6 +547,7 @@ export default function ChartWorkstation() {
             </div>
           </InfoCard>
         </div>
+        )}
 
         <div className="workstation-center">
           <section className="panel" style={{ overflow: "hidden" }}>
@@ -598,12 +624,15 @@ export default function ChartWorkstation() {
             </div>
           </section>
 
+          {!compact && (
           <section className="chart-intel-grid">
             <MarketBiasPanel symbol={symbol} />
             <TimeframeAlignmentPanel symbol={symbol} />
             <MarketStructurePanel symbol={symbol} timeframe="1d" />
           </section>
+          )}
 
+          {!compact && (
           <div className="workstation-bottom-grid">
             <InfoCard title={planTitle}>
               {selectedSignal?.source && selectedSignal.source !== "unknown" && (
@@ -655,8 +684,10 @@ export default function ChartWorkstation() {
               </div>
             </InfoCard>
           </div>
+          )}
         </div>
 
+        {!compact && (
         <div className="workstation-col workstation-right">
           <SetupScannerPanel />
           <InfoCard
@@ -726,6 +757,7 @@ export default function ChartWorkstation() {
             </div>
           </InfoCard>
         </div>
+        )}
       </div>
       <SignalDetailDrawer
         open={signalDrawerOpen}

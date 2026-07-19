@@ -277,6 +277,41 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
 .workspace-state.error { border-color: rgba(239,68,68,.4); }
 .workspace-state.error strong { color: var(--red); }
 
+/* Trade Desk 2.0 — Phase F a11y + mobile */
+.trade-desk-skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 12px;
+  background: var(--bg-3);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+.trade-desk-skip:focus {
+  left: 8px;
+  top: 8px;
+}
+.trade-desk-shell--mobile .trade-desk-mobile-tabs {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line-dim);
+  background: var(--bg-2);
+}
+.trade-desk-shell--mobile .trade-desk-mobile-tabs [role="tablist"] {
+  border-bottom: none;
+}
+@media (max-width: 760px) {
+  .trade-replay-body {
+    grid-template-columns: 1fr !important;
+  }
+  .trade-replay-body > aside {
+    border-top: 1px solid var(--line-dim);
+    max-height: 42vh;
+  }
+}
+
 /* Consistent narrow-screen fallback for legacy analytical grids. */
 @media (max-width: 760px) {
   .workspace-header, .workspace-header-actions { align-items: flex-start; }

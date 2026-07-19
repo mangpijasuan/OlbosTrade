@@ -76,7 +76,10 @@ async def test_kill_switch_double_engage_is_idempotent(ks, mock_broker, mock_sch
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_reset_requires_auth_code(ks):
+async def test_kill_switch_reset_requires_auth_code(ks, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.kill_switch_reset_code", "TEST_RESET_CODE"
+    )
     ks._engaged = True
     result = await ks.reset("wrong_code")
     assert result["reset"] is False
@@ -84,10 +87,28 @@ async def test_kill_switch_reset_requires_auth_code(ks):
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_reset_with_correct_code(ks, mock_scheduler):
+async def test_kill_switch_reset_disabled_when_unset(ks, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.kill_switch_reset_code", "")
+    ks._engaged = True
+    result = await ks.reset("anything")
+    assert result["reset"] is False
+    assert "not configured" in result["reason"].lower()
+    assert ks.is_engaged is True
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_reset_with_correct_code(ks, mock_scheduler, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.kill_switch_reset_code", "TEST_RESET_CODE"
+    )
     ks._engaged = True
     ks._scheduler = mock_scheduler
-    result = await ks.reset("OLBOSTRADE_MANUAL_RESET")
+    with patch("app.services.kill_switch.AsyncSessionLocal") as mock_db:
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
+            add=MagicMock(), commit=AsyncMock()
+        ))
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
+        result = await ks.reset("TEST_RESET_CODE")
     assert result["reset"] is True
     assert ks.is_engaged is False
     mock_scheduler.resume.assert_called_once()

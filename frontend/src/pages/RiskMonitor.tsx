@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
-import { api } from "../api/client";
+import { api, getOperatorApiKey, setOperatorApiKey } from "../api/client";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
 
 interface MarginInfo {
@@ -21,6 +21,8 @@ export default function RiskMonitor() {
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
+  const [resetCode, setResetCode] = useState("");
+  const [operatorKey, setOperatorKey] = useState(() => getOperatorApiKey());
 
   const loadKs = () =>
     api.getKillSwitchStatus().then(setKs).catch(() => {});
@@ -44,10 +46,21 @@ export default function RiskMonitor() {
   };
 
   const resetKs = async () => {
+    const code = resetCode.trim();
+    if (!code) {
+      setKsError("Enter the kill-switch reset authorization code.");
+      return;
+    }
     setKsBusy(true); setKsError(null);
-    try { await api.resetKillSwitch("OLBOSTRADE_MANUAL_RESET"); await loadKs(); }
-    catch (e: any) { setKsError(e?.message || "Failed to reset kill switch"); }
-    finally { setKsBusy(false); }
+    try {
+      await api.resetKillSwitch(code);
+      setResetCode("");
+      await loadKs();
+    } catch (e: any) {
+      setKsError(e?.message || "Failed to reset kill switch");
+    } finally {
+      setKsBusy(false);
+    }
   };
 
   const ksEngaged = !!(ks?.engaged ?? ks?.is_engaged);
@@ -206,6 +219,37 @@ export default function RiskMonitor() {
               </div>
             )}
           </Section>
+          <Section title="Operator API Key">
+            <div style={{ padding: 16, display: "flex", gap: 12, flexDirection: "column" }}>
+              <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
+                When SECRET_KEY is set on the server, paste it here once per browser
+                session. Stored in sessionStorage only — never shipped in the bundle.
+                Leave blank for local paper when SECRET_KEY is unset.
+              </p>
+              <input
+                type="password"
+                autoComplete="off"
+                value={operatorKey}
+                onChange={(e) => setOperatorKey(e.target.value)}
+                placeholder="SECRET_KEY (session)"
+                aria-label="Operator API key for this session"
+                style={{
+                  fontFamily: "var(--mono)", fontSize: 12,
+                  padding: "8px 10px",
+                  background: "var(--bg-3)", color: "var(--ink)",
+                  border: "1px solid var(--line)", borderRadius: 4,
+                }}
+              />
+              <button
+                className="btn-t"
+                type="button"
+                onClick={() => setOperatorApiKey(operatorKey.trim())}
+                style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}
+              >
+                SAVE SESSION KEY
+              </button>
+            </div>
+          </Section>
           <Section title="Kill Switch">
             <div style={{ padding: 16, display: "flex", gap: 12, flexDirection: "column" }}>
               {ksEngaged ? (
@@ -215,11 +259,26 @@ export default function RiskMonitor() {
                   </div>
                   <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
                     All orders were cancelled and positions flattened. Reset only
-                    after manual review.
+                    after manual review. Enter the server reset code
+                    (KILL_SWITCH_RESET_CODE) — it is never stored in this app.
                   </p>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={resetCode}
+                    onChange={(e) => setResetCode(e.target.value)}
+                    placeholder="Authorization code"
+                    aria-label="Kill switch reset authorization code"
+                    style={{
+                      fontFamily: "var(--mono)", fontSize: 12,
+                      padding: "8px 10px",
+                      background: "var(--bg-3)", color: "var(--ink)",
+                      border: "1px solid var(--line)", borderRadius: 4,
+                    }}
+                  />
                   <button
                     className="btn-t"
-                    disabled={ksBusy}
+                    disabled={ksBusy || !resetCode.trim()}
                     onClick={resetKs}
                     style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}
                   >

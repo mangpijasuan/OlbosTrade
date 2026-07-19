@@ -29,11 +29,26 @@ function ContractRow({ c, atm }: { c: Contract; atm: boolean }) {
   );
 }
 
-export default function OptionsChain() {
-  const [symbol, setSymbol] = useState("SPY");
-  const [input, setInput] = useState("SPY");
+export default function OptionsChain({
+  symbol: controlledSymbol,
+  onSymbolChange,
+}: {
+  symbol?: string;
+  onSymbolChange?: (symbol: string) => void;
+} = {}) {
+  const [internalSymbol, setInternalSymbol] = useState(controlledSymbol || "SPY");
+  const symbol = controlledSymbol ?? internalSymbol;
+  const setSymbol = (sym: string) => {
+    if (controlledSymbol === undefined) setInternalSymbol(sym);
+    onSymbolChange?.(sym);
+  };
+  const [input, setInput] = useState(symbol);
   const [data, setData] = useState<ChainResponse | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setInput(symbol);
+  }, [symbol]);
 
   const load = (sym: string) => {
     setLoading(true);

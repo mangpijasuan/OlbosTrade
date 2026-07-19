@@ -1,6 +1,82 @@
 # Changelog
 
+## Unreleased — Feature flags opt-in (pre-deploy)
+
+- Trade Desk V2 flags default **off** (`trade_desk_v2` and desk/monitor/replay/mobile)
+  so deploy keeps legacy desk until operator enables V2 in Desk Settings / localStorage
+- Desk Settings copy updated to describe opt-in; rollback still `olbos.flags.trade_desk_v2=0`
+
+## Unreleased — Claude Code stage (integration / paper E2E / deploy prep)
+
+- Docs: `docs/trade-desk-2.0/INTEGRATION_AUDIT.md`, `PAPER_E2E.md`, `DEPLOY_PREP.md`
+- Hardening: equity `/signal` now carries `shares` + `trade_plan` (composer + scan)
+- Read-only smoke: `scripts/paper_e2e_smoke.sh` (no orders; no production deploy)
+
+## Unreleased — Trade Desk 2.0 Phase F (Replay + a11y/mobile)
+
+- Trade Replay MVP: trade tape + detail (paper/live account label, source, journal snapshot)
+- Desk shell: skip link, landmarks; scrollable tabs; mobile bottom tab strip (`mobile_trade_desk`)
+- History API exposes `trading_mode`; flags `trade_replay_v2` + `mobile_trade_desk` default on
+
+## Unreleased — Step 8 (money-path portfolio gate)
+
+- `_execute_signal` Stage 2b: max positions, underlying/sector concentration, heat-high
+- Module `execution_portfolio_gate.py`; Greeks caps off by default (miscalibrated)
+- Rollback: `EXECUTION_PORTFOLIO_GATE=false`; evaluate-* endpoints surface the same checks
+
+## Unreleased — Trade Desk 2.0 Phase E (thin Copilot / Orders / Execution)
+
+- Copilot Queue v2: pending approvals + recent decisions audit (existing approve/reject APIs)
+- Orders workspace: lifecycle filters from queue + execution log (honest: no broker ack table yet)
+- Execution Monitor: timeline + submitted/blocked/skipped/rejected counts
+- Flags `copilot_queue_v2` + `execution_monitor_v2` default on; `_execute_signal` unchanged
+
+## Unreleased — Trade Desk 2.0 Phase D (Options Desk)
+
+- Options Desk: discovery + Chain / Chart / Scanner / Income / Flow / Signals /
+  0DTE (read-only) tool tabs; intelligence rail with analyze preview + Greeks
+- `POST /api/trade-desk/evaluate-options` advisory gate (no `_execute_signal`);
+  bans naked shorts / iron condor; 0DTE Autopilot explicitly off
+- OptionsChain accepts controlled `symbol`; `options_desk_v2` default on
+
+## Unreleased — Trade Desk 2.0 Phase C (Equity Desk)
+
+
+- Equity Desk: discovery rail, compact ChartWorkstation embed, intelligence
+  rail (bias/alignment/structure + portfolio heat + setup readiness)
+- Order composer: `POST /api/trade-desk/evaluate-equity` (advisory, no
+  `_execute_signal`) then submit via existing `/api/trade-desk/signal` queue
+- ChartWorkstation accepts optional controlled `symbol` + `compact` mode
+- Flag `equity_desk_v2` default on; no money-path gate changes
+
+## Unreleased — Trade Desk 2.0 Phase B (shell)
+
+
+- Feature flag `trade_desk_v2` (default on; rollback via Desk Settings or
+  `olbos.flags.trade_desk_v2=0`)
+- Trade Desk shell: header (Paper/Live labeled), tabs, Command Overview
+  (read-only queues from pending / execution log / positions / risk)
+- Sidebar IA under flag: Options under Trade Desk group; options tools stay
+  under Strategies (advanced) until Phase D
+- Copilot / Positions reuse legacy TradeDesk tabs; Equity/Options/Orders/Replay
+  show honest Phase placeholders
+- No `_execute_signal` or money-path changes
+
+## Unreleased — Security: kill-switch reset + trade-desk mutate auth
+
+
+- Kill-switch reset code moved to server env `KILL_SWITCH_RESET_CODE` (no
+  default; reset disabled until configured). Frontend prompts for the code;
+  the old hardcoded `OLBOSTRADE_MANUAL_RESET` string is removed from the bundle
+  and from `POST /api/trade-desk/kill-switch` reset.
+- Trade-desk mutate routes (`execution-mode`, `approve`, `reject`,
+  `manual-trade`, `signal`) require `X-Api-Key` when `SECRET_KEY` is set.
+  Operator pastes the key once per session (Risk → Operator API Key →
+  sessionStorage). Engage kill switch remains FastAPI-open for emergencies
+  (nginx Basic Auth still applies in production).
+
 ## Unreleased — Options Signal cards on Strategies → Signals
+
 
 - Strategies → Signals: OPTIONS | EQUITIES toggle beside broker/Greeks strip
 - Options cards mirror equity layout: strategy, BUY_SPREAD/SELL_SPREAD

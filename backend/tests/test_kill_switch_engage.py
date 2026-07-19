@@ -96,14 +96,17 @@ async def test_status_property():
 
 
 @pytest.mark.asyncio
-async def test_reset_requires_authorization():
+async def test_reset_requires_authorization(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.kill_switch_reset_code", "TEST_RESET_CODE"
+    )
     ks = KillSwitch()
     ks.configure(_broker(), MagicMock())
     with patch("app.services.kill_switch.AsyncSessionLocal", return_value=_db_session()):
         await ks.engage("x")
         bad = await ks.reset("wrong-code")
         assert bad["reset"] is False and ks.is_engaged
-        good = await ks.reset("OLBOSTRADE_MANUAL_RESET")
+        good = await ks.reset("TEST_RESET_CODE")
     assert good["reset"] is True and not ks.is_engaged
 
 
@@ -193,10 +196,13 @@ async def test_engage_get_positions_error():
 
 
 @pytest.mark.asyncio
-async def test_reset_without_scheduler():
+async def test_reset_without_scheduler(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.kill_switch_reset_code", "TEST_RESET_CODE"
+    )
     ks = KillSwitch()
     ks.configure(_broker())   # no scheduler
     with patch("app.services.kill_switch.AsyncSessionLocal", return_value=_db_session()):
         await ks.engage("x")
-        out = await ks.reset("OLBOSTRADE_MANUAL_RESET")
+        out = await ks.reset("TEST_RESET_CODE")
     assert out["reset"] is True and not ks.is_engaged

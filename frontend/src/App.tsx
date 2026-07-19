@@ -3,6 +3,7 @@ import "./index.css";
 import TerminalLayout  from "./components/TerminalLayout";
 import Dashboard       from "./pages/Dashboard";
 import TradeDesk       from "./pages/TradeDesk";
+import TradeDeskV2     from "./pages/TradeDeskV2";
 import Journal         from "./pages/Journal";
 import ModeAnalytics   from "./pages/ModeAnalytics";
 // Consolidated hubs (each folds two former pages behind tabs)
@@ -22,7 +23,7 @@ import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
 import ChartWorkstation from "./pages/ChartWorkstation";     // Price-action / market-structure chart
 import NewsEventsCenter from "./pages/markets/NewsEventsCenter";
-// Data & Integrations module
+import { isTradeDeskV2Enabled } from "./trade-desk/featureFlags";
 
 function UnknownPage() {
   return (
@@ -37,9 +38,35 @@ function UnknownPage() {
   );
 }
 
-const PAGES: Record<string, React.ComponentType> = {
+function tradeDeskPages(v2: boolean): Record<string, React.ComponentType> {
+  if (!v2) {
+    return {
+      paper: TradeDesk,
+      "trade:copilot":   () => <TradeDesk initialTab="approvals" />,
+      "trade:orders":    () => <TradeDesk initialTab="signals" />,
+      "trade:positions": () => <TradeDesk initialTab="positions" />,
+      "trade:logs":      () => <TradeDesk initialTab="pnl" />,
+      "trade:execlog":   () => <TradeDesk initialTab="approvals" />,
+    };
+  }
+  return {
+    paper: () => <TradeDeskV2 initialTab="trade:overview" />,
+    "trade:overview":  () => <TradeDeskV2 initialTab="trade:overview" />,
+    "trade:equity":    () => <TradeDeskV2 initialTab="trade:equity" />,
+    "trade:options":   () => <TradeDeskV2 initialTab="trade:options" />,
+    "trade:copilot":   () => <TradeDeskV2 initialTab="trade:copilot" />,
+    "trade:positions": () => <TradeDeskV2 initialTab="trade:positions" />,
+    "trade:orders":    () => <TradeDeskV2 initialTab="trade:orders" />,
+    "trade:execlog":   () => <TradeDeskV2 initialTab="trade:execlog" />,
+    "trade:replay":    () => <TradeDeskV2 initialTab="trade:replay" />,
+    "trade:settings":  () => <TradeDeskV2 initialTab="trade:settings" />,
+    // Legacy deep-links → overview or closest v2 tab
+    "trade:logs":      () => <TradeDeskV2 initialTab="trade:overview" />,
+  };
+}
+
+const BASE_PAGES: Record<string, React.ComponentType> = {
   dashboard: Dashboard,
-  paper:     TradeDesk,
   equity:    SignalsCenter,
   backtest:  BacktestCenter,
   lab:       ResearchCenter,
@@ -49,13 +76,6 @@ const PAGES: Record<string, React.ComponentType> = {
   scan:      ScanCenter,
   settings:  SystemCenter,
 
-  // Grouped-nav aliases → existing pages, deep-linked to the relevant tab so
-  // each sub-item lands on its own view instead of a shared default.
-  "trade:copilot":   () => <TradeDesk initialTab="approvals" />,
-  "trade:orders":    () => <TradeDesk initialTab="signals" />,
-  "trade:positions": () => <TradeDesk initialTab="positions" />,
-  "trade:logs":      () => <TradeDesk initialTab="pnl" />,
-  "trade:execlog":   () => <TradeDesk initialTab="approvals" />,
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
   "strat:builder":   StrategyBuilder,
   "strat:alerts":    Alerts,
@@ -70,13 +90,11 @@ const PAGES: Record<string, React.ComponentType> = {
   "lab:intel":       () => <ResearchCenter initialTab="intel" />,
   "lab:models":      () => <ResearchCenter initialTab="models" />,
 
-  // Markets module
   "markets:heatmaps":   Heatmap,
   "markets:watchlists": Watchlists,
   "markets:chart":      ChartWorkstation,
   "markets:news":       NewsEventsCenter,
 
-  // Data & Integrations module
   "system:broker":  () => <SystemCenter initialTab="broker" />,
   "system:market":  () => <SystemCenter initialTab="market" />,
   "system:quality": () => <SystemCenter initialTab="quality" />,
@@ -84,6 +102,8 @@ const PAGES: Record<string, React.ComponentType> = {
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
+  const v2 = isTradeDeskV2Enabled();
+  const PAGES = { ...BASE_PAGES, ...tradeDeskPages(v2) };
   const Page = PAGES[page] || UnknownPage;
 
   return (

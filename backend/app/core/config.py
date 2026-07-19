@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     # this on for a real run — it disables the profitability filters.
     execution_test_mode: bool = Field(default=False)
 
+    # ── Step 8: portfolio gate on `_execute_signal` ───────────────────────
+    # Concentration + max positions + heat-high. Rollback: set false.
+    execution_portfolio_gate: bool = Field(default=True)
+    # Greeks delta/vega caps — OFF by default (miscalibrated for live spreads).
+    execution_enforce_portfolio_greeks: bool = Field(default=False)
+
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)
     signal_score_preservation_mode: float = Field(default=0.80)
@@ -117,6 +123,12 @@ class Settings(BaseSettings):
 
     # ── Security ─────────────────────────────────────────────────────────
     secret_key: str = Field(default="", description="API secret key for admin endpoints")
+    # Kill-switch reset authorization. Empty = reset disabled until configured.
+    # Never ship a default that is also hardcoded in the frontend bundle.
+    kill_switch_reset_code: str = Field(
+        default="",
+        description="Authorization code required to reset the kill switch (env KILL_SWITCH_RESET_CODE)",
+    )
 
     # ── AI Research Assistant (provider-agnostic; Gemini default, free tier) ──
     llm_provider: str = Field(default="gemini", description="gemini | anthropic | auto")

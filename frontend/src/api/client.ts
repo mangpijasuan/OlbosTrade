@@ -8,10 +8,44 @@
 // Set VITE_API_URL only if you need to bypass the proxy (e.g. direct calls from a static build).
 const BASE_URL = "";
 
+const OPERATOR_KEY_STORAGE = "olbos.operatorApiKey";
+
+/** Session-scoped operator API key (never bake SECRET_KEY into the bundle). */
+export function getOperatorApiKey(): string {
+  try {
+    return sessionStorage.getItem(OPERATOR_KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setOperatorApiKey(key: string): void {
+  try {
+    if (key) sessionStorage.setItem(OPERATOR_KEY_STORAGE, key);
+    else sessionStorage.removeItem(OPERATOR_KEY_STORAGE);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Headers for authenticated mutate calls — use from raw fetch sites too. */
+export function apiAuthHeaders(extra?: HeadersInit): HeadersInit {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const key = getOperatorApiKey();
+  if (key) headers["X-Api-Key"] = key;
+  if (extra) {
+    const e = new Headers(extra);
+    e.forEach((v, k) => { headers[k] = v; });
+  }
+  return headers;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
+    headers: apiAuthHeaders(options?.headers),
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
   return res.json();
@@ -162,8 +196,18 @@ export const api = {
   setExecutionMode:   (mode: string) =>
     request("/api/trade-desk/execution-mode", { method: "POST", body: JSON.stringify({ mode }) }),
   getTradeDeskKillSwitch: () => request("/api/trade-desk/kill-switch"),
-  setTradeDeskKillSwitch: (engaged: boolean) =>
-    request("/api/trade-desk/kill-switch", { method: "POST", body: JSON.stringify({ engaged }) }),
+  setTradeDeskKillSwitch: (engaged: boolean, authorizationCode?: string) =>
+    request("/api/trade-desk/kill-switch", {
+      method: "POST",
+      body: JSON.stringify({
+        engaged,
+        ...(authorizationCode != null ? { authorization_code: authorizationCode } : {}),
+      }),
+    }),
+  evaluateEquityIntent: (body: object) =>
+    request("/api/trade-desk/evaluate-equity", { method: "POST", body: JSON.stringify(body) }),
+  evaluateOptionsIntent: (body: object) =>
+    request("/api/trade-desk/evaluate-options", { method: "POST", body: JSON.stringify(body) }),
   getPendingApprovals: () => request("/api/trade-desk/pending"),
   approveSignal:       (id: string) =>
     request(`/api/trade-desk/approve/${id}`, { method: "POST" }),

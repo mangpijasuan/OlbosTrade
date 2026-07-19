@@ -7,10 +7,11 @@ from __future__ import annotations
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, func, and_, case
 
+from app.api.deps import require_api_key_configured
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.reconciliation_snapshot import ReconciliationSnapshot
@@ -19,12 +20,6 @@ from app.models.risk_state import PortfolioSnapshot
 from app.services.kill_switch import kill_switch_service
 from app.services.position_reconciler import PositionReconciler, ReconciliationError
 
-
-def _require_api_key(x_api_key: str = Header(default="")) -> None:
-    if not settings.secret_key:
-        raise HTTPException(status_code=503, detail="SECRET_KEY not configured")
-    if x_api_key != settings.secret_key:
-        raise HTTPException(status_code=403, detail="Invalid API key")
 
 router = APIRouter()
 
@@ -260,10 +255,9 @@ async def get_kill_switch_status():
     return kill_switch_service.status
 
 
-@router.post("/kill-switch/trigger")
+@router.post("/kill-switch/trigger", dependencies=[Depends(require_api_key_configured)])
 async def trigger_kill_switch(
     reason: str = "manual",
-    x_api_key: str = Header(default=""),
 ):
     """
     FIX #11: Fully implemented kill switch.
@@ -271,7 +265,6 @@ async def trigger_kill_switch(
     This is irreversible until manually reset via /kill-switch/reset.
     Requires X-Api-Key header matching SECRET_KEY.
     """
-    _require_api_key(x_api_key)
     if kill_switch_service.is_engaged:
         return {
             "status": "already_engaged",
@@ -330,7 +323,8 @@ async def engage_kill_switch_ui(reason: str = "manual_ui"):
 async def reset_kill_switch(body: KillSwitchResetRequest):
     """
     Reset kill switch after manual review.
-    Requires authorization_code='OLBOSTRADE_MANUAL_RESET' to prevent accidents.
+    Requires authorization_code matching KILL_SWITCH_RESET_CODE (server env).
+    The code must never be embedded in the frontend bundle.
     """
     result = await kill_switch_service.reset(body.authorization_code)
     if not result.get("reset"):

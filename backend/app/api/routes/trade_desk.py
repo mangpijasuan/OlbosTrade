@@ -10,11 +10,12 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from decimal import Decimal
 
+from app.api.deps import require_api_key
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.kill_switch import kill_switch_service
@@ -229,8 +230,21 @@ class SetExecutionModeRequest(BaseModel):
     mode: str   # manual | copilot | autopilot
 
 
+class EquityEvaluateRequest(BaseModel):
+    """Advisory evaluation for Equity Desk composer — does not place orders."""
+    ticker: str
+    action: str = "BUY"
+    shares: int = 1
+    entry_price: float
+    stop_price: float
+    target_price: Optional[float] = None
+    order_type: str = "limit"
+
+
 class KillSwitchRequest(BaseModel):
     engaged: bool
+    # Required when engaged=False — must match KILL_SWITCH_RESET_CODE on the server.
+    authorization_code: Optional[str] = None
 
 
 class ManualTradeRequest(BaseModel):
@@ -251,14 +265,22 @@ async def get_kill_switch():
 
 @router.post("/kill-switch")
 async def set_kill_switch(body: KillSwitchRequest):
-    """Engage or reset the kill switch — syncs both the service and the local event."""
+    """
+    Engage or reset the kill switch — syncs both the service and the local event.
+
+    Engage is intentionally unauthenticated at the FastAPI layer (emergency stop;
+    nginx Basic Auth still applies in production). Reset requires a server-side
+    authorization code and never accepts a hardcoded client secret.
+    """
     if body.engaged:
         _kill_switch.set()
         await kill_switch_service.engage("manual via trade-desk API")
         logger.warning("KILL SWITCH ENGAGED via API — all order submission halted")
     else:
+        result = await kill_switch_service.reset(body.authorization_code or "")
+        if not result.get("reset"):
+            raise HTTPException(status_code=403, detail=result)
         _kill_switch.clear()
-        await kill_switch_service.reset("OLBOSTRADE_MANUAL_RESET")
         logger.info("Kill switch reset via API — order submission resumed")
     return {"engaged": _is_kill_switch_active()}
 
@@ -270,7 +292,7 @@ async def get_execution_mode():
     return execution_mode_manager.summary()
 
 
-@router.post("/execution-mode")
+@router.post("/execution-mode", dependencies=[Depends(require_api_key)])
 async def set_execution_mode(body: SetExecutionModeRequest):
     try:
         mode = ExecutionMode(body.mode)
@@ -293,7 +315,282 @@ async def get_pending():
     }
 
 
-@router.post("/approve/{signal_id}")
+@router.post("/evaluate-equity")
+async def evaluate_equity(req: EquityEvaluateRequest):
+    """
+    Backend-authoritative eligibility preview for the Equity Desk composer.
+
+    Does NOT call _execute_signal and does NOT place orders. Aggregates kill
+    switch, market hours, regime, account mode, and guardrail state into a
+    TradeIntent-style final_status for UI display.
+    """
+    from datetime import datetime, timezone
+    from app.core.config import settings
+    from app.services.account_guard import verify_account_mode
+
+    block_reasons: list[str] = []
+    warnings: list[str] = []
+
+    ticker = (req.ticker or "").upper().strip()
+    if not ticker:
+        block_reasons.append("Ticker is required")
+    if req.shares < 1:
+        block_reasons.append("Shares must be at least 1")
+    if req.entry_price <= 0 or req.stop_price <= 0:
+        block_reasons.append("Entry and stop prices must be positive")
+    if req.action.upper() not in ("BUY", "SELL"):
+        block_reasons.append("Action must be BUY or SELL")
+
+    if req.action.upper() == "BUY" and req.stop_price >= req.entry_price:
+        warnings.append("Stop is not below entry for a BUY")
+    if req.action.upper() == "SELL" and req.stop_price <= req.entry_price:
+        warnings.append("Stop is not above entry for a SELL")
+
+    env = "paper" if settings.is_paper_trading else "live"
+
+    if _is_kill_switch_active():
+        block_reasons.append("Kill switch is engaged")
+
+    if getattr(settings, "market_hours_only", True):
+        from app.utils.market_hours import is_market_open, market_status
+        if not is_market_open():
+            st = market_status()
+            block_reasons.append(
+                f"Market closed ({st.get('session', 'outside RTH')})"
+            )
+
+    try:
+        from app.main import _current_regime
+        if _current_regime is not None and not getattr(
+            _current_regime, "equity_allowed", True
+        ):
+            block_reasons.append(
+                f"Regime does not allow equities "
+                f"({getattr(getattr(_current_regime, 'regime', None), 'value', 'unknown')})"
+            )
+    except Exception:
+        warnings.append("Regime state unavailable — treat with caution")
+
+    try:
+        from app.broker.broker_factory import get_broker
+        broker = get_broker()
+        _ok, _detail = await verify_account_mode(broker)
+        if not _ok:
+            block_reasons.append(f"Account mode: {_detail}")
+    except Exception as exc:
+        warnings.append(f"Account mode check skipped: {exc}")
+
+    try:
+        portfolio_state = await _fetch_portfolio_state()
+        guardrail = GuardrailEngine().check_all(portfolio_state)
+        if not guardrail.trading_allowed:
+            block_reasons.append(
+                guardrail.reason or f"Guardrails blocked ({guardrail.trading_mode})"
+            )
+        elif guardrail.trading_mode == "capital_preservation":
+            warnings.append("Capital preservation mode — size may be reduced at execution")
+        try:
+            from app.services.execution_portfolio_gate import check_execution_portfolio
+            pg = await check_execution_portfolio(
+                {
+                    "ticker": ticker,
+                    "asset_type": "equity",
+                    "trade_plan": {
+                        "shares": req.shares,
+                        "entry_price": req.entry_price,
+                        "stop_price": req.stop_price,
+                    },
+                },
+                portfolio_value=float(portfolio_state.current_value or 0),
+            )
+            if not pg.allowed:
+                block_reasons.append(pg.reason or "Portfolio gate blocked")
+        except Exception as pg_exc:
+            warnings.append(f"Portfolio gate preview incomplete: {pg_exc}")
+    except RiskGateError as exc:
+        block_reasons.append(str(exc))
+    except Exception as exc:
+        warnings.append(f"Guardrail check incomplete: {exc}")
+
+    mode = execution_mode_manager.mode.value
+    if block_reasons:
+        final_status = "BLOCKED"
+    elif mode == "copilot":
+        final_status = "COPILOT_REVIEW_REQUIRED"
+    elif mode == "manual":
+        final_status = "MANUAL_ELIGIBLE"
+    elif mode == "autopilot":
+        # Scan/composer path still queues — be honest
+        final_status = "COPILOT_REVIEW_REQUIRED"
+        warnings.append(
+            "Autopilot scan/composer auto-execute is disabled; submit queues for approval"
+        )
+    else:
+        final_status = "INFORMATIONAL"
+
+    risk_dollars = abs(req.entry_price - req.stop_price) * req.shares
+    notional = req.entry_price * req.shares
+
+    return {
+        "final_status": final_status,
+        "block_reasons": block_reasons,
+        "warnings": warnings,
+        "environment": env,
+        "execution_mode": mode,
+        "ticker": ticker,
+        "action": req.action.upper(),
+        "shares": req.shares,
+        "estimated_notional": round(notional, 2),
+        "estimated_max_loss": round(risk_dollars, 2),
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluation_version": "equity-desk-c1",
+    }
+
+
+class OptionsEvaluateRequest(BaseModel):
+    """Advisory evaluation for Options Desk — does not place orders."""
+    ticker: str
+    strategy: str = "bull_put_spread"
+    dte: float = 30
+
+
+@router.post("/evaluate-options")
+async def evaluate_options(req: OptionsEvaluateRequest):
+    """
+    Backend-authoritative eligibility preview for the Options Desk.
+
+    Does NOT call _execute_signal. Blocks naked / iron_condor / 0DTE autopilot
+    strategies explicitly. Defined-risk and income strategies may be MANUAL or
+    COPILOT eligible subject to kill switch, hours, regime, and guardrails.
+    """
+    from datetime import datetime, timezone
+    from app.core.config import settings
+    from app.services.account_guard import verify_account_mode
+
+    block_reasons: list[str] = []
+    warnings: list[str] = []
+
+    ticker = (req.ticker or "").upper().strip()
+    strategy = (req.strategy or "").lower().strip()
+    allowed = {
+        "bull_put_spread", "bear_call_spread", "bull_call_spread", "bear_put_spread",
+        "cash_secured_put", "covered_call",
+    }
+    banned = {"naked_call", "naked_put", "iron_condor", "short_straddle", "short_strangle"}
+
+    if not ticker:
+        block_reasons.append("Ticker is required")
+    if strategy in banned:
+        block_reasons.append(f"Strategy '{strategy}' is not permitted")
+    elif strategy and strategy not in allowed:
+        warnings.append(f"Strategy '{strategy}' is not in the Phase D supported set")
+
+    if req.dte is not None and req.dte <= 1:
+        warnings.append("0DTE / 1DTE: Autopilot disabled — Copilot or manual only")
+        # Do not block evaluate for read-only desk; warn strongly
+        warnings.append("0DTE Autopilot remains disabled by policy")
+
+    env = "paper" if settings.is_paper_trading else "live"
+
+    if _is_kill_switch_active():
+        block_reasons.append("Kill switch is engaged")
+
+    if getattr(settings, "market_hours_only", True):
+        from app.utils.market_hours import is_market_open, market_status
+        if not is_market_open():
+            st = market_status()
+            block_reasons.append(
+                f"Market closed ({st.get('session', 'outside RTH')})"
+            )
+
+    try:
+        from app.main import _current_regime
+        if _current_regime is not None and not getattr(
+            _current_regime, "options_allowed", True
+        ):
+            block_reasons.append(
+                f"Regime does not allow options "
+                f"({getattr(getattr(_current_regime, 'regime', None), 'value', 'unknown')})"
+            )
+    except Exception:
+        warnings.append("Regime state unavailable — treat with caution")
+
+    try:
+        from app.broker.broker_factory import get_broker
+        broker = get_broker()
+        _ok, _detail = await verify_account_mode(broker)
+        if not _ok:
+            block_reasons.append(f"Account mode: {_detail}")
+    except Exception as exc:
+        warnings.append(f"Account mode check skipped: {exc}")
+
+    try:
+        portfolio_state = await _fetch_portfolio_state()
+        guardrail = GuardrailEngine().check_all(portfolio_state)
+        if not guardrail.trading_allowed:
+            block_reasons.append(
+                guardrail.reason or f"Guardrails blocked ({guardrail.trading_mode})"
+            )
+        elif guardrail.trading_mode == "capital_preservation":
+            warnings.append("Capital preservation mode — size may be reduced at execution")
+        try:
+            from app.services.execution_portfolio_gate import check_execution_portfolio
+            # Preview uses a nominal 1-lot defined-risk placeholder when no spread
+            # payload is supplied by the desk composer.
+            pg = await check_execution_portfolio(
+                {
+                    "ticker": ticker,
+                    "asset_type": "options",
+                    "strategy": strategy or "bull_put_spread",
+                    "quantity": 1,
+                    "spread": {"max_loss": 250.0},
+                },
+                portfolio_value=float(portfolio_state.current_value or 0),
+            )
+            if not pg.allowed:
+                block_reasons.append(pg.reason or "Portfolio gate blocked")
+        except Exception as pg_exc:
+            warnings.append(f"Portfolio gate preview incomplete: {pg_exc}")
+    except RiskGateError as exc:
+        block_reasons.append(str(exc))
+    except Exception as exc:
+        warnings.append(f"Guardrail check incomplete: {exc}")
+
+    mode = execution_mode_manager.mode.value
+    if block_reasons:
+        final_status = "BLOCKED"
+    elif mode == "copilot":
+        final_status = "COPILOT_REVIEW_REQUIRED"
+    elif mode == "manual":
+        final_status = "MANUAL_ELIGIBLE"
+    elif mode == "autopilot":
+        final_status = "COPILOT_REVIEW_REQUIRED"
+        warnings.append(
+            "Options Autopilot from desk tools queues for approval; 0DTE Autopilot stays off"
+        )
+    else:
+        final_status = "INFORMATIONAL"
+
+    return {
+        "final_status": final_status,
+        "block_reasons": block_reasons,
+        "warnings": warnings,
+        "environment": env,
+        "execution_mode": mode,
+        "ticker": ticker,
+        "strategy": strategy,
+        "dte": req.dte,
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluation_version": "options-desk-d1",
+        "policy": {
+            "naked_shorts": False,
+            "iron_condor_execute": False,
+            "zero_dte_autopilot": False,
+        },
+    }
+
+
+@router.post("/approve/{signal_id}", dependencies=[Depends(require_api_key)])
 async def approve_signal(signal_id: str):
     """User approves a pending signal → executes order."""
     signal = await _resolve_pending_approval(signal_id, "approved")
@@ -305,7 +602,7 @@ async def approve_signal(signal_id: str):
     return result
 
 
-@router.post("/reject/{signal_id}")
+@router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key)])
 async def reject_signal(signal_id: str):
     """User rejects a pending signal — no order sent."""
     signal = await _resolve_pending_approval(signal_id, "rejected")
@@ -327,7 +624,7 @@ async def reject_signal(signal_id: str):
 
 # ── Manual trade ──────────────────────────────────────────────────────────────
 
-@router.post("/manual-trade")
+@router.post("/manual-trade", dependencies=[Depends(require_api_key)])
 async def manual_trade(req: ManualTradeRequest):
     """
     Force a manual equity order — bypasses signal scoring and IV filters
@@ -382,9 +679,13 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     Single fail-closed order pipeline. ALL order entry points must call this.
     Stages (in order — no stage may be skipped):
       1. Kill switch
-      2. Guardrail risk check (fail closed — DB error = refused, not permitted)
+      1b. Market hours
+      1c. Frequency controller (non-manual)
+      1d. Strategy health (non-manual; fail-open on error)
+      2. Guardrail risk check (fail closed — DB error = refused)
+      2b. Portfolio gate — concentration / max positions / heat (Step 8)
       3. Duplicate guard
-      4. Broker submission
+      4. Broker submission (+ account mode + margin)
       5. Fill-confirmed recording (CRITICAL alert on failure)
     """
     await asyncio.sleep(0)
@@ -492,6 +793,21 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             "Capital preservation blocked strategy %s for %s", strategy, ticker
         )
         return _blocked(f"capital_preservation: strategy {strategy!r} not allowed in {guardrail_status.trading_mode} mode")
+
+    # ── Stage 2b: Portfolio gate (concentration / max positions / heat) ─────
+    # Step 8 — wires RiskManager + portfolio_engine into the live OMS path.
+    # Greeks caps remain off unless execution_enforce_portfolio_greeks=true.
+    # Rollback: execution_portfolio_gate=false.
+    from app.services.execution_portfolio_gate import check_execution_portfolio
+    portfolio_gate = await check_execution_portfolio(
+        signal, portfolio_value=float(portfolio_state.current_value or 0),
+    )
+    if not portfolio_gate.allowed:
+        logger.warning(
+            "Portfolio gate blocked %s: %s flags=%s",
+            ticker, portfolio_gate.reason, portfolio_gate.flags,
+        )
+        return _blocked(f"portfolio_gate: {portfolio_gate.reason}")
 
     # Fast no-op exits should not hit lifecycle or DB gates.
     if asset_type == "equity":
@@ -784,7 +1100,7 @@ async def handle_signal(signal: dict) -> None:
 # ── Scan panel signal submission ────────────────────────────────────────────────
 
 class ScanSignalRequest(BaseModel):
-    """Signal from options/equity scan panel for execution routing."""
+    """Signal from options/equity scan panel or Equity Desk composer."""
     ticker: str
     action: str
     entry_price: float
@@ -796,30 +1112,45 @@ class ScanSignalRequest(BaseModel):
     pop: float = 0.0
     confidence: float = 0.0
     source: str = "scan_engine"  # "options_scan_engine" or "equity_scan_engine"
+    # Equity size — composer sends this; scan panel defaults to 1 if omitted.
+    shares: int = 1
+    asset_type: str = "equity"
 
 
-@router.post("/signal")
+@router.post("/signal", dependencies=[Depends(require_api_key)])
 async def submit_scan_signal(req: ScanSignalRequest):
     """
-    Submit a signal from scan panel (options/equity) for execution.
+    Submit a signal from scan panel / Equity Desk for execution routing.
 
     Routes through execution mode:
-    - MANUAL: queues for manual approval
-    - COPILOT: asks user
-    - AUTOPILOT: auto-executes with guardrails
+    - MANUAL / COPILOT: queue for approval
+    - AUTOPILOT: still queues from this endpoint (scan auto-execute disabled)
 
-    Returns execution result with order ID, status, or rejection reason.
+    Equity payloads include trade_plan.shares so approve → _execute_signal
+    does not silently default to 1 share when the composer sent a larger size.
     """
     signal_id = str(uuid.uuid4())
+    shares = max(int(req.shares or 1), 1)
 
     # Build signal compatible with _execute_signal()
     signal = {
         "id": signal_id,
         "ticker": req.ticker.upper(),
         "action": req.action,
+        "asset_type": (req.asset_type or "equity").lower(),
         "entry_price": req.entry_price,
         "stop_price": req.stop_price,
         "target_price": req.target_price,
+        "trade_plan": {
+            "shares": shares,
+            "entry_price": req.entry_price,
+            "stop_price": req.stop_price,
+            "target_price": req.target_price,
+            "risk_reward": (
+                abs(req.target_price - req.entry_price) / abs(req.entry_price - req.stop_price)
+                if abs(req.entry_price - req.stop_price) > 1e-9 else 0.0
+            ),
+        },
         "confidence": req.confidence,
         "kelly_fraction": req.kelly_fraction,
         "expected_value": req.expected_value,
@@ -839,6 +1170,7 @@ async def submit_scan_signal(req: ScanSignalRequest):
             "signal_id": signal_id,
             "ticker": req.ticker,
             "status": "pending_approval",
+            "shares": shares,
             "message": f"Signal queued for manual approval (execution mode: MANUAL)",
         }
 
@@ -849,6 +1181,7 @@ async def submit_scan_signal(req: ScanSignalRequest):
             "signal_id": signal_id,
             "ticker": req.ticker,
             "status": "pending_copilot",
+            "shares": shares,
             "message": f"Signal submitted to Copilot (execution mode: COPILOT)",
         }
 
@@ -868,6 +1201,7 @@ async def submit_scan_signal(req: ScanSignalRequest):
             "signal_id": signal_id,
             "ticker": req.ticker,
             "status": "pending_approval",
+            "shares": shares,
             "message": "Autopilot scan-execute is disabled pending tests — queued for approval.",
         }
 

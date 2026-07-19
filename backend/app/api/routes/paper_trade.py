@@ -222,6 +222,7 @@ async def get_trade_history(
                     "exit_reason":     t.exit_reason,
                     "signal_score":    float(t.signal_score or 0),
                     "hold_days":       max(((t.exit_date or date.today()) - t.entry_date).days, 0) if t.entry_date else None,
+                    "trading_mode":    getattr(t, "trading_mode_at_entry", None),
                 }
                 for t in trades
             ],

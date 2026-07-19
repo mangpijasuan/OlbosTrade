@@ -15,7 +15,10 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import GlobalRiskStatus from "./GlobalRiskStatus";
 import ErrorBoundary from "./ErrorBoundary";
 import KillSwitchButton from "./KillSwitchButton";
+import { api } from "../api/client";
 import { statusLabelForPage, filterNavForDisplay, type NavGroup } from "../utils/navLabels";
+import { NAV_MODEL_LEGACY, NAV_MODEL_V2, groupIdForKey } from "../utils/navModels";
+import { isTradeDeskV2Enabled } from "../trade-desk/featureFlags";
 import { TerminalNavProvider } from "./TerminalNavContext";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
@@ -50,64 +53,12 @@ const ICONS: Record<string, string> = {
 
 // Grouped navigation. A group is either a leaf (has `key`, navigates directly)
 // or a section (has `children`, expands to sub-items). Each leaf `key` routes
-// through the alias map in App.tsx. Every visible leaf must resolve to a real
-// workspace; unfinished destinations stay out of production navigation.
-const NAV_MODEL: NavGroup[] = [
-  { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
-  { id: "markets",   label: "Markets",        icon: "markets", children: [
-    { key: "markets:chart",      label: "Chart" },
-    { key: "markets:watchlists", label: "Watchlists" },
-    { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
-    { key: "markets:news",       label: "News & Events", advanced: true },
-  ]},
-  { id: "trade", label: "Trade Desk", icon: "paper", children: [
-    { key: "trade:copilot",   label: "Copilot Review" },
-    { key: "trade:orders",    label: "Desk signals" },
-    { key: "trade:positions", label: "Positions" },
-    { key: "trade:logs",      label: "P&L Breakdown" },
-    { key: "trade:execlog",   label: "Execution Log" },
-  ]},
-  { id: "strat", label: "Strategies", icon: "strategy", children: [
-    { key: "equity",        label: "Signals" },
-    { key: "strat:cards",   label: "Strategy Cards", advanced: true },
-    { key: "strat:builder", label: "Strategy Builder", advanced: true },
-    { key: "strat:alerts",  label: "Alerts", advanced: true },
-  ]},
-  { id: "options", label: "Options Desk", icon: "flow", advanced: true, children: [
-    { key: "options:chain",  label: "Options Chain" },
-    { key: "scan",           label: "Spread Scanner" },
-    { key: "options:income", label: "Income Strategies" },
-    { key: "options:flow",   label: "Options Flow" },
-  ]},
-  { id: "risk", label: "Portfolio & Risk", icon: "risk", key: "risk", children: [
-    { key: "risk:heat",     label: "Risk Overview" },
-    { key: "risk:rules",    label: "Risk Rules" },
-  ]},
-  { id: "lab", label: "Research", icon: "lab", advanced: true, children: [
-    { key: "lab:scenario",   label: "Scenario Lab" },
-    { key: "lab:strategy",   label: "Strategy Research" },
-    { key: "lab:market",     label: "Market & Regime" },
-    { key: "lab:models",     label: "Model Health" },
-    { key: "lab:intel",      label: "Intelligence" },
-    { key: "backtest",       label: "Backtests" },
-  ]},
-  { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal", advanced: true },
-  { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics", advanced: true },
-  { id: "system", label: "System", icon: "data", children: [
-    { key: "system:broker",  label: "Broker" },
-    { key: "system:market",  label: "Market Data", advanced: true },
-    { key: "system:quality", label: "Data Quality", advanced: true },
-  ]},
-];
-
+// through the alias map in App.tsx. Models live in utils/navModels.ts —
+// Trade Desk 2.0 swaps NAV_MODEL_V2 when the feature flag is on.
 const NAV_ADVANCED_KEY = "olbos.nav.advanced";
-// Which group owns a given active leaf key (for header highlight + auto-open).
-function groupIdForKey(key: string): string | null {
-  for (const g of NAV_MODEL) {
-    if (g.key === key) return g.id;
-    if (g.children?.some(c => c.key === key)) return g.id;
-  }
-  return null;
+
+function activeNavModel(): NavGroup[] {
+  return isTradeDeskV2Enabled() ? NAV_MODEL_V2 : NAV_MODEL_LEGACY;
 }
 
 // ── Ticker strip ──────────────────────────────────────────────────────────────
@@ -240,13 +191,8 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
 
   const setExec = (m: "manual" | "copilot" | "autopilot") => {
     setExecMode(m); // optimistic
-    fetch("/api/trade-desk/execution-mode", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: m }),
-    })
-      .then(r => r.json())
-      .then(d => { if (d.mode) setExecMode(d.mode); })
+    api.setExecutionMode(m)
+      .then((d: any) => { if (d.mode) setExecMode(d.mode); })
       .catch(() => {});
   };
   const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
@@ -509,7 +455,8 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   // Accordion state: which group section is expanded. Auto-opens the group that
   // owns the active page.
-  const [openGroup, setOpenGroup] = useState<string | null>(() => groupIdForKey(active));
+  const navModel = activeNavModel();
+  const [openGroup, setOpenGroup] = useState<string | null>(() => groupIdForKey(active, navModel));
   const [showAdvanced, setShowAdvanced] = useState(() => {
     try {
       return localStorage.getItem(NAV_ADVANCED_KEY) === "1";
@@ -519,9 +466,9 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
   });
 
   useEffect(() => {
-    const g = groupIdForKey(active);
+    const g = groupIdForKey(active, navModel);
     if (g) setOpenGroup(g);
-  }, [active]);
+  }, [active, navModel]);
 
   const toggleAdvanced = () => {
     setShowAdvanced((prev) => {
@@ -535,7 +482,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
     });
   };
 
-  const visibleNav = filterNavForDisplay(NAV_MODEL, showAdvanced, active);
+  const visibleNav = filterNavForDisplay(navModel, showAdvanced, active);
 
   // On mobile, labels always show (it's a full overlay panel); on desktop they
   // appear only when expanded (icon rail otherwise).
@@ -785,7 +732,7 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 function StatusBar({ page }: { page: string }) {
-  const label = statusLabelForPage(page, NAV_MODEL);
+  const label = statusLabelForPage(page, activeNavModel());
   return (
     <div style={{
       height: 28,

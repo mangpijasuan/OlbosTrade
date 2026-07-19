@@ -16,6 +16,7 @@ import SignalAttribution from "./SignalAttribution";
 import SignalDivergence from "./SignalDivergence";
 import type { SignalAttributionData } from "../types/signal";
 import { useLiveData } from "../hooks/useLiveData";
+import { apiAuthHeaders } from "../api/client";
 
 interface Candidate {
   ticker: string;
@@ -542,10 +543,12 @@ export default function EquityScanPanel() {
       try {
         const response = await fetch("/api/trade-desk/signal", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: apiAuthHeaders(),
           body: JSON.stringify({
             ticker: candidate.ticker,
             action: candidate.action,
+            shares: 1,
+            asset_type: "equity",
             entry_price: candidate.entry_price,
             stop_price: candidate.stop_price,
             target_price: candidate.target_price,
