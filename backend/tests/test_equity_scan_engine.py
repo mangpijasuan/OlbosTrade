@@ -11,6 +11,7 @@ import pytest
 from app.services.equity_scan_engine import (
     EquityScanCandidate,
     _build_entry_ladder,
+    _compute_iv_rank_for_ticker,
     _compute_kelly_fraction,
     _compute_pop_from_distance,
     _yf_bars_for_ticker,
@@ -44,6 +45,33 @@ def test_candidate_default_source_is_equity_scan_engine():
     )
     assert candidate.source == "Equity Scan Engine"
     assert candidate.as_dict()["source"] == "Equity Scan Engine"
+
+
+# ── _compute_iv_rank_for_ticker (equity_scan_engine.py:449 TypeError) ────────
+# get_iv_signal_boost returns {"iv_rank": None, ...} whenever options aren't
+# supported or the IV surface builder isn't wired in (always true today — no
+# caller passes one) — sum(all_iv_rank) in scan_options crashed on that None.
+@pytest.mark.asyncio
+async def test_iv_rank_none_from_boost_normalizes_to_zero():
+    with patch(
+        "app.services.equity_scan_engine.get_iv_signal_boost",
+        new=AsyncMock(return_value={"iv_rank": None, "boost": 0.0}),
+    ):
+        iv_rank, realized_vol = await _compute_iv_rank_for_ticker("AAPL", broker=object())
+    assert iv_rank == 0.0
+    assert realized_vol == 0.0
+    assert isinstance(iv_rank, float) and isinstance(realized_vol, float)
+
+
+@pytest.mark.asyncio
+async def test_iv_rank_real_value_passes_through():
+    with patch(
+        "app.services.equity_scan_engine.get_iv_signal_boost",
+        new=AsyncMock(return_value={"iv_rank": 42.5, "realized_vol": 0.18}),
+    ):
+        iv_rank, realized_vol = await _compute_iv_rank_for_ticker("AAPL", broker=object())
+    assert iv_rank == 42.5
+    assert realized_vol == 0.18
 
 
 # ── _compute_pop_from_distance ───────────────────────────────────────────────

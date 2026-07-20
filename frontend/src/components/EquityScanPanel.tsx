@@ -16,7 +16,7 @@ import SignalAttribution from "./SignalAttribution";
 import SignalDivergence from "./SignalDivergence";
 import type { SignalAttributionData } from "../types/signal";
 import { useLiveData } from "../hooks/useLiveData";
-import { apiAuthHeaders } from "../api/client";
+import { api, apiAuthHeaders } from "../api/client";
 
 interface Candidate {
   ticker: string;
@@ -99,9 +99,55 @@ function Toast({ message, type }: { message: string; type: "info" | "success" | 
 
 // Drill-down modal
 function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose: () => void }) {
+  const [evalResult, setEvalResult] = useState<{
+    final_status: string;
+    block_reasons: string[];
+    warnings: string[];
+  } | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
+
   if (!candidate) return null;
 
   const roi = candidate.max_profit > 0 ? ((candidate.max_profit / candidate.max_loss) * 100).toFixed(1) : "0";
+
+  // This card's plan has no explicit share count — max_loss is the total
+  // dollar risk the scan engine already sized for this Kelly plan, so the
+  // implied share count is max_loss / per-share risk (same math the
+  // composer/backend use elsewhere for risk_dollars).
+  const riskPerShare = Math.abs(candidate.entry_price - candidate.stop_price);
+  const impliedShares = riskPerShare > 0 ? Math.max(1, Math.round(candidate.max_loss / riskPerShare)) : 1;
+
+  const checkEligibility = async () => {
+    setEvaluating(true);
+    setEvalError(null);
+    try {
+      const body: any = await api.evaluateEquityIntent({
+        ticker: candidate.ticker,
+        action: candidate.action,
+        shares: impliedShares,
+        entry_price: candidate.entry_price,
+        stop_price: candidate.stop_price,
+        target_price: candidate.target_price,
+        order_type: "limit",
+      });
+      setEvalResult({
+        final_status: body.final_status,
+        block_reasons: body.block_reasons || [],
+        warnings: body.warnings || [],
+      });
+    } catch (e: any) {
+      setEvalError(e?.message || "Eligibility check failed");
+      setEvalResult(null);
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  const statusColor =
+    evalResult?.final_status === "BLOCKED" ? "var(--red)" :
+    evalResult?.final_status === "AUTOPILOT_ELIGIBLE" ? "var(--green)" :
+    evalResult?.final_status ? "var(--amber)" : "var(--ink-dim)";
 
   return (
     <div
@@ -405,6 +451,66 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
         {/* Pricing source */}
         <div style={{ fontSize: 10, color: "var(--ink-faint)", marginBottom: 20 }}>
           Pricing source: <span style={{ fontWeight: 600 }}>{candidate.pricing_source}</span>
+        </div>
+
+        {/* Eligibility — read-only, backend-authoritative. This card never
+            submits an order itself; it only shows what the same gates
+            _execute_signal enforces would say about this plan right now. */}
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+            Eligibility
+          </h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={checkEligibility}
+              disabled={evaluating}
+              style={{
+                background: "var(--bg-2)",
+                border: "1px solid var(--line-dim)",
+                borderRadius: 4,
+                padding: "6px 12px",
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: evaluating ? "default" : "pointer",
+                color: "var(--ink)",
+              }}
+            >
+              {evaluating ? "CHECKING…" : "CHECK ELIGIBILITY"}
+            </button>
+            {evalResult && (
+              <span
+                style={{
+                  fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700,
+                  color: statusColor, letterSpacing: "0.04em",
+                }}
+              >
+                {evalResult.final_status.replace(/_/g, " ")}
+              </span>
+            )}
+            {evalError && (
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)" }}>
+                {evalError}
+              </span>
+            )}
+          </div>
+          {evalResult && (evalResult.block_reasons.length > 0 || evalResult.warnings.length > 0) && (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+              {evalResult.block_reasons.map((r, i) => (
+                <div key={`b${i}`} style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)" }}>
+                  ⛔ {r}
+                </div>
+              ))}
+              {evalResult.warnings.map((w, i) => (
+                <div key={`w${i}`} style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--amber)" }}>
+                  ⚠ {w}
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", marginTop: 8 }}>
+            Checked against ~{impliedShares} share{impliedShares === 1 ? "" : "s"} (implied from this plan's sized risk). Read-only — does not place an order.
+          </div>
         </div>
 
         {/* Action buttons */}

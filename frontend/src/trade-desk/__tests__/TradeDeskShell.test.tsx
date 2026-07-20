@@ -89,10 +89,14 @@ describe("panel layout defaults", () => {
 });
 
 describe("nav model v2", () => {
-  it("puts Command Overview under Trade Desk and drops top-level Options group", () => {
+  it("puts Command Overview and Options tools under Trade Desk in both nav models", () => {
     expect(groupIdForKey("trade:overview", NAV_MODEL_V2)).toBe("trade");
     expect(NAV_MODEL_V2.find((g) => g.id === "options")).toBeUndefined();
-    expect(NAV_MODEL_LEGACY.find((g) => g.id === "options")).toBeDefined();
+    // Legacy also folded its separate top-level Options Desk group into
+    // Trade Desk — merged so operators see options tools alongside the
+    // rest of the desk without needing the V2 flag.
+    expect(NAV_MODEL_LEGACY.find((g) => g.id === "options")).toBeUndefined();
+    expect(groupIdForKey("options:chain", NAV_MODEL_LEGACY)).toBe("trade");
   });
 
   it("keeps options tools under Strategies as advanced", () => {

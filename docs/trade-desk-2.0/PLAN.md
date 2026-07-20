@@ -1,10 +1,64 @@
 # OlbosTrade — Trade Desk 2.0 Implementation Plan (Phase A)
 
-**Status:** Phases B–F + Step 8 complete. Claude Code stage docs ready.
+**Status:** Phases B–F + Step 8 complete **against the 12-step plan in §13
+below**. Re-baselined 2026-07-19 against the fuller `MASTER_SPEC.md` — see
+"Re-baseline vs Master Spec" section: several Phase D/E/F bullets in that
+document are still open. Do not read "complete" here as satisfying every
+bullet in `MASTER_SPEC.md`.
 **UI default:** Trade Desk V2 flags are **opt-in (off)** until you enable them after a
 paper walkthrough — legacy desk remains the default experience on deploy.
 **Deploy only after paper E2E + explicit operator approval.**
 Greeks delta/vega caps remain **off** by default. 0DTE Autopilot remains off.
+
+---
+
+## Re-baseline vs Master Spec (2026-07-19)
+
+`docs/trade-desk-2.0/MASTER_SPEC.md` is the fuller 26-section brief the
+operator provided after this plan's 12-step version was already built. It is
+the canonical target from now on; this plan's §13 stays as sequencing, not
+the acceptance bar. Verified by reading the actual code (not by re-trusting
+old status labels):
+
+**Confirmed done and matches spec intent:**
+- Shell/header/tabs/panel layout/flags (§3, §22) — `frontend/src/trade-desk/`
+- Command Overview (§4) — real queues (Opportunities/Reviews/Risk
+  Actions/Execution Exceptions), not a stub
+- Positions tab reuses legacy `TradeDesk` (§1's "don't duplicate systems") —
+  `pages/TradeDeskV2.tsx:73-74`
+- Options Desk reuses existing pages as tool-tabs instead of a parallel
+  engine (§6) — `trade-desk/options/OptionsDesk.tsx`
+- TradeIntent-style evaluation (§11) — `/evaluate-equity` / `/evaluate-options`
+- Portfolio gate as backend-authoritative risk (§12) — Step 8, this file above
+
+**Open gaps against Master Spec (not started or partial):**
+- §6.4/§6 tree — no **Strategy Builder** tab (multi-leg spread construction UI)
+  and no **Roll Manager** in `OptionsDesk.tsx`'s tool list (Chain/Chart/Scanner/
+  Income/Flow/Signals/0DTE only)
+- §6.2/§6.3 — no GEX/positioning, IV term structure, volatility smile,
+  open-interest map; no data provider sourced for these yet
+- §5.3/§8 — correlation clusters, stress & VaR, per-trade Portfolio Greeks
+  impact not yet in `EquityIntelligenceRail` / `OptionsIntelligenceRail`
+- §15 tree — `OrderStateBadge`, `OrderDetailDrawer`, `ExecutionTimeline`,
+  `CopilotReviewCard`, `CopilotDecisionModal`, `PositionDetailDrawer` are not
+  separate components; likely inlined in `OrdersWorkspace.tsx` /
+  `ExecutionMonitor.tsx` / `CopilotQueue.tsx` (spec permits this — "don't force
+  exact paths if equivalent modules exist" — but flagging so nobody assumes
+  they exist as reusable units)
+- §17 real-time event bus — not started; spec's own escape hatch ("don't
+  introduce a complex event bus if the architecture can't support it safely")
+  should be invoked — current polling approach stays until there's a concrete
+  need
+- §13/§14 accessibility and mobile responsive behavior — only partially
+  verified (mobile flag exists in `featureFlags.ts`, not walked end-to-end)
+- §24 acceptance criteria — treat as 16 separate phase-exit gates per item,
+  not one bundled release gate (see `MASTER_SPEC.md` §24 note)
+
+**Recommendation:** don't try to "complete" Master Spec in one pass. Pick the
+next 1-2 gaps above as an explicit next phase (operator/product decision —
+see conversation), keep paper-walking what already exists before growing
+surface area further, and update this section as gaps close instead of
+re-declaring a phase "complete" wholesale.
 
 ## Step 8 — money-path spec (approved)
 

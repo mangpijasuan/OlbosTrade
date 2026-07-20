@@ -10,6 +10,10 @@ import SignalAttribution from "../components/SignalAttribution";
 import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 import type { SignalAttributionData } from "../types/signal";
 import { api } from "../api/client";
+import CommandOverview from "../trade-desk/CommandOverview";
+import ExecutionMonitor from "../trade-desk/execution/ExecutionMonitor";
+import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
+import { useTerminalNav } from "../components/TerminalNavContext";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -19,7 +23,7 @@ function HintedTh({ label }: { label: string }) {
   );
 }
 type ExecMode = "manual" | "copilot" | "autopilot";
-type Tab = "signals" | "positions" | "approvals" | "pnl" | "mode";
+type Tab = "overview" | "signals" | "positions" | "approvals" | "execution" | "pnl" | "mode";
 
 const Badge = ({ text, color }: { text: string; color: string }) => (
   <span style={{
@@ -432,9 +436,23 @@ function PnLBreakdown() {
 }
 
 // ── Main Trade Desk ────────────────────────────────────────────────────────────
-export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab }) {
+export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Tab }) {
   const { positions, lastSignal, cycleLog, loading, runCycle } = usePaperTrade();
   const [tab, setTab] = useState<Tab>(initialTab);
+  const onNav = useTerminalNav();
+
+  // Command Overview's queue cards link out to specific workspaces — map its
+  // V2-shaped tab keys onto this page's own tab set (no V2 shell involved).
+  // Options has no in-page tab here (unlike V2's own Options Desk), so that
+  // one jumps to the real Spread Scanner page via the terminal nav context
+  // instead of silently landing on the equity-only Desk signals table.
+  const handleOverviewNavigate = (t: TradeDeskTab) => {
+    if (t === "copilot") setTab("approvals");
+    else if (t === "execution") setTab("execution");
+    else if (t === "positions") setTab("positions");
+    else if (t === "options") onNav("scan");
+    else setTab("signals");
+  };
   const [trades, setTrades]       = useState<any[]>([]);
   const [tradesLoading, setTradesLoading] = useState(true);
 
@@ -458,9 +476,11 @@ export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab
   };
 
   const tabs: { key: Tab; label: string }[] = [
+    { key: "overview",  label: "Overview" },
     { key: "signals",   label: "Desk signals" },
     { key: "positions", label: "Positions" },
     { key: "approvals", label: "Approvals" },
+    { key: "execution", label: "Execution Monitor" },
     { key: "pnl",       label: "P&L breakdown" },
     { key: "mode",      label: "Trading style" },
   ];
@@ -492,6 +512,12 @@ export default function TradeDesk({ initialTab = "signals" }: { initialTab?: Tab
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
+        {/* OVERVIEW */}
+        {tab === "overview" && <CommandOverview onNavigateTab={handleOverviewNavigate} />}
+
+        {/* EXECUTION MONITOR */}
+        {tab === "execution" && <ExecutionMonitor />}
+
         {/* SIGNALS */}
         {tab === "signals" && (
           <div>

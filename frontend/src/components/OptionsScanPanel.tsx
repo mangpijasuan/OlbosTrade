@@ -14,7 +14,7 @@ import WatchlistManager from "./WatchlistManager";
 import IBKRLiveControl from "./IBKRLiveControl";
 import SignalAttribution from "./SignalAttribution";
 import { useLiveData } from "../hooks/useLiveData";
-import { apiAuthHeaders } from "../api/client";
+import { api, apiAuthHeaders } from "../api/client";
 
 interface Candidate {
   ticker: string;
@@ -97,11 +97,55 @@ function Toast({ message, type }: { message: string; type: "info" | "success" | 
 
 // Drill-down modal component
 function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose: () => void }) {
+  const [evalResult, setEvalResult] = useState<{
+    final_status: string;
+    block_reasons: string[];
+    warnings: string[];
+  } | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
+
   if (!candidate) return null;
 
   const maxProfit = Math.abs(candidate.credit);
   const maxLoss = candidate.max_loss;
   const roi = maxProfit > 0 ? ((maxProfit / maxLoss) * 100).toFixed(1) : "0";
+
+  // Best-effort strategy label — this card has no explicit strategy field,
+  // only strike/credit shape. Matches the taxonomy already used in
+  // strategy_engine.py; a mislabeled edge case still evaluates normally
+  // (only naked/iron_condor/straddle/strangle are backend-banned outright).
+  const impliedStrategy =
+    candidate.option_type === "put"
+      ? candidate.credit > 0 ? "bull_put_spread" : "bear_put_debit_spread"
+      : candidate.credit > 0 ? "bear_call_spread" : "bull_call_debit_spread";
+
+  const checkEligibility = async () => {
+    setEvaluating(true);
+    setEvalError(null);
+    try {
+      const body: any = await api.evaluateOptionsIntent({
+        ticker: candidate.ticker,
+        strategy: impliedStrategy,
+        dte: candidate.dte,
+      });
+      setEvalResult({
+        final_status: body.final_status,
+        block_reasons: body.block_reasons || [],
+        warnings: body.warnings || [],
+      });
+    } catch (e: any) {
+      setEvalError(e?.message || "Eligibility check failed");
+      setEvalResult(null);
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  const statusColor =
+    evalResult?.final_status === "BLOCKED" ? "var(--red)" :
+    evalResult?.final_status === "AUTOPILOT_ELIGIBLE" ? "var(--green)" :
+    evalResult?.final_status ? "var(--amber)" : "var(--ink-dim)";
 
   return (
     <div
@@ -358,6 +402,66 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
         {/* Pricing source */}
         <div style={{ fontSize: 10, color: "var(--ink-faint)", marginBottom: 20 }}>
           Pricing source: <span style={{ fontWeight: 600 }}>{candidate.pricing_source}</span>
+        </div>
+
+        {/* Eligibility — read-only, backend-authoritative. This card never
+            submits an order itself; it only shows what the same gates
+            _execute_signal enforces would say about this plan right now. */}
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+            Eligibility
+          </h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={checkEligibility}
+              disabled={evaluating}
+              style={{
+                background: "var(--bg-2)",
+                border: "1px solid var(--line-dim)",
+                borderRadius: 4,
+                padding: "6px 12px",
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: evaluating ? "default" : "pointer",
+                color: "var(--ink)",
+              }}
+            >
+              {evaluating ? "CHECKING…" : "CHECK ELIGIBILITY"}
+            </button>
+            {evalResult && (
+              <span
+                style={{
+                  fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700,
+                  color: statusColor, letterSpacing: "0.04em",
+                }}
+              >
+                {evalResult.final_status.replace(/_/g, " ")}
+              </span>
+            )}
+            {evalError && (
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)" }}>
+                {evalError}
+              </span>
+            )}
+          </div>
+          {evalResult && (evalResult.block_reasons.length > 0 || evalResult.warnings.length > 0) && (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+              {evalResult.block_reasons.map((r, i) => (
+                <div key={`b${i}`} style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)" }}>
+                  ⛔ {r}
+                </div>
+              ))}
+              {evalResult.warnings.map((w, i) => (
+                <div key={`w${i}`} style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--amber)" }}>
+                  ⚠ {w}
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", marginTop: 8 }}>
+            Checked as {impliedStrategy.replace(/_/g, " ")} (best-effort label from this spread's shape). Read-only — does not place an order.
+          </div>
         </div>
 
         {/* Action buttons */}

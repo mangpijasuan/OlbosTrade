@@ -235,9 +235,16 @@ async def _compute_iv_rank_for_ticker(ticker: str, broker=None) -> tuple[float, 
             return 0.0, 0.0
 
         iv_data = await get_iv_signal_boost(ticker, broker)
-        iv_rank = iv_data.get("iv_rank", 0.0)
-        realized_vol = iv_data.get("realized_vol", 0.0)
-        return iv_rank, realized_vol
+        # get_iv_signal_boost can return {"iv_rank": None, ...} (options
+        # unsupported, or IV surface not built yet) — .get(key, default) only
+        # falls back when the key is absent, not when it's present as None,
+        # so normalize explicitly to honor this function's float return type.
+        iv_rank = iv_data.get("iv_rank")
+        realized_vol = iv_data.get("realized_vol")
+        return (
+            iv_rank if iv_rank is not None else 0.0,
+            realized_vol if realized_vol is not None else 0.0,
+        )
     except Exception as exc:
         logger.debug("IV rank computation failed for %s: %s", ticker, exc)
         return 0.0, 0.0

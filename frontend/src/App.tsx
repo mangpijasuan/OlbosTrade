@@ -42,11 +42,12 @@ function tradeDeskPages(v2: boolean): Record<string, React.ComponentType> {
   if (!v2) {
     return {
       paper: TradeDesk,
+      "trade:overview":  () => <TradeDesk initialTab="overview" />,
       "trade:copilot":   () => <TradeDesk initialTab="approvals" />,
       "trade:orders":    () => <TradeDesk initialTab="signals" />,
       "trade:positions": () => <TradeDesk initialTab="positions" />,
       "trade:logs":      () => <TradeDesk initialTab="pnl" />,
-      "trade:execlog":   () => <TradeDesk initialTab="approvals" />,
+      "trade:execlog":   () => <TradeDesk initialTab="execution" />,
     };
   }
   return {
