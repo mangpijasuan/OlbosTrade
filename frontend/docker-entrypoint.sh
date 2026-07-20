@@ -37,7 +37,17 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
     }
-    location / { try_files \$uri \$uri/ /index.html; }
+    # Hashed build assets (filename changes every build) can cache forever;
+    # index.html can't — it's what points browsers at the current hash, so a
+    # cached copy silently keeps a tab on an old build after every deploy.
+    location ~* \.(js|css|woff2?|png|jpg|jpeg|gif|svg|ico)\$ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files \$uri =404;
+    }
+    location / {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        try_files \$uri \$uri/ /index.html;
+    }
 }
 EOF
 
