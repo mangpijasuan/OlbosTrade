@@ -83,7 +83,14 @@ def evaluate_portfolio_gates(
     sector = sector_for(ticker)
 
     rm = RiskManager()
-    max_pos = rm.max_concurrent
+    # The active trading mode's own max_concurrent (e.g. Scalper=2, tightened
+    # for compounding gamma risk on 0-3 DTE) previously had no effect here —
+    # only the global settings.max_concurrent_positions (default 5) was
+    # enforced, silently allowing more concurrent positions than the mode's
+    # own risk design intends. Take the tighter of the two; mode can only
+    # restrict further, never loosen past the global default.
+    from app.services.trading_mode import trading_mode_manager
+    max_pos = min(rm.max_concurrent, trading_mode_manager.config.max_concurrent)
 
     if portfolio.open_position_count >= max_pos:
         return PortfolioGateResult(

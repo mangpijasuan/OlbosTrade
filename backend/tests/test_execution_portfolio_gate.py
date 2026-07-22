@@ -67,6 +67,29 @@ def test_blocks_max_positions():
     assert "max_positions" in r.flags
 
 
+def test_scalper_mode_tightens_max_concurrent_to_its_own_cap():
+    """Scalper's own config caps concurrent positions at 2 (compounding gamma
+    risk on 0-3 DTE) — previously only the global default (5) was enforced
+    here, silently allowing more concurrent positions than Scalper's own
+    design intends."""
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    trading_mode_manager.set_mode(TradingModeType.SCALPER)
+    try:
+        # 2 open positions: global cap (5) would allow this, Scalper's own
+        # cap (2) must not.
+        r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=2))
+        assert not r.allowed
+        assert "max_positions" in r.flags
+    finally:
+        trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+    # Back in Balanced (max_concurrent=5): the same 2 open positions must not
+    # be blocked — confirms the tightening is mode-scoped, not a blanket cut.
+    r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=2))
+    assert r.allowed
+
+
 def test_blocks_underlying_concentration():
     # Already 24k in AAPL; adding $50 keeps under 25% — use large risk instead
     sig = _equity(shares=200, entry=200.0, stop=100.0)  # risk = 20_000
