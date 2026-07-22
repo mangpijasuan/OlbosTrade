@@ -590,10 +590,13 @@ async def _run_equity_scan() -> None:
         # One live account fetch per scan cycle, not per-ticker.
         account_value = await get_account_value()
 
-        # Rotate the scanned window each tick (5 per cycle, cap unchanged) so
-        # every watchlist symbol gets scanned over multiple cycles instead of
-        # always the same first 5.
-        scan_window, _equity_scan_offset = _rotate_watchlist_window(watchlist, _equity_scan_offset)
+        # Window size 0 (default) scans the full watchlist every tick — every
+        # symbol gets a fresh evaluation each cycle instead of waiting several
+        # ticks for rotation to reach it. A smaller explicit size still rotates.
+        window_size = settings.equity_scan_window_size or len(watchlist)
+        scan_window, _equity_scan_offset = _rotate_watchlist_window(
+            watchlist, _equity_scan_offset, size=window_size,
+        )
 
         for ticker in scan_window:
             try:

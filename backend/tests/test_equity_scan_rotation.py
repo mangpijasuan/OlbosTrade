@@ -10,6 +10,7 @@ slice with a rotating window so every symbol gets scanned over time.
 from __future__ import annotations
 
 import app.main as m
+from app.core.config import Settings
 
 
 def test_first_window_starts_at_offset_zero():
@@ -57,3 +58,20 @@ def test_empty_watchlist_returns_empty_window():
     window, next_offset = m._rotate_watchlist_window([], 3)
     assert window == []
     assert next_offset == 3
+
+
+# ── Full-watchlist-per-tick widening (operator ask: more signal candidates
+# without loosening the confidence floor — scan everything every cycle
+# instead of rotating 5-of-13 and waiting up to 45 min to reach a symbol) ──
+def test_scan_window_size_defaults_to_zero_meaning_whole_watchlist():
+    assert Settings.model_fields["equity_scan_window_size"].default == 0
+
+
+def test_full_size_window_covers_whole_watchlist_in_one_tick():
+    watchlist = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "GOOGL", "AMD",
+                 "TSLA", "SPY", "QQQ", "JPM", "V", "MA"]
+    # This is exactly what `_run_equity_scan` computes when
+    # equity_scan_window_size=0: `settings.equity_scan_window_size or len(watchlist)`.
+    window, next_offset = m._rotate_watchlist_window(watchlist, 0, size=len(watchlist))
+    assert set(window) == set(watchlist)
+    assert next_offset == len(watchlist)

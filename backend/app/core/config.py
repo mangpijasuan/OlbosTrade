@@ -65,6 +65,13 @@ class Settings(BaseSettings):
         default="AAPL,NVDA,MSFT,META,AMZN,GOOGL,AMD,TSLA,SPY,QQQ,JPM,V,MA"
     )
     equity_signal_interval_minutes: int = Field(default=15)
+    # Symbols scanned per background-scan tick. 0 = scan the whole watchlist
+    # every cycle (recommended) — the previous fixed 5-per-tick rotation meant
+    # most symbols only got a fresh scan every 45 min (3 ticks to cover 13
+    # symbols), cutting the number of distinct opportunities that ever got a
+    # chance to clear the confidence bar. Widening this changes how many
+    # candidates get evaluated, not how good a candidate has to be.
+    equity_scan_window_size: int = Field(default=0)
     equity_min_confidence: float = Field(default=0.62)
     # Paper mode uses a lower confidence threshold to accumulate trade data
     # for ML model training. Set equal to equity_min_confidence for live.
