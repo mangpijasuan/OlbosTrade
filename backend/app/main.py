@@ -893,11 +893,18 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
     OTM leg, a net debit). LOW_VOL_TRENDING — a common, currently-active regime
     — allows *only* bull_call_debit_spread, so this was live, not theoretical.
 
-    iron_condor is intentionally skipped: its two-sided put+call structure
-    isn't wired into trade_desk._execute_signal's order construction (2 legs
-    only), so submitting it would silently open just one side. No regime
-    config currently lists it first anyway (see REGIME_CONFIG), so this is a
-    documented gap, not an active one.
+    Tries every regime-allowed strategy in declared order, not just the first
+    — a regime like NORMAL_MEAN_REVERT allows both bull_put_spread and
+    bear_call_spread, and the first candidate failing its own entry condition
+    (e.g. price below the 20-day SMA, so no bullish bias) doesn't mean none of
+    the regime's strategies have an edge — a bearish setup is exactly when a
+    later bear_call candidate could qualify. Uses the first strategy (in
+    regime order) whose own entry conditions pass.
+
+    iron_condor is always skipped regardless of position in the regime's
+    strategy list: its two-sided put+call structure isn't wired into
+    trade_desk._execute_signal's order construction (2 legs only), so
+    submitting it would silently open just one side.
 
     Routes through execution handler (manual/copilot/autopilot), same as before.
     """
@@ -917,27 +924,12 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
         )
         from app.api.routes.trade_desk import _fetch_portfolio_state, RiskGateError
 
-        strategy_name = (_current_regime.strategies_allowed or ["bull_put_spread"])[0]
         strategy_classes = {
             "bull_put_spread":        BullPutSpread,
             "bear_call_spread":       BearCallSpread,
             "iron_condor":            IronCondor,
             "bull_call_debit_spread": BullCallDebitSpread,
         }
-        strategy_cls = strategy_classes.get(strategy_name)
-        if strategy_cls is None:
-            logger.warning("Options scan: unknown strategy %r — skipping", strategy_name)
-            return
-        if strategy_name == "iron_condor":
-            logger.info(
-                "Options scan: iron_condor isn't wired for live 2-sided order "
-                "submission yet — skipping"
-            )
-            return
-        strategy_obj = strategy_cls()
-        is_debit = strategy_name == "bull_call_debit_spread"
-        is_call  = strategy_name in ("bear_call_spread", "bull_call_debit_spread")
-        opt_type = "call" if is_call else "put"
 
         pricer     = BlackScholesPricer()
         dte_target = trading_mode_manager.config.dte_target or 30
@@ -1018,13 +1010,48 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
             calls=calls, puts=puts, fetched_at=datetime.now(timezone.utc),
         )
 
-        signal_obj = strategy_obj.generate_signal(
-            chain=chain, iv_rank=iv_rank, rsi=rsi, adx=adx,
-            above_sma20=above_sma20, vix=vix_pct, portfolio_state=portfolio_state,
-        )
-        if not signal_obj.entry_allowed or not signal_obj.short_strike:
-            logger.info("Options scan: %s entry not allowed — %s", strategy_name, signal_obj.reason)
+        # Try every regime-allowed strategy in order, not just the first — a
+        # regime often allows more than one shape (e.g. NORMAL_MEAN_REVERT
+        # allows both bull_put_spread and bear_call_spread). Previously the
+        # scan gave up the moment strategies_allowed[0] failed its own entry
+        # condition (e.g. "no bullish bias"), even when a later-listed
+        # strategy in the same regime might actually qualify given current
+        # price action (a bearish setup is exactly when a later bear_call
+        # candidate could have an edge).
+        candidates = _current_regime.strategies_allowed or ["bull_put_spread"]
+        strategy_name: Optional[str] = None
+        strategy_obj = None
+        signal_obj = None
+        rejections: list[str] = []
+        for name in candidates:
+            cls = strategy_classes.get(name)
+            if cls is None:
+                logger.warning("Options scan: unknown strategy %r — skipping", name)
+                continue
+            if name == "iron_condor":
+                # Intentionally skipped: its 2-sided put+call structure isn't
+                # wired into _execute_signal's order construction (2 legs only).
+                continue
+            obj = cls()
+            sig = obj.generate_signal(
+                chain=chain, iv_rank=iv_rank, rsi=rsi, adx=adx,
+                above_sma20=above_sma20, vix=vix_pct, portfolio_state=portfolio_state,
+            )
+            if sig.entry_allowed and sig.short_strike:
+                strategy_name, strategy_obj, signal_obj = name, obj, sig
+                break
+            rejections.append(f"{name}: {sig.reason}")
+
+        if strategy_obj is None:
+            logger.info(
+                "Options scan %s: no regime-allowed strategy qualified — %s",
+                symbol, "; ".join(rejections) or "no candidates",
+            )
             return
+
+        is_debit = strategy_name == "bull_call_debit_spread"
+        is_call  = strategy_name in ("bear_call_spread", "bull_call_debit_spread")
+        opt_type = "call" if is_call else "put"
 
         short_strike = signal_obj.short_strike
         long_strike  = signal_obj.long_strike or (
