@@ -515,6 +515,28 @@ class IBKRClient(BrokerInterface):
             message=f"No fill after {_retries + 1} attempt(s)",
         )
 
+    async def cancel_open_orders(self, symbol: str) -> int:
+        """Cancel all working orders for `symbol` (e.g. a bracket's still-live
+        stop/take-profit legs before a manual close). Best-effort per order —
+        one already-filled/already-cancelled order doesn't block the rest."""
+        self._require_connection()
+
+        cancelled = 0
+        for trade in self.ib.openTrades():
+            if trade.contract.symbol.upper() != symbol.upper():
+                continue
+            try:
+                self.ib.cancelOrder(trade.order)
+                cancelled += 1
+            except Exception:
+                logger.warning(
+                    "cancel_open_orders: failed to cancel order %s for %s",
+                    getattr(trade.order, "orderId", "?"), symbol,
+                )
+        if cancelled:
+            await asyncio.sleep(1)  # let cancellations register before the close order
+        return cancelled
+
     async def get_positions(self) -> List[Position]:
         """Return all open positions from IBKR account."""
         self._require_connection()

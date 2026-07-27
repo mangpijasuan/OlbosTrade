@@ -651,6 +651,103 @@ async def manual_trade(req: ManualTradeRequest):
     return result
 
 
+class ClosePositionRequest(BaseModel):
+    trade_id: str
+    order_type: str = "market"          # market | limit
+    limit_price: Optional[float] = None
+
+
+@router.post("/close-position", dependencies=[Depends(require_api_key)])
+async def close_position(req: ClosePositionRequest):
+    """
+    Manually close an open position — the operator's own "I want out now"
+    action, independent of the automated profit-target/stop-loss exit.
+
+    Does NOT go through _execute_signal (that pipeline's duplicate guard
+    blocks *any* new order on a ticker with an existing open trade — exactly
+    the position this endpoint exists to close — so it would reject a
+    closing order as "already_open"). Kill switch is deliberately NOT
+    checked here: closing reduces risk, and kill-switch engagement already
+    flattens positions on its own — blocking a manual close during a
+    kill-switch event would be backwards.
+
+    Equity only for now. Options positions are 2-leg spreads; closing one
+    means submitting the mirrored spread order (buy back the short leg,
+    sell the long leg) — deliberately deferred rather than half-built.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    try:
+        trade_uuid = uuid.UUID(req.trade_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid trade_id")
+
+    async with AsyncSessionLocal() as session:
+        trade = (await session.execute(
+            select(Trade).where(Trade.id == trade_uuid)
+        )).scalar_one_or_none()
+
+    if trade is None:
+        raise HTTPException(404, "Trade not found")
+    if trade.status != "open":
+        raise HTTPException(409, f"Trade is not open (status={trade.status})")
+
+    spread_type = (trade.spread_type or "").lower()
+    if spread_type not in ("equity_long", "equity_short"):
+        raise HTTPException(
+            400,
+            "Manual close currently supports equity positions only — "
+            "close options spreads directly with the broker for now.",
+        )
+
+    close_side = "SELL" if spread_type == "equity_long" else "BUY"
+    ticker = trade.underlying
+    qty = int(trade.quantity or 1)
+
+    from app.broker.broker_factory import get_broker
+    broker = get_broker()
+
+    # Cancel the bracket's still-working stop/take-profit legs first — leaving
+    # them live after this close would be a dangling order with no position
+    # behind it, able to fire unexpectedly against a later trade in the same ticker.
+    cancelled = await broker.cancel_open_orders(ticker)
+
+    result = await broker.place_equity_order(
+        ticker=ticker, qty=qty, side=close_side,
+        order_type=req.order_type, limit_price=req.limit_price,
+    )
+
+    if result.status in ("cancelled", "rejected"):
+        raise HTTPException(502, f"Broker did not accept the close order: {result.status}")
+
+    if result.status == "filled" and result.fill_price is not None:
+        from app.services.trade_recorder import trade_recorder
+        await trade_recorder.record_exit(
+            trade_id=req.trade_id,
+            cost_to_close=float(result.fill_price),
+            exit_reason="manual",
+        )
+    # else: order is working/pending — the existing fill reconciler (_poll_fills)
+    # detects the position disappearing from the broker and closes it out,
+    # same as it already does for automated bracket exits.
+
+    entry = {
+        "trade_id":  req.trade_id,
+        "ticker":    ticker,
+        "action":    close_side,
+        "quantity":  qty,
+        "order_id":  result.order_id,
+        "status":    result.status,
+        "cancelled_open_orders": cancelled,
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "closed_by": "manual",
+    }
+    await _log_execution(entry)
+    return entry
+
+
 # ── Execution log ──────────────────────────────────────────────────────────────
 
 @router.get("/execution-log")

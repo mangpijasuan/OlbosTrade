@@ -14,6 +14,7 @@ import CommandOverview from "../trade-desk/CommandOverview";
 import ExecutionMonitor from "../trade-desk/execution/ExecutionMonitor";
 import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
 import { useTerminalNav } from "../components/TerminalNavContext";
+import HoldToConfirmButton from "../components/HoldToConfirmButton";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -437,9 +438,25 @@ function PnLBreakdown() {
 
 // ── Main Trade Desk ────────────────────────────────────────────────────────────
 export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Tab }) {
-  const { positions, lastSignal, cycleLog, loading, runCycle } = usePaperTrade();
+  const { positions, lastSignal, cycleLog, loading, runCycle, refresh } = usePaperTrade();
   const [tab, setTab] = useState<Tab>(initialTab);
   const onNav = useTerminalNav();
+  const [closingId, setClosingId] = useState<string | null>(null);
+  const [closeMsg, setCloseMsg] = useState<string | null>(null);
+
+  const closePosition = async (id: string, symbol: string) => {
+    setClosingId(id);
+    setCloseMsg(null);
+    try {
+      const res: any = await api.closePosition(id);
+      setCloseMsg(`${symbol}: ${res.status === "filled" ? "closed" : `order ${res.status}`}`);
+      refresh();
+    } catch (e: any) {
+      setCloseMsg(`${symbol}: ${e?.message || "close failed"}`);
+    } finally {
+      setClosingId(null);
+    }
+  };
 
   // Command Overview's queue cards link out to specific workspaces — map its
   // V2-shaped tab keys onto this page's own tab set (no V2 shell involved).
@@ -587,19 +604,30 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
 
         {/* POSITIONS */}
         {tab === "positions" && (
+          <div>
+            {closeMsg && (
+              <div style={{
+                padding: "8px 16px", fontFamily: "var(--mono)", fontSize: 11,
+                color: "var(--amber)", borderBottom: "1px solid var(--line-dim)",
+              }}>
+                {closeMsg}
+              </div>
+            )}
           <table className="t-table">
             <thead><tr>
-              {["Symbol","Type","Strategy","Entry Credit","Unreal P&L","MFE","MAE","Hold Days","Status","Mode"].map(h => (
+              {["Symbol","Type","Strategy","Entry Credit","Unreal P&L","MFE","MAE","Hold Days","Status","Mode","Action"].map(h => (
                 <HintedTh key={h} label={h} />
               ))}
             </tr></thead>
             <tbody>
               {(positions || []).length === 0 ? (
-                <tr><td colSpan={10} style={{ textAlign: "center", padding: 40, color: "var(--ink-dim)", fontSize: 12 }}>
+                <tr><td colSpan={11} style={{ textAlign: "center", padding: 40, color: "var(--ink-dim)", fontSize: 12 }}>
                   No open positions
                 </td></tr>
               ) : (positions || []).map((p: any, i: number) => {
                 const pnl = p.unrealized_pnl || 0;
+                const isEquity = p.spread_type === "equity_long" || p.spread_type === "equity_short";
+                const canClose = isEquity && !!p.id;
                 return (
                   <tr key={i}>
                     <td className="mono" style={{ color: "var(--ink)" }}>{p.symbol || p.underlying || "—"}</td>
@@ -614,11 +642,27 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                     <td className="mono">{p.hold_days != null ? `${p.hold_days}d` : "—"}</td>
                     <td><Badge text="OPEN" color="var(--ink-dim)" /></td>
                     <td><span className={`mode-badge ${p.trading_mode || "balanced"}`}>{p.trading_mode || "balanced"}</span></td>
+                    <td style={{ minWidth: 90 }}>
+                      {canClose ? (
+                        <HoldToConfirmButton
+                          label="Hold to close"
+                          confirmingLabel="Closing"
+                          holdMs={1200}
+                          disabled={closingId === p.id}
+                          onConfirm={() => closePosition(p.id, p.symbol || p.underlying || "?")}
+                        />
+                      ) : (
+                        <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>
+                          {isEquity ? "no trade id" : "close via broker"}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         {/* APPROVALS */}

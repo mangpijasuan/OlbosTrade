@@ -138,6 +138,10 @@ async def get_positions():
             market_value   = None
             unrealized_pnl = None
         positions.append({
+            # Needed by the frontend's manual close action (POST
+            # /api/trade-desk/close-position) — no trade to close if there's
+            # no matching DB row (an untracked/ghost broker position).
+            "id":             str(db.id) if db else None,
             "symbol":         sym,
             "quantity":       qty,
             "avg_cost":       avg_cost,
@@ -146,6 +150,7 @@ async def get_positions():
             "unrealized_pnl": unrealized_pnl,
             "strategy":       db.strategy if db else "unknown",
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
+            "spread_type":    (db.spread_type if db else None),
             # A broker position with no matching DB open trade is "untracked" —
             # OlbosTrade did not open it (e.g. pre-existing holdings in a shared
             # paper account). The reconciler flags these as ghost positions; the
@@ -157,8 +162,10 @@ async def get_positions():
     for sym, t in db_trades.items():
         if sym not in seen:
             positions.append({
+                "id":              str(t.id),
                 "symbol":          sym,
                 "strategy":        t.strategy,
+                "spread_type":     t.spread_type,
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
                 "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,
                 "trading_mode":    t.trading_mode_at_entry,

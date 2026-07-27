@@ -208,6 +208,15 @@ export const api = {
     request("/api/trade-desk/evaluate-equity", { method: "POST", body: JSON.stringify(body) }),
   evaluateOptionsIntent: (body: object) =>
     request("/api/trade-desk/evaluate-options", { method: "POST", body: JSON.stringify(body) }),
+  closePosition: (tradeId: string, orderType: "market" | "limit" = "market", limitPrice?: number) =>
+    request("/api/trade-desk/close-position", {
+      method: "POST",
+      body: JSON.stringify({
+        trade_id: tradeId,
+        order_type: orderType,
+        ...(limitPrice != null ? { limit_price: limitPrice } : {}),
+      }),
+    }),
   getPendingApprovals: () => request("/api/trade-desk/pending"),
   approveSignal:       (id: string) =>
     request(`/api/trade-desk/approve/${id}`, { method: "POST" }),

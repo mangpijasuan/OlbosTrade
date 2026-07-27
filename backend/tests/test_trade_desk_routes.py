@@ -10,10 +10,11 @@ import pytest
 
 import app.api.routes.trade_desk as td
 from app.api.routes.trade_desk import (
-    ManualTradeRequest, KillSwitchRequest, SetExecutionModeRequest, RiskGateError,
-    _execute_signal, _fetch_portfolio_state, approve_signal, get_execution_log,
-    get_execution_mode, get_kill_switch, get_pending, handle_signal, manual_trade,
-    reject_signal, set_execution_mode, set_kill_switch,
+    ClosePositionRequest, ManualTradeRequest, KillSwitchRequest, SetExecutionModeRequest,
+    RiskGateError, _execute_signal, _fetch_portfolio_state, approve_signal,
+    close_position, get_execution_log, get_execution_mode, get_kill_switch,
+    get_pending, handle_signal, manual_trade, reject_signal, set_execution_mode,
+    set_kill_switch,
 )
 from app.services.execution_mode import ExecutionMode
 from app.services.guardrails import PortfolioState
@@ -182,6 +183,125 @@ async def test_manual_trade_error_raises():
                       new=AsyncMock(return_value={"result": "error", "error": "boom"})):
         with pytest.raises(Exception):
             await manual_trade(ManualTradeRequest(ticker="aapl", action="buy", shares=5))
+
+
+# ── close_position (manual close, separate from _execute_signal) ──────────────
+
+def _fake_trade_session(trade):
+    result = MagicMock(scalar_one_or_none=MagicMock(return_value=trade))
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
+def _open_trade(spread_type="equity_long", status="open", quantity=10):
+    t = MagicMock()
+    t.id = "11111111-1111-1111-1111-111111111111"
+    t.status = status
+    t.spread_type = spread_type
+    t.underlying = "AAPL"
+    t.quantity = quantity
+    return t
+
+
+@pytest.mark.asyncio
+async def test_close_position_invalid_trade_id_raises():
+    with pytest.raises(Exception):
+        await close_position(ClosePositionRequest(trade_id="not-a-uuid"))
+
+
+@pytest.mark.asyncio
+async def test_close_position_not_found_raises():
+    session = _fake_trade_session(None)
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        with pytest.raises(Exception):
+            await close_position(ClosePositionRequest(
+                trade_id="11111111-1111-1111-1111-111111111111"))
+
+
+@pytest.mark.asyncio
+async def test_close_position_already_closed_raises():
+    session = _fake_trade_session(_open_trade(status="closed"))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        with pytest.raises(Exception):
+            await close_position(ClosePositionRequest(
+                trade_id="11111111-1111-1111-1111-111111111111"))
+
+
+@pytest.mark.asyncio
+async def test_close_position_options_not_yet_supported_raises():
+    session = _fake_trade_session(_open_trade(spread_type="put"))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        with pytest.raises(Exception):
+            await close_position(ClosePositionRequest(
+                trade_id="11111111-1111-1111-1111-111111111111"))
+
+
+@pytest.mark.asyncio
+async def test_close_position_long_submits_sell_and_cancels_bracket():
+    """A closing order must never go through _execute_signal's duplicate
+    guard — this test proves it's never called — and equity_long closes
+    with SELL, not BUY."""
+    session = _fake_trade_session(_open_trade(spread_type="equity_long", quantity=10))
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=2)
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(
+        status="filled", order_id="ord-1", fill_price=101.5,
+    ))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch.object(td, "_execute_signal", new=AsyncMock()) as exec_mock, \
+         patch.object(td, "_log_execution", new=AsyncMock()), \
+         patch("app.services.trade_recorder.trade_recorder.record_exit",
+               new=AsyncMock(return_value=True)) as record_mock:
+        out = await close_position(ClosePositionRequest(
+            trade_id="11111111-1111-1111-1111-111111111111"))
+
+    exec_mock.assert_not_called()
+    broker.cancel_open_orders.assert_awaited_once_with("AAPL")
+    broker.place_equity_order.assert_awaited_once()
+    assert broker.place_equity_order.await_args.kwargs["side"] == "SELL"
+    assert broker.place_equity_order.await_args.kwargs["qty"] == 10
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["cost_to_close"] == 101.5
+    assert record_mock.await_args.kwargs["exit_reason"] == "manual"
+    assert out["action"] == "SELL"
+    assert out["cancelled_open_orders"] == 2
+
+
+@pytest.mark.asyncio
+async def test_close_position_short_submits_buy():
+    session = _fake_trade_session(_open_trade(spread_type="equity_short", quantity=5))
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(
+        status="submitted", order_id="ord-2", fill_price=None,
+    ))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch.object(td, "_log_execution", new=AsyncMock()):
+        out = await close_position(ClosePositionRequest(
+            trade_id="11111111-1111-1111-1111-111111111111"))
+
+    assert broker.place_equity_order.await_args.kwargs["side"] == "BUY"
+    assert out["status"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_close_position_broker_rejection_raises():
+    session = _fake_trade_session(_open_trade())
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(
+        status="rejected", order_id=None, fill_price=None,
+    ))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker):
+        with pytest.raises(Exception):
+            await close_position(ClosePositionRequest(
+                trade_id="11111111-1111-1111-1111-111111111111"))
 
 
 @pytest.mark.asyncio

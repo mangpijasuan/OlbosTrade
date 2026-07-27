@@ -204,6 +204,17 @@ class BrokerInterface(ABC):
         ...
 
     @abstractmethod
+    async def cancel_open_orders(self, symbol: str) -> int:
+        """
+        Cancel all working (unfilled) orders for a symbol — used before a
+        manual position close to avoid leaving a bracket's stop/take-profit
+        legs live at the broker with no corresponding position (which could
+        otherwise fire unexpectedly against a later, unrelated position in
+        the same symbol). Returns the number of orders cancelled.
+        """
+        ...
+
+    @abstractmethod
     async def get_account_summary(self) -> AccountSummary:
         """Return top-level account figures."""
         ...

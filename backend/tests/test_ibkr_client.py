@@ -93,3 +93,53 @@ async def test_get_positions_filters_options_only(client):
     assert options[0].option_type == "put"
     assert options[0].strike == Decimal("450.0")
     assert options[0].quantity == -1
+
+
+# ── cancel_open_orders (manual close: clear a bracket's stop/target legs) ─────
+
+@pytest.mark.asyncio
+async def test_cancel_open_orders_only_cancels_matching_symbol(client):
+    aapl_trade = MagicMock()
+    aapl_trade.contract.symbol = "AAPL"
+    msft_trade = MagicMock()
+    msft_trade.contract.symbol = "MSFT"
+    client.ib.openTrades = MagicMock(return_value=[aapl_trade, msft_trade])
+    client.ib.cancelOrder = MagicMock()
+
+    with patch("app.broker.ibkr_client.asyncio.sleep", new_callable=AsyncMock):
+        count = await client.cancel_open_orders("aapl")  # lowercase input
+
+    assert count == 1
+    client.ib.cancelOrder.assert_called_once_with(aapl_trade.order)
+
+
+@pytest.mark.asyncio
+async def test_cancel_open_orders_returns_zero_when_none_match(client):
+    other_trade = MagicMock()
+    other_trade.contract.symbol = "TSLA"
+    client.ib.openTrades = MagicMock(return_value=[other_trade])
+    client.ib.cancelOrder = MagicMock()
+
+    count = await client.cancel_open_orders("AAPL")
+
+    assert count == 0
+    client.ib.cancelOrder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_open_orders_continues_after_one_cancel_fails(client):
+    """One order's cancel throwing must not stop the rest from being cancelled."""
+    bad_trade = MagicMock()
+    bad_trade.contract.symbol = "AAPL"
+    bad_trade.order = MagicMock(orderId=1)
+    good_trade = MagicMock()
+    good_trade.contract.symbol = "AAPL"
+    good_trade.order = MagicMock(orderId=2)
+    client.ib.openTrades = MagicMock(return_value=[bad_trade, good_trade])
+    client.ib.cancelOrder = MagicMock(side_effect=[RuntimeError("boom"), None])
+
+    with patch("app.broker.ibkr_client.asyncio.sleep", new_callable=AsyncMock):
+        count = await client.cancel_open_orders("AAPL")
+
+    assert count == 1  # only the second (successful) cancel counted
+    assert client.ib.cancelOrder.call_count == 2
