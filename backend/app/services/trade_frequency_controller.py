@@ -44,17 +44,22 @@ MODE_RULES: dict[TradingModeType, FrequencyRule] = {
         target_per_day=2, hard_max_per_day=3, min_confidence=0.90,
         max_risk_score=20, capital_deploy_min=0.20, capital_deploy_max=0.40,
         min_pop=0.75),
+    # 2026-07-28 risk-ladder rebalance (operator request): Balanced now runs
+    # what was previously Conservative's frequency profile.
     TradingModeType.BALANCED: FrequencyRule(
-        target_per_day=6, hard_max_per_day=10, min_confidence=0.75,
+        target_per_day=2, hard_max_per_day=3, min_confidence=0.90,
+        max_risk_score=20, capital_deploy_min=0.20, capital_deploy_max=0.40,
+        min_pop=0.75),
+    # Aggressive now runs what was previously Balanced's frequency profile,
+    # loosened on min_confidence and hard_max_per_day.
+    TradingModeType.AGGRESSIVE: FrequencyRule(
+        target_per_day=6, hard_max_per_day=15, min_confidence=0.70,
         max_risk_score=40, capital_deploy_min=0.40, capital_deploy_max=0.70,
         min_pop=0.65),
-    TradingModeType.AGGRESSIVE: FrequencyRule(
-        target_per_day=15, hard_max_per_day=40, min_confidence=0.65,
-        max_risk_score=60, capital_deploy_min=0.70, capital_deploy_max=0.95,
-        min_pop=0.0),
-    # Scalper inherits aggressive-style frequency but keeps the tightest cap.
+    # Scalper inherits aggressive-style frequency but keeps the tightest cap;
+    # min_confidence loosened slightly (was 0.65).
     TradingModeType.SCALPER: FrequencyRule(
-        target_per_day=20, hard_max_per_day=40, min_confidence=0.65,
+        target_per_day=20, hard_max_per_day=40, min_confidence=0.60,
         max_risk_score=60, capital_deploy_min=0.50, capital_deploy_max=0.95,
         min_pop=0.0),
 }

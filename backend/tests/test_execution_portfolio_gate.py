@@ -68,26 +68,30 @@ def test_blocks_max_positions():
 
 
 def test_scalper_mode_tightens_max_concurrent_to_its_own_cap():
-    """Scalper's own config caps concurrent positions at 2 (compounding gamma
+    """Scalper's own config caps concurrent positions at 3 (compounding gamma
     risk on 0-3 DTE) — previously only the global default (5) was enforced
     here, silently allowing more concurrent positions than Scalper's own
-    design intends."""
+    design intends. Compared against Aggressive (max_concurrent=6, since the
+    2026-07-28 rebalance) rather than Balanced — Balanced now shares
+    Scalper's same 3-position cap, so it wouldn't show the mode-specific
+    distinction this test exists to prove."""
     from app.services.trading_mode import trading_mode_manager, TradingModeType
 
     trading_mode_manager.set_mode(TradingModeType.SCALPER)
     try:
-        # 2 open positions: global cap (5) would allow this, Scalper's own
-        # cap (2) must not.
-        r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=2))
+        # 3 open positions: global cap (5) would allow this, Scalper's own
+        # cap (3) must not.
+        r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=3))
         assert not r.allowed
         assert "max_positions" in r.flags
     finally:
-        trading_mode_manager.set_mode(TradingModeType.BALANCED)
+        trading_mode_manager.set_mode(TradingModeType.AGGRESSIVE)
 
-    # Back in Balanced (max_concurrent=5): the same 2 open positions must not
+    # In Aggressive (max_concurrent=6): the same 3 open positions must not
     # be blocked — confirms the tightening is mode-scoped, not a blanket cut.
-    r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=2))
+    r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=3))
     assert r.allowed
+    trading_mode_manager.set_mode(TradingModeType.BALANCED)
 
 
 def test_blocks_underlying_concentration():

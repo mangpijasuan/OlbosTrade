@@ -182,15 +182,16 @@ def test_active_risk_pct_reads_from_trading_mode():
     from app.services.strategy_engine import _active_risk_pct
     from app.services.trading_mode import trading_mode_manager, TradingModeType
 
-    # Set to scalper mode (risk_per_trade_pct = 0.005)
+    # Set to scalper mode (risk_per_trade_pct = 0.0075 — 2026-07-28 rebalance)
     trading_mode_manager.set_mode(TradingModeType.SCALPER)
     pct = _active_risk_pct()
-    assert pct == 0.005, f"Expected scalper risk 0.005, got {pct}"
+    assert pct == 0.0075, f"Expected scalper risk 0.0075, got {pct}"
 
-    # Reset to balanced
+    # Reset to balanced (risk_per_trade_pct = 0.01 since the 2026-07-28
+    # rebalance — Balanced now runs the old Conservative profile)
     trading_mode_manager.set_mode(TradingModeType.BALANCED)
     pct = _active_risk_pct()
-    assert pct == 0.02, f"Expected balanced risk 0.02, got {pct}"
+    assert pct == 0.01, f"Expected balanced risk 0.01, got {pct}"
 
 
 def test_size_position_uses_active_mode_risk():

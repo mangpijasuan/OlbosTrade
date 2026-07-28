@@ -124,32 +124,36 @@ TRADING_MODES: dict[TradingModeType, TradingModeConfig] = {
         ui_icon="shield",
     ),
 
+    # 2026-07-28 risk-ladder rebalance (operator request): Balanced now runs
+    # what was previously Conservative's full profile. Conservative itself is
+    # unchanged; Aggressive/Scalper shifted down and were loosened slightly —
+    # see those blocks below.
     TradingModeType.BALANCED: TradingModeConfig(
         mode=TradingModeType.BALANCED,
         display_name="Balanced",
         description=(
-            "The default OlbosTrade mode. Proven 30–35 DTE sweet spot "
-            "for the volatility risk premium. Fully automated. "
+            "The default OlbosTrade mode. Capital preservation first — "
+            "fewer trades, wider DTE, higher signal requirements. "
             "Recommended for most traders."
         ),
-        # DTE — sweet spot
-        dte_min=15, dte_target=22, dte_max=30, dte_exit=10,
-        # Exit rules — standard
+        # DTE — widest range, most forgiving
+        dte_min=30, dte_target=45, dte_max=60, dte_exit=21,
+        # Exit rules — patient
         profit_target_pct=0.50,
         stop_loss_multiplier=2.0,
-        # Entry — standard
-        signal_threshold=0.65,
-        min_iv_rank=30.0,
-        min_credit_to_width=0.20,
-        # Sizing — standard
-        risk_per_trade_pct=0.02,   # 2% per trade
-        max_trades_per_day=3,
-        max_concurrent=5,
-        # Strategies — all allowed
+        # Entry — very selective
+        signal_threshold=0.72,
+        min_iv_rank=35.0,
+        min_credit_to_width=0.25,
+        # Sizing — smallest risk
+        risk_per_trade_pct=0.01,   # 1% per trade
+        max_trades_per_day=1,
+        max_concurrent=3,
+        # Strategies — credit only, no debit
         bull_put_allowed=True,
         bear_call_allowed=True,
         iron_condor_allowed=True,
-        debit_spread_allowed=True,
+        debit_spread_allowed=False,
         # Monitoring — fully automated
         requires_monitoring=False,
         monitoring_warning="",
@@ -157,40 +161,38 @@ TRADING_MODES: dict[TradingModeType, TradingModeConfig] = {
         ui_icon="activity",
     ),
 
+    # Aggressive now runs what was previously Balanced's DTE/exit/strategy
+    # profile, loosened on entry threshold and sizing/frequency (signal
+    # threshold, risk per trade, trades/day, concurrent positions).
     TradingModeType.AGGRESSIVE: TradingModeConfig(
         mode=TradingModeType.AGGRESSIVE,
         display_name="Aggressive",
         description=(
-            "Shorter DTE (7–15 days) for faster premium collection. "
-            "Higher gamma risk — losses can accumulate quickly. "
-            "Take profits faster, cut losses faster. "
-            "Check the system twice daily."
+            "22 DTE sweet spot for the volatility risk premium — the profile "
+            "Balanced used to run, loosened for more trades. Fully automated."
         ),
-        # DTE — short but not 0DTE danger zone
-        dte_min=3, dte_target=9, dte_max=15, dte_exit=2,
-        # Exit rules — faster on both sides
-        profit_target_pct=0.35,    # Take 35% profit — don't be greedy
-        stop_loss_multiplier=1.5,  # Cut at 1.5x — faster than balanced
-        # Entry — slightly looser (more trades)
-        signal_threshold=0.60,
+        # DTE — sweet spot (was Balanced's before the 2026-07-28 rebalance)
+        dte_min=15, dte_target=22, dte_max=30, dte_exit=10,
+        # Exit rules — standard
+        profit_target_pct=0.50,
+        stop_loss_multiplier=2.0,
+        # Entry — loosened from the old Balanced's 0.65
+        signal_threshold=0.62,
         min_iv_rank=30.0,
-        min_credit_to_width=0.22,
-        # Sizing — slightly larger but gamma demands caution
-        risk_per_trade_pct=0.025,  # 2.5% per trade
-        max_trades_per_day=3,
-        max_concurrent=4,           # Fewer concurrent — gamma compounds
-        # Strategies — credit spreads only (no condors at short DTE)
+        min_credit_to_width=0.20,
+        # Sizing — loosened from the old Balanced's 2% / 3 / 5
+        risk_per_trade_pct=0.0225,  # 2.25% per trade
+        max_trades_per_day=4,
+        max_concurrent=6,
+        # Strategies — all allowed (DTE is no longer the 7-15 danger zone
+        # that excluded iron_condor before this rebalance)
         bull_put_allowed=True,
         bear_call_allowed=True,
-        iron_condor_allowed=False,  # Too dangerous at 7-15 DTE
-        debit_spread_allowed=False,
-        # Monitoring — recommended twice daily
-        requires_monitoring=False,  # Still automatable
-        monitoring_warning=(
-            "Aggressive mode uses 7–15 DTE options. Gamma risk is elevated. "
-            "A single large SPY move can cause significant losses quickly at 7–15 DTE. "
-            "Check positions morning and afternoon during market hours."
-        ),
+        iron_condor_allowed=True,
+        debit_spread_allowed=True,
+        # Monitoring — fully automated
+        requires_monitoring=False,
+        monitoring_warning="",
         ui_color="orange",
         ui_icon="zap",
     ),
@@ -209,14 +211,17 @@ TRADING_MODES: dict[TradingModeType, TradingModeConfig] = {
         # Exit rules — lightning fast
         profit_target_pct=0.25,    # 25% profit — get out quickly
         stop_loss_multiplier=1.0,  # Stop at 1x credit — immediate
-        # Entry — highest threshold (compensates for thin edge)
-        signal_threshold=0.70,
+        # Entry — highest threshold of any mode, loosened slightly on
+        # 2026-07-28 (was 0.70) to compensate a thin edge without shutting
+        # it out entirely
+        signal_threshold=0.65,
         min_iv_rank=35.0,
         min_credit_to_width=0.30,  # Higher credit requirement
-        # Sizing — smallest (gamma can cause instant max loss)
-        risk_per_trade_pct=0.005,  # 0.5% per trade only
-        max_trades_per_day=3,
-        max_concurrent=2,           # Never hold more than 2 at once
+        # Sizing — smallest (gamma can cause instant max loss), loosened
+        # slightly on 2026-07-28 (was 0.5% / 3 / 2)
+        risk_per_trade_pct=0.0075,  # 0.75% per trade
+        max_trades_per_day=4,
+        max_concurrent=3,
         # Strategies — puts only (directional is too dangerous)
         bull_put_allowed=True,
         bear_call_allowed=True,

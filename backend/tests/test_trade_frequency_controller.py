@@ -95,9 +95,11 @@ def test_rank_orders_best_first():
 # ── gating per mode ───────────────────────────────────────────────────────────
 def test_gate_blocks_below_min_confidence():
     ctrl = TradeFrequencyController()
-    # 0.80 passes balanced (min 0.75) but fails conservative (min 0.90)
-    assert ctrl.evaluate(_equity(0.80), trades_today=0, mode=B).allowed
-    d = ctrl.evaluate(_equity(0.80), trades_today=0, mode=C)
+    # 0.80 passes aggressive (min 0.70) but fails balanced (min 0.90) —
+    # 2026-07-28 rebalance: Balanced now runs the old Conservative profile,
+    # Aggressive now runs the old Balanced's (loosened further).
+    assert ctrl.evaluate(_equity(0.80), trades_today=0, mode=A).allowed
+    d = ctrl.evaluate(_equity(0.80), trades_today=0, mode=B)
     assert not d.allowed and "below_min_confidence" in d.reason
 
 
@@ -112,9 +114,10 @@ def test_gate_enforces_hard_daily_cap():
 
 def test_gate_blocks_high_risk_score():
     ctrl = TradeFrequencyController()
-    # confidence 0.66 → risk_score ~34 > conservative max 20 (also fails conf, but
-    # use a case that passes confidence yet fails risk via poor reward:risk)
-    sig = _equity(0.66, rr=0.2)   # aggressive min_conf 0.65 ok; rr 0.2 lifts risk
+    # confidence 0.75 clears aggressive's min_confidence (0.70, since the
+    # 2026-07-28 rebalance), but poor reward:risk (0.2) still lifts risk
+    # score / drags EV negative.
+    sig = _equity(0.75, rr=0.2)
     d = ctrl.evaluate(sig, trades_today=0, mode=A)
     assert not d.allowed and ("risk_score_too_high" in d.reason or "non_positive_ev" in d.reason)
 
@@ -137,7 +140,10 @@ def test_gate_allows_quality_signal():
 
 def test_aggressive_allows_more_than_conservative():
     ctrl = TradeFrequencyController()
-    sig = _equity(0.70, rr=2.0)   # below conservative min (0.90), above aggressive (0.65)
+    # 0.75: below conservative's min (0.90, unchanged), above aggressive's
+    # (0.70 since the 2026-07-28 rebalance) with a clear margin rather than
+    # sitting exactly on the boundary.
+    sig = _equity(0.75, rr=2.0)
     assert ctrl.evaluate(sig, trades_today=0, mode=A).allowed
     assert not ctrl.evaluate(sig, trades_today=0, mode=C).allowed
 
@@ -211,9 +217,14 @@ def _opt_pop(pop, strategy="bull_put_spread", credit=200.0, max_loss=300.0):
 
 def test_pop_gate_blocks_low_pop_bull_put_in_aggressive():
     ctrl = TradeFrequencyController()
-    # Aggressive min_confidence 0.65 and mode min_pop 0.0 would pass a 0.68 signal,
-    # but the bull-put strategy floor (0.70) blocks it.
-    d = ctrl.evaluate(_opt_pop(0.68), trades_today=0, mode=A)
+    # Decouple confidence from POP (mirrors test_pop_gate_conservative_mode_floor):
+    # confidence 0.90 clears Aggressive's min_confidence (0.70, since the
+    # 2026-07-28 rebalance), but POP 0.68 falls under the bull-put strategy
+    # floor (0.70) — isolates the strategy-level floor from the mode gate.
+    sig = {"ticker": "SPY", "asset_type": "options", "strategy": "bull_put_spread",
+           "confidence": 0.90, "pop": 0.68,
+           "spread": {"net_credit": 200, "max_loss": 300}}
+    d = ctrl.evaluate(sig, trades_today=0, mode=A)
     assert not d.allowed and "pop_below_floor" in d.reason and "0.70" in d.reason
 
 
