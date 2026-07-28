@@ -147,7 +147,7 @@ TRADING_MODES: dict[TradingModeType, TradingModeConfig] = {
         min_credit_to_width=0.25,
         # Sizing — smallest risk
         risk_per_trade_pct=0.01,   # 1% per trade
-        max_trades_per_day=1,
+        max_trades_per_day=5,
         max_concurrent=3,
         # Strategies — credit only, no debit
         bull_put_allowed=True,
@@ -182,7 +182,7 @@ TRADING_MODES: dict[TradingModeType, TradingModeConfig] = {
         min_credit_to_width=0.20,
         # Sizing — loosened from the old Balanced's 2% / 3 / 5
         risk_per_trade_pct=0.0225,  # 2.25% per trade
-        max_trades_per_day=4,
+        max_trades_per_day=10,
         max_concurrent=6,
         # Strategies — all allowed (DTE is no longer the 7-15 danger zone
         # that excluded iron_condor before this rebalance)

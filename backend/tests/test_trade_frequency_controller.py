@@ -105,7 +105,7 @@ def test_gate_blocks_below_min_confidence():
 
 def test_gate_enforces_hard_daily_cap():
     ctrl = TradeFrequencyController()
-    cap = MODE_RULES[C].hard_max_per_day  # 3
+    cap = MODE_RULES[C].hard_max_per_day  # 1
     d = ctrl.evaluate(_equity(0.95), trades_today=cap, mode=C)
     assert not d.allowed and "daily_cap" in d.reason
     # one below the cap is allowed
