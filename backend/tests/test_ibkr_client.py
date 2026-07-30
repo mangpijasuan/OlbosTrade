@@ -78,13 +78,14 @@ async def test_get_positions_filters_options_only(client):
     opt_contract.lastTradeDateOrContractMonth = "20240119"
     opt_contract.right = "P"
 
-    mock_positions = [
-        MagicMock(contract=stock_contract, position=100, avgCost=450.0),
-        MagicMock(contract=opt_contract, position=-1, avgCost=125.0),
+    mock_items = [
+        MagicMock(contract=stock_contract, position=100, averageCost=450.0,
+                   marketPrice=455.0, unrealizedPNL=500.0),
+        MagicMock(contract=opt_contract, position=-1, averageCost=125.0,
+                   marketPrice=110.0, unrealizedPNL=15.0),
     ]
 
-    with patch.object(client.ib, "reqPositionsAsync",
-                      new_callable=AsyncMock, return_value=mock_positions):
+    with patch.object(client.ib, "portfolio", return_value=mock_items):
         positions = await client.get_positions()
 
     # get_positions returns all OPT + STK/ETF; filter to options only
@@ -93,6 +94,48 @@ async def test_get_positions_filters_options_only(client):
     assert options[0].option_type == "put"
     assert options[0].strike == Decimal("450.0")
     assert options[0].quantity == -1
+
+
+@pytest.mark.asyncio
+async def test_get_positions_carries_live_price_and_unrealized_pnl(client):
+    """current_price/unrealized_pnl must come from IBKR's own portfolio() marks —
+    this is what MFE/MAE excursion tracking (and the journal's recorded values)
+    depend on; reqPositionsAsync() never carried these fields at all."""
+    stock_contract = MagicMock()
+    stock_contract.secType = "STK"
+    stock_contract.symbol = "AAPL"
+
+    mock_items = [
+        MagicMock(contract=stock_contract, position=10, averageCost=150.0,
+                   marketPrice=162.5, unrealizedPNL=125.0),
+    ]
+
+    with patch.object(client.ib, "portfolio", return_value=mock_items):
+        positions = await client.get_positions()
+
+    assert len(positions) == 1
+    assert positions[0].current_price == Decimal("162.5")
+    assert positions[0].unrealized_pnl == Decimal("125.0")
+
+
+@pytest.mark.asyncio
+async def test_get_equity_positions_carries_price_and_pnl(client):
+    stock_contract = MagicMock()
+    stock_contract.secType = "STK"
+    stock_contract.symbol = "MSFT"
+
+    mock_items = [
+        MagicMock(contract=stock_contract, position=5, averageCost=300.0,
+                   marketPrice=310.0, unrealizedPNL=50.0),
+    ]
+
+    with patch.object(client.ib, "portfolio", return_value=mock_items):
+        equity_positions = await client.get_equity_positions()
+
+    assert len(equity_positions) == 1
+    assert equity_positions[0].current_price == Decimal("310.0")
+    assert equity_positions[0].unrealized_pnl == Decimal("50.0")
+    assert equity_positions[0].market_value == Decimal("1550.0")
 
 
 # ── cancel_open_orders (manual close: clear a bracket's stop/target legs) ─────

@@ -30,8 +30,30 @@ interface EditState {
   tags: string;
 }
 
-const fmt = (n: number | null) =>
+interface TagPerf {
+  tag: string;
+  trade_count: number;
+  win_rate: number;
+  avg_pnl: number;
+  total_pnl: number;
+}
+
+interface MonthlyReviewData {
+  month: string;
+  total_trades: number;
+  win_rate: number;
+  total_pnl: number;
+  rules_followed_pct: number;
+  top_tags: string[];
+  top_mistakes: string[];
+  mistake_frequency: Record<string, number>;
+  recommendation: string;
+}
+
+const fmt = (n: number | null | undefined) =>
   n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+const pct = (n: number | null | undefined) => (n == null ? "—" : `${(n * 100).toFixed(0)}%`);
 
 const holdDays = (entry: string | null, exit: string | null) => {
   if (!entry) return null;
@@ -39,6 +61,42 @@ const holdDays = (entry: string | null, exit: string | null) => {
   const to   = exit ? new Date(exit) : new Date();
   return Math.floor((to.getTime() - from.getTime()) / 86400000);
 };
+
+const currentMonth = () => new Date().toISOString().slice(0, 7);
+
+function StatTile({ label, val, color, borderRight }: { label: string; val: string; color?: string; borderRight?: boolean }) {
+  return (
+    <div style={{ padding: "16px 18px", borderRight: borderRight ? "1px solid var(--line-dim)" : "none" }}>
+      <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
+      <div className="data-val" style={{ color: color || "var(--ink)" }}>{val}</div>
+    </div>
+  );
+}
+
+function Panel({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
+      <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
+        <span className="panel-title">{title}</span>
+        {sub && (
+          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginLeft: 12 }}>
+            {sub}
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+      <div style={{ color: "var(--cyan)", marginBottom: 6 }}>{title}</div>
+      {sub}
+    </div>
+  );
+}
 
 function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
   const days  = holdDays(e.entry_date, e.exit_date);
@@ -75,6 +133,15 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
             {e.strategy?.replace(/_/g, " ").toUpperCase() || "—"}
           </span>
+          {e.market_context && e.market_context.toLowerCase() !== "unknown" && (
+            <span style={{
+              fontFamily: "var(--mono)", fontSize: 9, padding: "2px 7px",
+              background: "rgba(148,163,184,0.08)", border: "1px solid var(--line-dim)",
+              color: "var(--ink-dim)", textTransform: "uppercase",
+            }}>
+              {e.market_context}
+            </span>
+          )}
         </div>
         <div style={{ textAlign: "right" }}>
           <span style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700, color: pnlColor }}>
@@ -123,12 +190,6 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
       {/* Row 3: context + notes */}
       {(e.market_context || e.post_trade_notes) && (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-          {e.market_context && (
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em", marginBottom: 3 }}>CONTEXT</div>
-              <div style={{ fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>{e.market_context}</div>
-            </div>
-          )}
           {e.post_trade_notes && (
             <div style={{ flex: 2, minWidth: 200 }}>
               <div style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em", marginBottom: 3 }}>NOTES</div>
@@ -160,11 +221,19 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
 export default function Journal() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab]         = useState<"entries" | "analysis">("entries");
+  const [tab, setTab]         = useState<"entries" | "performance" | "mistakes" | "review">("entries");
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving]   = useState(false);
   const [impact, setImpact]   = useState<any>(null);
   const [filter, setFilter]   = useState<"all" | "open" | "closed">("all");
+
+  const [tagPerf, setTagPerf]           = useState<TagPerf[] | null>(null);
+  const [tagPerfLoading, setTagPerfLoading] = useState(false);
+  const [mistakes, setMistakes]         = useState<Record<string, number> | null>(null);
+  const [mistakesLoading, setMistakesLoading] = useState(false);
+  const [month, setMonth]               = useState(currentMonth());
+  const [review, setReview]             = useState<MonthlyReviewData | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -179,6 +248,32 @@ export default function Journal() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (tab === "performance" && tagPerf === null && !tagPerfLoading) {
+      setTagPerfLoading(true);
+      (api as any).getTagPerformance()
+        .then((r: any) => setTagPerf(r.tag_performance || []))
+        .catch(() => setTagPerf([]))
+        .finally(() => setTagPerfLoading(false));
+    }
+    if (tab === "mistakes" && mistakes === null && !mistakesLoading) {
+      setMistakesLoading(true);
+      (api as any).getMistakeFrequency()
+        .then((r: any) => setMistakes(r.mistakes || {}))
+        .catch(() => setMistakes({}))
+        .finally(() => setMistakesLoading(false));
+    }
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (tab !== "review") return;
+    setReviewLoading(true);
+    (api as any).getMonthlyReview(month)
+      .then((r: any) => setReview(r.review || null))
+      .catch(() => setReview(null))
+      .finally(() => setReviewLoading(false));
+  }, [tab, month]);
 
   const openEdit = (e: Entry) => setEditing({
     entry_id: e.id,
@@ -210,7 +305,14 @@ export default function Journal() {
   const totalPnl  = entries.filter(e => e.pnl != null).reduce((s, e) => s + (e.pnl ?? 0), 0);
   const wins      = entries.filter(e => (e.pnl ?? 0) > 0).length;
   const closed    = entries.filter(e => e.pnl != null).length;
+  const open      = entries.filter(e => e.pnl == null).length;
   const winRate   = closed > 0 ? Math.round(wins / closed * 100) : 0;
+  const withRules = entries.filter(e => e.followed_rules != null);
+  const rulesPct  = withRules.length > 0
+    ? Math.round(withRules.filter(e => e.followed_rules).length / withRules.length * 100)
+    : null;
+
+  const maxMistake = mistakes ? Math.max(1, ...Object.values(mistakes)) : 1;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -220,29 +322,37 @@ export default function Journal() {
         padding: "8px 16px", borderBottom: "1px solid var(--line-dim)",
         background: "var(--bg-2)", display: "flex", alignItems: "center", gap: 8,
       }}>
-        {(["entries", "analysis"] as const).map(t => (
-          <button key={t} className={`btn-t ${tab === t ? "active" : ""}`}
-            onClick={() => setTab(t)}>{t.toUpperCase()}</button>
+        {([
+          { key: "entries",     label: "ENTRIES" },
+          { key: "performance", label: "PERFORMANCE" },
+          { key: "mistakes",    label: "MISTAKES" },
+          { key: "review",      label: "MONTHLY REVIEW" },
+        ] as const).map(t => (
+          <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`}
+            onClick={() => setTab(t.key)}>{t.label}</button>
         ))}
-        <div style={{ width: 1, height: 16, background: "var(--line-dim)", margin: "0 4px" }} />
-        {tab === "entries" && (["all","open","closed"] as const).map(f => (
-          <button key={f} className={`btn-t ${filter === f ? "active" : ""}`}
-            style={{ fontSize: 10 }} onClick={() => setFilter(f)}>
-            {f.toUpperCase()}
-          </button>
-        ))}
+        {tab === "entries" && (
+          <>
+            <div style={{ width: 1, height: 16, background: "var(--line-dim)", margin: "0 4px" }} />
+            {(["all","open","closed"] as const).map(f => (
+              <button key={f} className={`btn-t ${filter === f ? "active" : ""}`}
+                style={{ fontSize: 10 }} onClick={() => setFilter(f)}>
+                {f.toUpperCase()}
+              </button>
+            ))}
+          </>
+        )}
         <div style={{ flex: 1 }} />
-        {/* Summary stats */}
-        {closed > 0 && (
-          <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 10 }}>
-            <span style={{ color: "var(--ink-dim)" }}>
-              {closed} CLOSED &nbsp;·&nbsp;
-              <span style={{ color: totalPnl >= 0 ? "var(--green)" : "var(--red)" }}>{fmt(totalPnl)}</span>
-            </span>
-            <span style={{ color: winRate >= 50 ? "var(--green)" : "var(--amber)" }}>
-              WIN {winRate}%
-            </span>
-          </div>
+        {tab === "review" && (
+          <input
+            type="month"
+            value={month}
+            onChange={ev => setMonth(ev.target.value)}
+            style={{
+              background: "var(--bg-3)", border: "1px solid var(--line-dim)", color: "var(--ink)",
+              fontFamily: "var(--mono)", fontSize: 11, padding: "5px 8px",
+            }}
+          />
         )}
       </div>
 
@@ -254,61 +364,164 @@ export default function Journal() {
             <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               LOADING...
             </div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 48, textAlign: "center" }}>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--cyan)", marginBottom: 8 }}>
-                NO JOURNAL ENTRIES YET
-              </div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", lineHeight: 1.8 }}>
-                Entries are created automatically when a trade fills.
-              </div>
-            </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: 0 }}>
-              {filtered.map(e => (
-                <EntryCard key={e.id} e={e} onClick={() => openEdit(e)} />
-              ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
+
+              {/* Overview strip */}
+              {entries.length > 0 && (
+                <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", display: "grid", gridTemplateColumns: "repeat(5,1fr)" }}>
+                  <StatTile label="Total P&L"       val={fmt(totalPnl)}                         color={totalPnl >= 0 ? "var(--green)" : "var(--red)"} borderRight />
+                  <StatTile label="Win Rate"        val={closed > 0 ? `${winRate}%` : "—"}       color={winRate >= 50 ? "var(--green)" : "var(--amber)"} borderRight />
+                  <StatTile label="Closed / Open"   val={`${closed} / ${open}`}                  borderRight />
+                  <StatTile label="Rules Followed"  val={rulesPct != null ? `${rulesPct}%` : "—"} color={rulesPct != null && rulesPct >= 80 ? "var(--green)" : "var(--amber)"} borderRight />
+                  <StatTile label="Total Entries"   val={String(entries.length)} />
+                </div>
+              )}
+
+              {filtered.length === 0 ? (
+                <EmptyState title="NO JOURNAL ENTRIES YET" sub="Entries are created automatically when a trade fills." />
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {filtered.map(e => (
+                    <EntryCard key={e.id} e={e} onClick={() => openEdit(e)} />
+                  ))}
+                </div>
+              )}
             </div>
           )
         )}
 
-        {/* ── Analysis tab ── */}
-        {tab === "analysis" && (
+        {/* ── Performance tab ── */}
+        {tab === "performance" && (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                <span className="panel-title">Rule Breach Impact</span>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginLeft: 12 }}>
-                  Requires followed_rules set on trades
-                </span>
-              </div>
+            <Panel title="Rule Breach Impact" sub="Requires followed_rules set on trades">
               {!impact ? (
-                <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-                  Need 5+ trades with followed_rules data.<br/>
-                  Click any trade card and mark whether you followed the rules.
-                </div>
+                <EmptyState title="NOT ENOUGH DATA" sub="Need 5+ trades with followed_rules data. Click any trade card and mark whether you followed the rules." />
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
-                  {[
-                    { label: "Followed — Avg P&L",    val: fmt(impact.followed_avg_pnl),               color: "var(--green)" },
-                    { label: "Breached — Avg P&L",    val: fmt(impact.breached_avg_pnl),               color: "var(--red)"   },
-                    { label: "Followed — Win Rate",   val: `${(impact.followed_win_rate*100).toFixed(1)}%`, color: "var(--green)" },
-                    { label: "Cost of Breach/Trade",  val: fmt(impact.pnl_delta),                      color: "var(--amber)" },
-                  ].map((s, i) => (
-                    <div key={s.label} style={{ padding: "16px 18px", borderRight: i < 3 ? "1px solid var(--line-dim)" : "none" }}>
-                      <div className="kicker" style={{ marginBottom: 6 }}>{s.label}</div>
-                      <div className="data-val" style={{ color: s.color }}>{s.val}</div>
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
+                    <StatTile label="Followed — Avg P&L"   val={fmt(impact.followed_avg_pnl)}                    color="var(--green)" borderRight />
+                    <StatTile label="Breached — Avg P&L"   val={fmt(impact.breached_avg_pnl)}                    color="var(--red)"   borderRight />
+                    <StatTile label="Followed — Win Rate"  val={`${(impact.followed_win_rate*100).toFixed(1)}%`} color="var(--green)" borderRight />
+                    <StatTile label="Cost of Breach/Trade"  val={fmt(impact.pnl_delta)}                          color="var(--amber)" />
+                  </div>
+                  <div style={{ padding: "10px 14px", borderTop: "1px solid var(--line-dim)",
+                    fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                    {impact.summary}
+                  </div>
+                </>
+              )}
+            </Panel>
+
+            <Panel title="Performance by Tag" sub="Avg / total P&L for each tag you've applied to a closed trade">
+              {tagPerfLoading ? (
+                <EmptyState title="LOADING..." sub="" />
+              ) : !tagPerf || tagPerf.length === 0 ? (
+                <EmptyState title="NO TAGGED TRADES YET" sub="Add tags to closed trades (e.g. good-entry, early-exit) to see performance broken out by tag." />
+              ) : (
+                <div>
+                  {/* header row */}
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", padding: "6px 14px",
+                    borderBottom: "1px solid var(--line-dim)", fontFamily: "var(--mono)", fontSize: 8,
+                    color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
+                    <span>TAG</span><span>TRADES</span><span>WIN RATE</span><span>AVG P&L</span><span>TOTAL P&L</span>
+                  </div>
+                  {tagPerf.map(tp => (
+                    <div key={tp.tag} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", padding: "8px 14px",
+                      borderBottom: "1px solid var(--line-dim)", fontFamily: "var(--mono)", fontSize: 11, alignItems: "center" }}>
+                      <span style={{ color: "var(--cyan)" }}>{tp.tag}</span>
+                      <span style={{ color: "var(--ink-dim)" }}>{tp.trade_count}</span>
+                      <span style={{ color: tp.win_rate >= 0.5 ? "var(--green)" : "var(--amber)" }}>{pct(tp.win_rate)}</span>
+                      <span style={{ color: tp.avg_pnl >= 0 ? "var(--green)" : "var(--red)" }}>{fmt(tp.avg_pnl)}</span>
+                      <span style={{ color: tp.total_pnl >= 0 ? "var(--green)" : "var(--red)" }}>{fmt(tp.total_pnl)}</span>
                     </div>
                   ))}
                 </div>
               )}
-              {impact && (
-                <div style={{ padding: "10px 14px", borderTop: "1px solid var(--line-dim)",
-                  fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-                  {impact.summary}
+            </Panel>
+          </div>
+        )}
+
+        {/* ── Mistakes tab ── */}
+        {tab === "mistakes" && (
+          <div style={{ padding: 16 }}>
+            <Panel title="Mistake Frequency" sub="Counted from mistake_tags added during post-trade review">
+              {mistakesLoading ? (
+                <EmptyState title="LOADING..." sub="" />
+              ) : !mistakes || Object.keys(mistakes).length === 0 ? (
+                <EmptyState title="NO MISTAKES LOGGED YET" sub="Tag recurring errors (e.g. overrode-exit, sized-too-big, chased-entry) on trade entries to track patterns here." />
+              ) : (
+                <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {Object.entries(mistakes).map(([tag, count]) => (
+                    <div key={tag} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span style={{ width: 160, fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink)" }}>{tag}</span>
+                      <div style={{ flex: 1, height: 8, background: "var(--bg-3)", position: "relative" }}>
+                        <div style={{
+                          position: "absolute", left: 0, top: 0, bottom: 0,
+                          width: `${(count / maxMistake) * 100}%`,
+                          background: "var(--red)", opacity: 0.6,
+                        }} />
+                      </div>
+                      <span style={{ width: 24, textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>{count}</span>
+                    </div>
+                  ))}
                 </div>
               )}
-            </div>
+            </Panel>
+          </div>
+        )}
+
+        {/* ── Monthly Review tab ── */}
+        {tab === "review" && (
+          <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+            <Panel title={`Monthly Review — ${month}`}>
+              {reviewLoading ? (
+                <EmptyState title="LOADING..." sub="" />
+              ) : !review || review.total_trades === 0 ? (
+                <EmptyState title="NO TRADES THIS MONTH" sub="Pick a different month, or check back once trades have closed this month." />
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
+                    <StatTile label="Total Trades"     val={String(review.total_trades)}                    borderRight />
+                    <StatTile label="Win Rate"         val={pct(review.win_rate)}                           color={review.win_rate >= 0.5 ? "var(--green)" : "var(--amber)"} borderRight />
+                    <StatTile label="Total P&L"        val={fmt(review.total_pnl)}                          color={review.total_pnl >= 0 ? "var(--green)" : "var(--red)"} borderRight />
+                    <StatTile label="Rules Followed"   val={`${review.rules_followed_pct.toFixed(0)}%`}     color={review.rules_followed_pct >= 80 ? "var(--green)" : "var(--amber)"} />
+                  </div>
+
+                  {(review.top_tags.length > 0 || review.top_mistakes.length > 0) && (
+                    <div style={{ display: "flex", gap: 24, padding: "14px 16px", borderTop: "1px solid var(--line-dim)", flexWrap: "wrap" }}>
+                      {review.top_tags.length > 0 && (
+                        <div>
+                          <div className="kicker" style={{ marginBottom: 6 }}>Top Tags</div>
+                          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                            {review.top_tags.map(t => (
+                              <span key={t} style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 7px",
+                                background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)", color: "var(--cyan)" }}>{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {review.top_mistakes.length > 0 && (
+                        <div>
+                          <div className="kicker" style={{ marginBottom: 6 }}>Top Mistakes</div>
+                          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                            {review.top_mistakes.map(t => (
+                              <span key={t} style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 7px",
+                                background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--red)" }}>{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div style={{ padding: "12px 16px", borderTop: "1px solid var(--line-dim)",
+                    fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink)", lineHeight: 1.6 }}>
+                    {review.recommendation}
+                  </div>
+                </>
+              )}
+            </Panel>
           </div>
         )}
       </div>

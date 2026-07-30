@@ -648,11 +648,20 @@ async def _run_equity_scan() -> None:
                     "generated_at":    datetime.now(timezone.utc).isoformat(),
                     "action":          action,
                     "confidence":      round(confidence, 4),
+                    # Equities have no separate POP-derived score — confidence IS
+                    # the signal quality. Without this key, record_fill's
+                    # signal.get("signal_score", 0) always fell back to 0 and every
+                    # equity trade's journal entry showed a blank score.
+                    "signal_score":    round(confidence, 4),
                     "orderflow_score": round(orderflow, 4),
                     "iv_overlay_boost": 0.0,
                     "earnings_gated":  False,
                     "reasons":         reasons,
                     "trade_plan":      trade_plan,
+                    # Same gap as signal_score: without this key, record_fill's
+                    # signal.get("regime", "unknown") always fell back to "unknown"
+                    # and every equity trade's journal "market context" was useless.
+                    "regime": getattr(getattr(_current_regime, "regime", None), "value", None) or "unknown",
                     "indicators": {
                         "rsi":          ind.get("rsi"),
                         "macd":         ind.get("macd"),

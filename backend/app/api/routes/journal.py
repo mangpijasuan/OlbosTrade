@@ -38,7 +38,7 @@ def _to_out(e: JournalEntry, trade: Optional[Trade] = None) -> JournalEntryOut:
         pnl=float(trade.pnl) if (trade and trade.pnl is not None) else None,
         mfe=float(trade.mfe) if (trade and trade.mfe is not None) else None,
         mae=float(trade.mae) if (trade and trade.mae is not None) else None,
-        signal_score=float(trade.signal_score) if (trade and trade.signal_score) else None,
+        signal_score=float(trade.signal_score) if (trade and trade.signal_score is not None) else None,
         entry_date=e.created_at.date() if e.created_at else date.today(),
         exit_date=trade.exit_date.date() if (trade and trade.exit_date) else None,
     )

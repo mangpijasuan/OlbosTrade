@@ -538,15 +538,32 @@ class IBKRClient(BrokerInterface):
         return cancelled
 
     async def get_positions(self) -> List[Position]:
-        """Return all open positions from IBKR account."""
+        """Return all open positions from IBKR account.
+
+        Uses ib.portfolio() rather than reqPositionsAsync() specifically because
+        it carries IBKR's own live marketPrice/unrealizedPNL for each holding —
+        reqPositionsAsync() only returns the static contract/quantity/avgCost and
+        left current_price/unrealized_pnl permanently unset, which silently broke
+        every MFE/MAE excursion feature downstream (trade_recorder.update_excursion
+        and trade_excursion_tracker both depend on these fields and were dead code
+        as a result — every journal entry showed mfe/mae as null regardless of the
+        trade's actual price excursion).
+        """
         self._require_connection()
 
-        ib_positions = await self.ib.reqPositionsAsync()
+        portfolio_items = self.ib.portfolio()
         positions = []
-        for pos in ib_positions:
-            c = pos.contract
+        for item in portfolio_items:
+            c = item.contract
             if c.secType not in ("OPT", "STK", "ETF"):
                 continue  # skip futures, FX, bonds, etc.
+            current_price = (
+                Decimal(str(item.marketPrice)) if item.marketPrice else None
+            )
+            unrealized_pnl = (
+                Decimal(str(item.unrealizedPNL))
+                if item.unrealizedPNL is not None else None
+            )
             if c.secType == "OPT":
                 positions.append(
                     Position(
@@ -557,8 +574,10 @@ class IBKRClient(BrokerInterface):
                             c.lastTradeDateOrContractMonth, "%Y%m%d"
                         ).date() if c.lastTradeDateOrContractMonth else date.today(),
                         option_type="call" if c.right == "C" else "put",
-                        quantity=int(pos.position),
-                        avg_cost=Decimal(str(pos.avgCost)),
+                        quantity=int(item.position),
+                        avg_cost=Decimal(str(item.averageCost)),
+                        current_price=current_price,
+                        unrealized_pnl=unrealized_pnl,
                     )
                 )
             else:
@@ -570,8 +589,10 @@ class IBKRClient(BrokerInterface):
                         strike=Decimal("0"),
                         expiration=date.today(),
                         option_type="call",       # placeholder — not used for equities
-                        quantity=int(pos.position),
-                        avg_cost=Decimal(str(pos.avgCost)),
+                        quantity=int(item.position),
+                        avg_cost=Decimal(str(item.averageCost)),
+                        current_price=current_price,
+                        unrealized_pnl=unrealized_pnl,
                     )
                 )
         return positions
@@ -583,10 +604,17 @@ class IBKRClient(BrokerInterface):
         result = []
         for pos in all_positions:
             if pos.strike == __import__("decimal").Decimal("0"):  # equity sentinel
+                market_value = (
+                    pos.current_price * pos.quantity
+                    if pos.current_price is not None else None
+                )
                 result.append(EquityPosition(
                     symbol=pos.symbol,
                     quantity=pos.quantity,
                     avg_cost=pos.avg_cost,
+                    current_price=pos.current_price,
+                    unrealized_pnl=pos.unrealized_pnl,
+                    market_value=market_value,
                 ))
         return result
 
