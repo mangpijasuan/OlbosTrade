@@ -45,13 +45,6 @@ class Settings(BaseSettings):
     margin_warn_pct: float = Field(default=0.50)
     margin_critical_pct: float = Field(default=0.80)
 
-    # Auto-close any open equity position once its unrealized profit crosses
-    # this many dollars — an exit rule, so (like the bracket's own stop/take-
-    # profit) it fires regardless of execution mode; Manual mode only gates
-    # new entries, not existing-position exits. 0 disables the check.
-    auto_close_profit_threshold: float = Field(default=500.0)
-    auto_close_check_interval_minutes: int = Field(default=5)
-
     # ── Paper visibility mode ─────────────────────────────────────────────
     # Lets the app generate more activity in paper mode so the operator can
     # confirm scans, execution, and trade history without weakening live rules.

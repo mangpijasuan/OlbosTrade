@@ -323,9 +323,6 @@ async def _background_scheduler() -> None:
     reconnect_interval_s = 60   # Check broker connection every 60s
     last_reconnect = 0.0
 
-    auto_close_interval_s = max(60, settings.auto_close_check_interval_minutes * 60)
-    last_auto_close = 0.0
-
     while True:
         try:
             now = time.monotonic()
@@ -398,11 +395,6 @@ async def _background_scheduler() -> None:
             if now - last_greeks >= greeks_interval_s:
                 await _guarded(_update_portfolio_greeks(), "greeks", 30)
                 last_greeks = now
-
-            # Every N min (default 5): auto-close positions past the profit target
-            if now - last_auto_close >= auto_close_interval_s:
-                await _guarded(_check_auto_close_profit_targets(), "auto_close", 60)
-                last_auto_close = now
 
         except Exception as exc:
             logger.error("Background scheduler error: %s", exc)
@@ -1577,60 +1569,6 @@ async def _poll_fills() -> None:
 
     except Exception as exc:
         logger.debug("_poll_fills: %s", exc)  # non-fatal
-
-
-async def _check_auto_close_profit_targets() -> None:
-    """
-    Auto-close any open equity position once its unrealized profit crosses
-    settings.auto_close_profit_threshold (operator-requested: "close every
-    ticker once it's up $500").
-
-    An exit rule, not an entry rule — fires regardless of execution mode.
-    Manual mode's "signals only, no auto-execution" promise governs new
-    entries; existing-position exits (the bracket's own stop-loss/take-
-    profit) already happen automatically in every mode today since they're
-    broker-side orders execution_mode never gates. This rule follows the
-    same precedent rather than inventing a new one.
-
-    Does not check the kill switch: taking profit reduces risk, same
-    reasoning as the manual close-position endpoint this reuses.
-
-    Equity only — matches close_position's own scope (options are 2-leg
-    spreads; closing one means submitting the mirrored spread order, not
-    yet built).
-    """
-    threshold = settings.auto_close_profit_threshold
-    if threshold <= 0:
-        return
-
-    try:
-        from app.api.routes.paper_trade import get_positions
-        data = await get_positions()
-    except Exception as exc:
-        logger.warning("Auto-close check: could not load positions: %s", exc)
-        return
-
-    from app.api.routes.trade_desk import ClosePositionRequest, close_position
-
-    for p in data.get("positions", []) or []:
-        if not p.get("tracked") or not p.get("id"):
-            continue
-        if (p.get("spread_type") or "").lower() not in ("equity_long", "equity_short"):
-            continue
-        pnl = p.get("unrealized_pnl")
-        if pnl is None or pnl < threshold:
-            continue
-
-        symbol = p.get("symbol", "?")
-        logger.info(
-            "Auto-close: %s unrealized P&L $%.2f >= threshold $%.2f — closing",
-            symbol, pnl, threshold,
-        )
-        try:
-            result = await close_position(ClosePositionRequest(trade_id=p["id"]))
-            logger.info("Auto-close: %s → %s", symbol, result.get("status"))
-        except Exception as exc:
-            logger.warning("Auto-close: failed to close %s: %s", symbol, exc)
 
 
 async def _update_portfolio_greeks() -> None:
