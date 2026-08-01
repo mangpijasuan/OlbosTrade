@@ -56,15 +56,22 @@ async def test_trigger_scan_never_executes():
     the default execute=True the scheduled background scanner uses. A UI
     action that looks like a passive refresh must never depend on hidden
     execution-mode state to decide whether it places a real trade.
+
+    Also covers the full equity watchlist now, not just SPY/QQQ, since the
+    background scanner was widened to scan every watchlist symbol.
     """
+    from app.core.config import settings
+
+    watchlist = settings.get_equity_watchlist()
+
     with patch("app.main._run_options_scan", new=AsyncMock()) as mock_scan:
         await options_routes.trigger_options_signal_scan()
 
-    assert mock_scan.await_count == 2
+    assert mock_scan.await_count == len(watchlist)
     for call in mock_scan.await_args_list:
         args, kwargs = call.args, call.kwargs
         symbol = args[0] if args else kwargs.get("symbol")
-        assert symbol in ("SPY", "QQQ")
+        assert symbol in watchlist
         assert kwargs.get("execute") is False, (
             "preview scan must pass execute=False so it can never dispatch to "
             "handle_signal()/order submission"
@@ -73,12 +80,16 @@ async def test_trigger_scan_never_executes():
 
 @pytest.mark.asyncio
 async def test_trigger_scan_survives_one_symbol_failing():
+    from app.core.config import settings
+
+    watchlist = settings.get_equity_watchlist()
+
     async def _side_effect(symbol, execute=True):
-        if symbol == "SPY":
+        if symbol == watchlist[0]:
             raise RuntimeError("yfinance down")
 
     with patch("app.main._run_options_scan", new=AsyncMock(side_effect=_side_effect)) as mock_scan:
         result = await options_routes.trigger_options_signal_scan()
 
-    assert mock_scan.await_count == 2
+    assert mock_scan.await_count == len(watchlist)
     assert "signals" in result and "total" in result

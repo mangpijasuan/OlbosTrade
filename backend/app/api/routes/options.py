@@ -34,20 +34,22 @@ async def list_options_signals(limit: int = 50):
 @router.post("/signals/scan")
 async def trigger_options_signal_scan():
     """
-    Compute one options signal preview cycle for SPY and QQQ — same strategy
-    classification, strikes, and Greeks the background scanner produces, but
+    Compute one options signal preview cycle across the full equity
+    watchlist (not just SPY/QQQ — matches what the background scanner now
+    covers) — same strategy classification, strikes, and Greeks, but
     execute=False so this on-demand "show me current signals" UI action can
     never itself dispatch to handle_signal()/order submission. Only the
     scheduled background scanner (main.py's _background_scheduler) executes.
     """
-    # Lazy import — main imports this module at startup.
+    # Lazy imports — main imports this module at startup.
+    from app.core.config import settings
     from app.main import _run_options_scan
 
-    for symbol in ("SPY", "QQQ"):
+    for symbol in settings.get_equity_watchlist():
         try:
             await _run_options_scan(symbol, execute=False)
         except Exception:
-            # Keep going so one symbol's failure doesn't blank the other.
+            # Keep going so one symbol's failure doesn't blank the rest.
             pass
 
     return {

@@ -375,15 +375,14 @@ async def _background_scheduler() -> None:
                     )
                 last_equity = now
 
-            # Every 1 hour: options spread signal scan (if regime allows).
-            # SPY and QQQ both scanned each cycle — see _run_options_scan's
-            # docstring for why QQQ reuses SPY's regime as a shared proxy.
+            # Every 30 min: options spread signal scan across the whole
+            # watchlist (if regime allows) — see _run_options_scan_watchlist's
+            # docstring for why every symbol reuses SPY's regime as a shared
+            # proxy, and for the rank-then-execute-best-first ordering. A
+            # generous timeout since this now scans the full watchlist
+            # sequentially, not just 2 symbols.
             if now - last_options >= options_interval_s:
-                for _opt_symbol in ("SPY", "QQQ"):
-                    await _guarded(
-                        _run_options_scan(_opt_symbol),
-                        f"options_scan_{_opt_symbol.lower()}", 90,
-                    )
+                await _guarded(_run_options_scan_watchlist(), "options_scan", 240)
                 last_options = now
 
             # Every 30 sec: poll fills from active broker
@@ -868,26 +867,35 @@ async def _build_portfolio_risk_state(portfolio_value: float):
     )
 
 
-async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
+async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Optional[dict]:
     """
-    Generate options spread signals for `symbol` based on the current regime.
+    Generate an options spread signal for `symbol` based on the current regime.
+
+    Returns the built signal dict (whether or not it was executed), or None
+    if nothing qualified for this symbol this cycle — lets a caller scan many
+    symbols, collect every qualifying candidate, and rank them before
+    executing any (see _run_options_scan_watchlist), the same shape
+    _run_equity_scan already uses for the equity side.
 
     `execute=False` (used by the on-demand preview endpoint,
-    POST /api/options/signals/scan) computes and persists the same signal —
-    same strategy classification, strikes, credit/debit, Greeks — but skips
-    the handle_signal() dispatch, so a "show me current signals" UI action
-    can never itself submit a real order. The scheduled background scanner
-    always calls this with the default execute=True.
+    POST /api/options/signals/scan, and by the multi-symbol watchlist scan
+    below) computes and persists the same signal — same strategy
+    classification, strikes, credit/debit, Greeks — but skips the
+    handle_signal() dispatch, so building/ranking candidates can never itself
+    submit a real order. Only an explicit execute=True call dispatches.
 
-    The regime itself is still classified from SPY alone (_reclassify_regime) —
-    scanning QQQ reuses that same regime/VIX/IV-rank state as a shared proxy
-    rather than building QQQ its own classifier, since SPY and QQQ are highly
-    correlated broad-market proxies. What IS symbol-specific: the underlying's
-    own price bars/SMA/spot, its own option chain and quotes, and the
-    concentration check below (positions_by_underlying/positions_by_sector —
-    both SPY and QQQ fall under the same "Index" sector in portfolio_engine.py,
-    so trading both can't silently double the correlated exposure past the
-    sector cap).
+    The regime itself is still classified from SPY alone (_reclassify_regime)
+    and reused as a shared proxy for every symbol scanned — a market-wide
+    regime (volatility/trend backdrop) is a reasonable filter for which
+    options structures make sense across a watchlist of large, liquid,
+    broadly market-correlated names, the same reasoning already used to let
+    QQQ reuse SPY's regime rather than building each symbol its own
+    classifier. What IS symbol-specific: the underlying's own price
+    bars/SMA/spot, its own option chain and quotes, and the concentration
+    check below (positions_by_underlying/positions_by_sector — each symbol's
+    own sector, via portfolio_engine.sector_for(), so scanning a wider
+    watchlist can't silently stack correlated exposure past the sector cap
+    any more than SPY+QQQ both landing under "Index" already could).
 
     Delegates strike selection, entry-condition gating, and the credit-vs-debit
     distinction to the real per-strategy classes in strategy_engine.py — the
@@ -918,7 +926,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
     Routes through execution handler (manual/copilot/autopilot), same as before.
     """
     if _current_regime is None or not getattr(_current_regime, "options_allowed", False):
-        return
+        return None
     try:
         import uuid
         import numpy as np
@@ -947,7 +955,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
         # Get the underlying's bars via yfinance — no broker subscription needed
         underlying_bars = await _yf_bars(symbol, limit=30)
         if len(underlying_bars) < 20:
-            return
+            return None
 
         closes = [float(b.close) for b in underlying_bars]
         spot   = closes[-1]
@@ -969,7 +977,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
             portfolio_state = await _fetch_portfolio_state()
         except RiskGateError as exc:
             logger.warning("Options scan: risk gate unavailable — skipping cycle: %s", exc)
-            return
+            return None
 
         # Target expiry ~dte_target days out, on a Friday
         today      = date.today()
@@ -1056,7 +1064,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
                 "Options scan %s: no regime-allowed strategy qualified — %s",
                 symbol, "; ".join(rejections) or "no candidates",
             )
-            return
+            return None
 
         is_debit = strategy_name == "bull_call_debit_spread"
         is_call  = strategy_name in ("bear_call_spread", "bull_call_debit_spread")
@@ -1126,16 +1134,16 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
 
         if spread_width <= 0:
             logger.info("Options scan: no usable spread width — skipping")
-            return
+            return None
         if is_debit:
             net_debit = -net_amount
             if net_debit <= 0.05:
                 logger.info("Options scan: debit too small ($%.2f) — skipping", net_debit)
-                return
+                return None
         elif net_amount <= 0.05:
             logger.info("Options scan: no usable spread (width=%.1f credit=%.2f) — skipping",
                         spread_width, net_amount)
-            return
+            return None
 
         credit_per_share = net_amount / 100.0
         max_loss_dollars = (
@@ -1175,7 +1183,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
                 "Options signal rejected by AI scorer: %s %s score=%.3f — %s",
                 symbol, strategy_name, signal_score, score_result.rejection_reason,
             )
-            return
+            return None
         if not score_result.approved:
             logger.warning(
                 "EXECUTION_TEST_MODE: routing options signal %s %s despite AI score=%.3f",
@@ -1210,12 +1218,14 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
                 "(portfolio=$%.0f max_loss=$%.0f risk_pct=%.3f mult=%.2f)",
                 portfolio_value, max_loss_dollars, risk_pct, size_mult,
             )
-            return
+            return None
 
         # ── Single-underlying / sector concentration check ──────────────────
-        # SPY and QQQ both map to sector "Index" (portfolio_engine.SECTORS),
-        # so scanning both can't silently double correlated exposure past the
-        # sector cap. Deliberately narrower than RiskManager.approve_trade():
+        # Every symbol maps to its own sector (portfolio_engine.SECTORS —
+        # SPY/QQQ both land under "Index"), so scanning a wider watchlist
+        # can't silently stack correlated exposure past the sector cap any
+        # more than SPY+QQQ already could. Deliberately narrower than
+        # RiskManager.approve_trade():
         # that method also gates on portfolio delta/vega, but those limits
         # have never been checked against a real trade before (approve_trade
         # was never called from any live path) and a sanity check found a
@@ -1238,7 +1248,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
                     "of portfolio (max %.0f%%)",
                     symbol, underlying_pct * 100, RiskManager.MAX_SINGLE_UNDERLYING * 100,
                 )
-                return
+                return None
             new_sector_exposure = (
                 portfolio_risk.positions_by_sector.get(trade_sector, 0.0) + total_new_risk
             )
@@ -1249,7 +1259,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
                     "%.1f%% of portfolio (max %.0f%%)",
                     trade_sector, symbol, sector_pct * 100, RiskManager.MAX_SECTOR_CONCENTRATION * 100,
                 )
-                return
+                return None
 
         # ── Options Intelligence: real POP / EV / Kelly for this spread ─────────
         # Drives the frequency controller's quality filter with the true
@@ -1329,8 +1339,51 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> None:
             from app.api.routes.trade_desk import handle_signal
             await handle_signal(signal)
 
+        return signal
+
     except Exception as exc:
         logger.warning("Options scan failed: %s", exc)
+        return None
+
+
+async def _run_options_scan_watchlist() -> None:
+    """
+    Background options scan across the full equity watchlist, not just
+    SPY/QQQ. Builds every symbol's candidate signal without executing
+    (execute=False), collects whichever qualified, ranks them by the same
+    weighted quality score _run_equity_scan uses, then routes highest-first
+    through the real execution handler — so on a cycle where several symbols
+    qualify, the best-scoring spread gets first claim on the daily cap and
+    open-position capacity instead of whichever symbol happened to be
+    scanned first (previously just SPY then QQQ, in that fixed order).
+
+    The daily trade cap and portfolio gate inside handle_signal already stop
+    execution once capacity is reached, so scanning more symbols can't itself
+    over-trade — it only gives the frequency controller more, better
+    candidates to choose from each cycle.
+    """
+    watchlist = settings.get_equity_watchlist()
+    candidates: list[dict] = []
+    for symbol in watchlist:
+        try:
+            sig = await _run_options_scan(symbol, execute=False)
+        except Exception as exc:
+            logger.warning("Options scan failed for %s: %s", symbol, exc)
+            continue
+        if sig is not None:
+            candidates.append(sig)
+
+    if not candidates:
+        return
+
+    from app.services.trade_frequency_controller import trade_frequency_controller
+    from app.api.routes.trade_desk import handle_signal
+    for sig in trade_frequency_controller.rank(candidates):
+        try:
+            await handle_signal(sig)
+        except Exception as exec_exc:
+            logger.warning("Options execution handler failed for %s: %s",
+                           sig.get("ticker"), exec_exc)
 
 
 def _fill_after_entry(fill_time, entry_dt) -> bool:

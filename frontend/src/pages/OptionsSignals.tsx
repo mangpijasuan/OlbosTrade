@@ -314,7 +314,7 @@ export default function OptionsSignals() {
           color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
           textAlign: "center", padding: 40,
         }}>
-          No options signals yet. Click RUN SCAN to generate spread signals (SPY / QQQ).
+          No options signals yet. Click RUN SCAN to generate spread signals across the watchlist.
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
