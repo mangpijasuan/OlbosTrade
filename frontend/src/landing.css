@@ -206,7 +206,7 @@
 /* ── Pricing ─────────────────────────────────────────────────────────── */
 .pricing-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 380px));
+  grid-template-columns: repeat(3, minmax(0, 320px));
   gap: 20px;
 }
 .pricing-card {

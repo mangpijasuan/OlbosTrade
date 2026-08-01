@@ -60,55 +60,71 @@ type Plan = {
   featured?: boolean;
 };
 
-// Both plans currently open the same unauthenticated /terminal — there is no
-// billing or Free/Pro gate in this repository. Capability lists below describe
-// what the terminal can do today; numeric Pro limits are the intended future
-// tier and are labeled as not enforced.
+// All plans currently open the same unauthenticated /terminal — there is no
+// billing or Free/Pro/Elite gate in this repository yet. Capability lists
+// below describe the intended tier split (signals-only vs. broker-connected
+// execution), shown honestly and marked as planned / not enforced until
+// auth + billing ship.
 const PLANS: Plan[] = [
   {
     name: "Free",
     price: "$0",
     period: "/mo",
-    tagline: "Open the paper terminal — same workspace as Pro until billing ships.",
+    tagline: "Delayed signals and the trading journal — see what the system does before paying.",
     capabilities: [
-      { label: "Manual mode — view every signal", included: true },
+      { label: "Delayed / limited signal feed", included: true },
       { label: "Signal attribution (source, timeframe, confidence)", included: true },
-      { label: "Live risk & guardrail status", included: true },
-      { label: "Copilot — approve signals to trade", included: true },
-      { label: "Autopilot — fully automated execution", included: true },
+      { label: "Trading journal for your own manual trades", included: true },
+      { label: "Full live signal feed & backtesting", included: false },
+      { label: "Connect your broker (Copilot execution)", included: false },
     ],
     limits: [
-      { feature: "Concurrent algos", limit: "1 (planned)" },
-      { feature: "Open positions", limit: "5 (planned)" },
-      { feature: "Broker connections", limit: "1 (planned)" },
+      { feature: "Watchlist coverage", limit: "1 ticker (planned)" },
+      { feature: "Signal delay", limit: "End of day (planned)" },
       { feature: "Historical data", limit: "1 year (planned)" },
-      { feature: "Signal scans / day", limit: "50 (planned)" },
-      { feature: "API rate", limit: "30 req/min (planned)" },
+      { feature: "Broker connections", limit: "None" },
     ],
     cta: { label: "Open paper terminal", href: "/terminal", internal: true },
   },
   {
     name: "Pro",
-    price: "$49",
+    price: "$29",
     period: "/mo",
-    tagline: "Intended paid tier — billing not live; same terminal as Free today.",
+    tagline: "Full live signal feed, regime dashboard, backtesting, and performance analytics.",
     capabilities: [
-      { label: "Manual mode — view every signal", included: true },
+      { label: "Full live equity + options signal feed", included: true },
       { label: "Signal attribution (source, timeframe, confidence)", included: true },
-      { label: "Live risk & guardrail status", included: true },
-      { label: "Copilot — approve signals to trade", included: true },
-      { label: "Autopilot — fully automated execution", included: true },
+      { label: "Regime classification & backtesting / strategy comparison", included: true },
+      { label: "Trading journal & performance analytics", included: true },
+      { label: "Connect your broker (Copilot execution)", included: false },
     ],
     limits: [
-      { feature: "Concurrent algos", limit: "5 (planned)" },
-      { feature: "Open positions", limit: "25 (planned)" },
-      { feature: "Broker connections", limit: "3 (planned)" },
+      { feature: "Watchlist coverage", limit: "Full watchlist (planned)" },
+      { feature: "Signal delay", limit: "Live (planned)" },
       { feature: "Historical data", limit: "5 years (planned)" },
-      { feature: "Signal scans / day", limit: "500 (planned)" },
-      { feature: "API rate", limit: "120 req/min (planned)" },
+      { feature: "Broker connections", limit: "None" },
     ],
     cta: { label: "Open paper terminal", href: "/terminal", internal: true },
     featured: true,
+  },
+  {
+    name: "Elite",
+    price: "$99",
+    period: "/mo",
+    tagline: "Everything in Pro, plus connect your own broker — you approve every trade before it executes.",
+    capabilities: [
+      { label: "Everything in Pro", included: true },
+      { label: "Connect your own broker (IBKR or Alpaca)", included: true },
+      { label: "Copilot — approve every signal before it trades", included: true },
+      { label: "Fully unattended Autopilot execution", included: false },
+    ],
+    limits: [
+      { feature: "Watchlist coverage", limit: "Full watchlist (planned)" },
+      { feature: "Signal delay", limit: "Live (planned)" },
+      { feature: "Historical data", limit: "5 years (planned)" },
+      { feature: "Broker connections", limit: "1 (planned)" },
+    ],
+    cta: { label: "Open paper terminal", href: "/terminal", internal: true },
   },
 ];
 
@@ -253,12 +269,12 @@ export default function Landing() {
         <section className="landing-section" id="pricing">
           <div className="landing-container">
             <div className="landing-eyebrow">Pricing</div>
-            <h2 className="landing-h2">Free to explore. Pro when billing ships.</h2>
+            <h2 className="landing-h2">Free to explore. Pro and Elite when billing ships.</h2>
             <p className="landing-lede">
-              There is no signup or billing system wired up yet — both plans open the same
+              There is no signup or billing system wired up yet — every plan opens the same
               paper terminal today, including Manual, Copilot, and Autopilot controls. The
-              $49 Pro price and higher limits below are the intended future tier, shown
-              honestly and marked as planned / not enforced.
+              Pro ($29) and Elite ($99) prices and limits below are the intended future tiers,
+              shown honestly and marked as planned / not enforced.
             </p>
             <div className="pricing-grid">
               {PLANS.map((plan) => (
