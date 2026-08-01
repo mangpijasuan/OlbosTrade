@@ -4,36 +4,44 @@
 
 import type { NavGroup } from "./navLabels";
 
+// Simple-by-default IA: the everyday loop is "check signals → check
+// positions → check performance", with everything else (manual chart/options
+// research tooling, strategy config, risk-rule config, ops/debug pages)
+// tucked behind "Show advanced" rather than cluttering the default view.
+// Journal and Performance were previously advanced-only despite being core
+// to "is this working" — promoted to simple here.
+
 /** Pre–Trade Desk 2.0 sidebar (rollback when trade_desk_v2 is off). */
 export const NAV_MODEL_LEGACY: NavGroup[] = [
   { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
   { id: "markets",   label: "Markets",        icon: "markets", children: [
-    { key: "markets:chart",      label: "Chart" },
-    { key: "markets:watchlists", label: "Watchlists" },
+    { key: "markets:chart",      label: "Chart", advanced: true },
+    { key: "markets:watchlists", label: "Watchlists", advanced: true },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:overview",  label: "Overview" },
-    { key: "trade:copilot",   label: "Copilot Review" },
-    { key: "trade:orders",    label: "Desk signals" },
     { key: "trade:positions", label: "Positions" },
-    { key: "trade:execlog",   label: "Execution Monitor" },
-    { key: "trade:logs",      label: "P&L Breakdown" },
+    { key: "trade:copilot",   label: "Copilot Review", advanced: true },
+    { key: "trade:orders",    label: "Desk signals", advanced: true },
+    { key: "trade:execlog",   label: "Execution Monitor", advanced: true },
+    { key: "trade:logs",      label: "P&L Breakdown", advanced: true },
     { key: "options:chain",   label: "Options Chain", advanced: true },
     { key: "scan",            label: "Spread Scanner", advanced: true },
     { key: "options:income",  label: "Income Strategies", advanced: true },
     { key: "options:flow",    label: "Options Flow", advanced: true },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
-    { key: "equity",        label: "Signals" },
+    { key: "equity",           label: "Equity Signals" },
+    { key: "options:signals",  label: "Options Signals" },
     { key: "strat:cards",   label: "Strategy Cards", advanced: true },
     { key: "strat:builder", label: "Strategy Builder", advanced: true },
     { key: "strat:alerts",  label: "Alerts", advanced: true },
   ]},
   { id: "risk", label: "Portfolio & Risk", icon: "risk", key: "risk", children: [
     { key: "risk:heat",     label: "Risk Overview" },
-    { key: "risk:rules",    label: "Risk Rules" },
+    { key: "risk:rules",    label: "Risk Rules", advanced: true },
   ]},
   { id: "lab", label: "Research", icon: "lab", advanced: true, children: [
     { key: "lab:scenario",   label: "Scenario Lab" },
@@ -43,8 +51,8 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
     { key: "lab:intel",      label: "Intelligence" },
     { key: "backtest",       label: "Backtests" },
   ]},
-  { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal", advanced: true },
-  { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics", advanced: true },
+  { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal" },
+  { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics" },
   { id: "system", label: "System", icon: "data", children: [
     { key: "system:broker",  label: "Broker" },
     { key: "system:market",  label: "Market Data", advanced: true },
@@ -60,8 +68,8 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
 export const NAV_MODEL_V2: NavGroup[] = [
   { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
   { id: "markets",   label: "Markets",        icon: "markets", children: [
-    { key: "markets:chart",      label: "Chart" },
-    { key: "markets:watchlists", label: "Watchlists" },
+    { key: "markets:chart",      label: "Chart", advanced: true },
+    { key: "markets:watchlists", label: "Watchlists", advanced: true },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
   ]},
@@ -69,12 +77,12 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "trade:overview",  label: "Command Overview" },
     { key: "trade:equity",    label: "Equity Desk" },
     { key: "trade:options",   label: "Options Desk" },
-    { key: "trade:copilot",   label: "Copilot Queue" },
     { key: "trade:positions", label: "Positions" },
-    { key: "trade:orders",    label: "Orders" },
-    { key: "trade:execlog",   label: "Execution Monitor" },
-    { key: "trade:replay",    label: "Trade Replay" },
-    { key: "trade:settings",  label: "Desk Settings" },
+    { key: "trade:copilot",   label: "Copilot Queue", advanced: true },
+    { key: "trade:orders",    label: "Orders", advanced: true },
+    { key: "trade:execlog",   label: "Execution Monitor", advanced: true },
+    { key: "trade:replay",    label: "Trade Replay", advanced: true },
+    { key: "trade:settings",  label: "Desk Settings", advanced: true },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
     { key: "equity",        label: "Signal Center" },
@@ -88,7 +96,7 @@ export const NAV_MODEL_V2: NavGroup[] = [
   ]},
   { id: "risk", label: "Portfolio & Risk", icon: "risk", key: "risk", children: [
     { key: "risk:heat",     label: "Risk Overview" },
-    { key: "risk:rules",    label: "Risk Rules" },
+    { key: "risk:rules",    label: "Risk Rules", advanced: true },
   ]},
   { id: "lab", label: "Research", icon: "lab", advanced: true, children: [
     { key: "lab:scenario",   label: "Scenario Lab" },
@@ -98,8 +106,8 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "lab:intel",      label: "Intelligence" },
     { key: "backtest",       label: "Backtests" },
   ]},
-  { id: "journal",   label: "Journal",     icon: "journal",   key: "journal", advanced: true },
-  { id: "analytics", label: "Performance", icon: "analytics", key: "analytics", advanced: true },
+  { id: "journal",   label: "Journal",     icon: "journal",   key: "journal" },
+  { id: "analytics", label: "Performance", icon: "analytics", key: "analytics" },
   { id: "system", label: "Data & Integrations", icon: "data", children: [
     { key: "system:broker",  label: "Broker Connections" },
     { key: "system:market",  label: "Market Data", advanced: true },
