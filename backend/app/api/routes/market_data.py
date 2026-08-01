@@ -252,19 +252,32 @@ async def get_portfolio_greeks():
 
 @router.get("/broker")
 async def get_broker_status():
-    """Return active broker name and connection status."""
+    """Return active broker name and connection status.
+
+    Connectivity is checked per-broker's own connection model rather than
+    IBKR-specific socket introspection alone: IBKR is a persistent
+    Gateway/TWS socket that can silently drop (hence the isConnected() check
+    below — a hardcoded "connected" lied during a past Gateway outage), while
+    a broker like Alpaca is a stateless per-request REST API with no socket
+    to drop — it reports connected via its own _connected flag alone.
+    """
     try:
         broker = get_broker()
-        # Live IBKR ports are 4001 (gateway) / 7496 (TWS). Anything else —
-        # including custom container ports like 4004 — is paper, and
-        # IBKR_TRADING_MODE is the authoritative override.
-        is_paper = settings.ibkr_trading_mode.lower() != "live" \
-                   and settings.ibkr_port not in (4001, 7496)
-        # Report the REAL socket state, not just "object exists" (the old
-        # hardcoded "connected" lied during the Gateway outage).
         ib = getattr(broker, "ib", None)
-        connected = bool(getattr(broker, "_connected", False)) and \
-                    bool(ib.isConnected()) if ib is not None else False
+        if ib is not None:
+            connected = bool(getattr(broker, "_connected", False)) and bool(ib.isConnected())
+        else:
+            connected = bool(getattr(broker, "_connected", False))
+
+        if settings.broker.lower() == "alpaca":
+            is_paper = "paper" in settings.alpaca_base_url.lower()
+        else:
+            # Live IBKR ports are 4001 (gateway) / 7496 (TWS). Anything else —
+            # including custom container ports like 4004 — is paper, and
+            # IBKR_TRADING_MODE is the authoritative override.
+            is_paper = settings.ibkr_trading_mode.lower() != "live" \
+                       and settings.ibkr_port not in (4001, 7496)
+
         return {
             "broker":           settings.broker,
             "supports_options": broker.supports_options,

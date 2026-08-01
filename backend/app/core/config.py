@@ -17,13 +17,25 @@ class Settings(BaseSettings):
     )
 
     # ── Active broker ─────────────────────────────────────────────────────
-    broker: str = Field(default="ibkr", description="Active broker: ibkr")
+    broker: str = Field(default="ibkr", description="Active broker: ibkr | alpaca")
 
     # ── IBKR ──────────────────────────────────────────────────────────────
     ibkr_host: str = Field(default="127.0.0.1")
     ibkr_port: int = Field(default=7497)
     ibkr_client_id: int = Field(default=1)
     ibkr_trading_mode: str = Field(default="paper")
+
+    # ── Alpaca ────────────────────────────────────────────────────────────
+    # A plain HTTPS REST API (no Gateway/TWS process to run) — one API key
+    # pair per account, which is why this is the practical broker choice for
+    # multi-tenant SaaS: each customer just supplies their own key pair,
+    # instead of running a per-customer IBKR Gateway container.
+    alpaca_api_key: str = Field(default="")
+    alpaca_secret_key: str = Field(default="")
+    alpaca_base_url: str = Field(
+        default="https://paper-api.alpaca.markets",
+        description="https://paper-api.alpaca.markets (paper) or https://api.alpaca.markets (live)",
+    )
 
     # ── Database ──────────────────────────────────────────────────────────
     database_url: str = Field(
