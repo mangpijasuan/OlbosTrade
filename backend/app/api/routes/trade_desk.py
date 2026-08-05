@@ -24,6 +24,12 @@ from app.services.observability import observability
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Marketable buffer applied to the live bid/ask when repricing an equity
+# entry's limit price just before submission — see _execute_signal's equity
+# branch for why this exists (scan-time entry_price goes stale before the
+# order reaches the broker).
+_EQUITY_LIMIT_BUFFER = 0.001  # 10 bps
+
 
 class RiskGateError(Exception):
     """Raised when the risk gate cannot safely evaluate — always fail closed."""
@@ -979,13 +985,40 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         if asset_type == "equity":
             trade_plan = signal.get("trade_plan", {})
             shares     = trade_plan.get("shares", 1)
+            entry_price = trade_plan.get("entry_price")
+
+            # Reprice off a LIVE quote just before submission. trade_plan's
+            # entry_price is the daily-bar close from scan time
+            # (equity_signal_engine.compute_equity_trade_plan) — already
+            # stale by the time the order reaches the broker (scans run every
+            # 15 min while the market keeps moving). Submitting a DAY LIMIT
+            # order at that stale print only fills if price happens to trade
+            # back to that exact level; otherwise it sits for the full
+            # 30-minute grace window and gets cancelled
+            # (order_unfilled_timeout) — confirmed in production: the same
+            # ticker retried 2-3 times before one attempt happened to land
+            # close enough to the live tape to fill. A small marketable
+            # buffer off the live bid/ask fixes this, mirroring the options
+            # path's existing preference for a live chain quote over its
+            # Black-Scholes estimate.
+            try:
+                quote = await broker.get_latest_quote(ticker)
+                if action == "BUY" and quote.ask_price > 0:
+                    entry_price = float(quote.ask_price) * (1 + _EQUITY_LIMIT_BUFFER)
+                elif action == "SELL" and quote.bid_price > 0:
+                    entry_price = float(quote.bid_price) * (1 - _EQUITY_LIMIT_BUFFER)
+            except Exception as _q_exc:
+                logger.debug(
+                    "Live quote unavailable for %s, using scan-time entry_price: %s",
+                    ticker, _q_exc,
+                )
 
             result = await broker.place_equity_order(
                 ticker=ticker,
                 qty=shares,
                 side=action,
                 order_type=signal.get("order_type", "limit"),
-                limit_price=trade_plan.get("entry_price"),
+                limit_price=entry_price,
                 stop=trade_plan.get("stop_price"),
                 take_profit=trade_plan.get("target_price"),
             )
