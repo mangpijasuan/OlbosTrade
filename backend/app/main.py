@@ -1471,6 +1471,27 @@ async def _poll_fills() -> None:
         from sqlalchemy import select
 
         broker = get_broker()
+
+        # Fail closed on a stale/disconnected broker rather than risk a mass
+        # false-close. IBKRClient.get_positions() reads ib.portfolio() — a
+        # purely local cache with no network round-trip and no exception on
+        # staleness — so right after a reconnect it can return an empty or
+        # incomplete list *without raising*, before IBKR's account-update
+        # subscription has resynced it. Confirmed in production: six
+        # unrelated open positions (SPY, META, AMZN, NVDA, MSFT, AAPL) all
+        # got marked closed_price_unavailable within 30ms of each other in a
+        # single poll cycle — the signature of "the position list came back
+        # empty because the cache was stale," not six coincidental real
+        # closes. If the broker can report its own connection state and says
+        # it isn't connected, skip this cycle entirely rather than treat a
+        # hollow position list as ground truth.
+        broker_ib = getattr(broker, "ib", None)
+        if broker_ib is not None and not (
+            getattr(broker, "_connected", False) and broker_ib.isConnected()
+        ):
+            logger.debug("_poll_fills: broker not connected — skipping reconciliation this cycle")
+            return
+
         live_positions = await broker.get_positions()
 
         # Build set of symbols currently held at IBKR

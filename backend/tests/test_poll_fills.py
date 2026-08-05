@@ -12,6 +12,17 @@ full FILL_GRACE_SECONDS on top of however long it had already been stuck.
 These tests exercise _poll_fills directly against a trade whose entry_date is
 already well past the grace window on the *first* call -- proving the
 timeout no longer depends on the process having "seen" the trade before.
+
+Also covers a second, separately-confirmed production bug: IBKRClient's
+get_positions() reads ib.portfolio(), a purely local cache with no network
+round-trip and no exception on staleness. Right after a broker reconnect,
+that cache can come back empty *without raising* -- and _poll_fills used to
+treat that hollow list as ground truth, concluding every open position had
+vanished. Six unrelated open positions (SPY, META, AMZN, NVDA, MSFT, AAPL)
+were all wrongly marked closed_price_unavailable within 30ms of each other
+in a single poll cycle. _poll_fills must now check the broker's own
+connection state and skip the whole reconciliation pass rather than trust an
+empty/incomplete position list from a broker that isn't really connected.
 """
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -107,3 +118,69 @@ async def test_pending_trade_with_live_position_confirmed_not_cancelled():
 
     confirm.assert_awaited_once_with(trade_id=trade.id)
     cancel.assert_not_called()
+
+
+# ── Broker connection-health guard (IBKR-shaped brokers only) ────────────────
+
+def _ibkr_shaped_broker(*, connected: bool, positions=None):
+    """A broker with a real `.ib` attribute, like IBKRClient — the shape
+    _poll_fills' connection guard actually checks. Brokers without `.ib`
+    (Alpaca, test doubles) skip the guard entirely, per _fake_broker above."""
+    broker = MagicMock()
+    broker._connected = connected
+    broker.ib = MagicMock()
+    broker.ib.isConnected.return_value = connected
+    broker.get_positions = AsyncMock(return_value=positions or [])
+    return broker
+
+
+def _open_trade(underlying, entry_date):
+    t = MagicMock()
+    t.id = f"open-{underlying}"
+    t.status = "open"
+    t.underlying = underlying
+    t.entry_date = entry_date
+    t.spread_type = "equity_long"
+    return t
+
+
+@pytest.mark.asyncio
+async def test_disconnected_broker_skips_reconciliation_entirely():
+    """The exact production bug: an empty position list from a broker that
+    isn't really connected must never be treated as 'everything closed' —
+    six real open positions must survive a cycle where the broker reports
+    disconnected, even though get_positions() returned an empty list."""
+    entry = datetime.now(timezone.utc) - timedelta(days=1)
+    trades = [_open_trade(sym, entry) for sym in ("SPY", "META", "AMZN", "NVDA", "MSFT", "AAPL")]
+
+    broker = _ibkr_shaped_broker(connected=False, positions=[])  # hollow cache
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_db_session(trades)), \
+         patch.object(trade_recorder, "record_close_unknown", new=AsyncMock()) as close_unknown, \
+         patch.object(trade_recorder, "record_exit", new=AsyncMock()) as record_exit:
+        await m._poll_fills()
+
+    broker.get_positions.assert_not_called()  # never even reached
+    close_unknown.assert_not_called()
+    record_exit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connected_ibkr_broker_still_reconciles_normally():
+    """Sanity check the guard doesn't just disable reconciliation outright —
+    a genuinely connected IBKR-shaped broker with a real empty position list
+    (a real close) must still proceed as before."""
+    stale_entry = datetime.now(timezone.utc) - timedelta(
+        seconds=m.FILL_GRACE_SECONDS + 60
+    )
+    trade = _pending_trade(stale_entry)
+    broker = _ibkr_shaped_broker(connected=True, positions=[])
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_db_session([trade])), \
+         patch.object(trade_recorder, "cancel_pending", new=AsyncMock()) as cancel:
+        await m._poll_fills()
+
+    broker.get_positions.assert_awaited_once()
+    cancel.assert_awaited_once()
