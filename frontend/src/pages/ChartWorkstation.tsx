@@ -34,6 +34,23 @@ interface WatchSnapshot {
   change_pct: number | null;
 }
 
+interface CatalystEvent {
+  name: string;
+  symbol?: string;
+  date: string;
+  days_away: number;
+  severity: string;
+  kind: string;
+  source: string;
+}
+
+const CATALYST_SEVERITY_COLOR: Record<string, string> = {
+  very_high: "var(--red)",
+  high: "var(--amber)",
+  moderate: "var(--cyan)",
+  low: "var(--ink-faint)",
+};
+
 interface Signal {
   id: string;
   ticker: string;
@@ -112,12 +129,66 @@ function rollingVwap(bars: ChartBar[]) {
   });
 }
 
+function UpcomingCatalysts({ events }: { events: CatalystEvent[] }) {
+  if (!events.length) return null;
+  // Nearest 3, soonest first — a glance at "what's coming up for this
+  // symbol" pinned near the chart, not spatially mapped onto the x-axis
+  // (candles are index-spaced, and these events mostly fall beyond the
+  // last loaded bar, so a literal date→pixel marker would be misleading).
+  const upcoming = [...events].sort((a, b) => a.days_away - b.days_away).slice(0, 3);
+  return (
+    <div
+      aria-label="Upcoming catalysts"
+      style={{
+        position: "absolute",
+        right: 12,
+        top: 10,
+        zIndex: 2,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        alignItems: "flex-end",
+        pointerEvents: "none",
+      }}
+    >
+      {upcoming.map((ev, idx) => {
+        const color = CATALYST_SEVERITY_COLOR[ev.severity] ?? "var(--ink-dim)";
+        return (
+          <div
+            key={`${ev.name}-${ev.date}-${idx}`}
+            title={`${ev.name} · ${ev.date} · ${ev.severity.replace(/_/g, " ")}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "2px 8px",
+              background: "rgba(6,11,23,0.82)",
+              border: `1px solid ${color}55`,
+              pointerEvents: "auto",
+            }}
+          >
+            <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
+            <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, color: "var(--ink-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>
+              {ev.name}
+            </span>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, color, flexShrink: 0 }}>
+              {ev.days_away === 0 ? "today" : `${ev.days_away}d`}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ChartCanvas({
   bars,
   levels,
+  catalysts = [],
 }: {
   bars: ChartBar[];
   levels: Array<{ label: string; value: number; color: string }>;
+  catalysts?: CatalystEvent[];
 }) {
   if (!bars.length) {
     return (
@@ -165,6 +236,7 @@ function ChartCanvas({
 
   return (
     <div style={{ position: "relative", height }}>
+      <UpcomingCatalysts events={catalysts} />
       <div
         aria-label="Chart legend"
         style={{
@@ -372,6 +444,7 @@ export default function ChartWorkstation({
   const [chartBars, setChartBars] = useState<ChartBar[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [catalystEvents, setCatalystEvents] = useState<CatalystEvent[]>([]);
   const [signalDrawerOpen, setSignalDrawerOpen] = useState(false);
   const [execMode, setExecMode] = useState<ExecMode>("manual");
 
@@ -417,6 +490,12 @@ export default function ChartWorkstation({
 
   useEffect(() => {
     (api.getIVRank(symbol) as Promise<any>).then(setIvRank).catch(() => setIvRank(null));
+  }, [symbol]);
+
+  useEffect(() => {
+    (api.getCatalystCalendar(symbol, 21) as Promise<any>)
+      .then((res) => setCatalystEvents(res?.events || []))
+      .catch(() => setCatalystEvents([]));
   }, [symbol]);
 
   useEffect(() => {
@@ -613,7 +692,7 @@ export default function ChartWorkstation({
                     <div className="skeleton-shimmer" />
                   </div>
                 ) : (
-                  <ChartCanvas bars={chartBars} levels={levels} />
+                  <ChartCanvas bars={chartBars} levels={levels} catalysts={catalystEvents} />
                 )}
               </div>
               {chartError && (
