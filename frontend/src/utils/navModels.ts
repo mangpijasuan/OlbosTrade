@@ -15,8 +15,8 @@ import type { NavGroup } from "./navLabels";
 export const NAV_MODEL_LEGACY: NavGroup[] = [
   { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
   { id: "markets",   label: "Markets",        icon: "markets", children: [
-    { key: "markets:chart",      label: "Chart", advanced: true },
-    { key: "markets:watchlists", label: "Watchlists", advanced: true },
+    { key: "markets:chart",      label: "Chart" },
+    { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
   ]},
@@ -68,8 +68,8 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
 export const NAV_MODEL_V2: NavGroup[] = [
   { id: "dashboard", label: "Command Center", icon: "dashboard", key: "dashboard" },
   { id: "markets",   label: "Markets",        icon: "markets", children: [
-    { key: "markets:chart",      label: "Chart", advanced: true },
-    { key: "markets:watchlists", label: "Watchlists", advanced: true },
+    { key: "markets:chart",      label: "Chart" },
+    { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
   ]},
