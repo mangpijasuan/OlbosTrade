@@ -38,10 +38,10 @@ describe("Landing", () => {
     signInLinks.forEach((link) => expect(link).toHaveAttribute("href", "/terminal"));
   });
 
-  it("sends Free and Pro plan CTAs to the same paper terminal without a personal mailto", () => {
+  it("sends Free, Pro, and Elite plan CTAs to the same paper terminal without a personal mailto", () => {
     renderLanding();
     const planCtas = screen.getAllByRole("link", { name: /open paper terminal/i });
-    expect(planCtas.length).toBe(2);
+    expect(planCtas.length).toBe(3);
     planCtas.forEach((cta) => expect(cta).toHaveAttribute("href", "/terminal"));
     const bodyText = document.body.textContent || "";
     expect(bodyText).not.toMatch(/mailto:/i);

@@ -570,12 +570,31 @@ export default function ChartWorkstation({
   const stop = selectedSignal?.trade_plan?.stop_price ?? support;
   const target = selectedSignal?.trade_plan?.target_price ?? resistance;
   const levelColors = chartLevelColors();
-  const levels = [
-    { label: "ENTRY", value: entry, color: levelColors.entry },
-    { label: "TARGET", value: target, color: levelColors.target },
-    { label: "SUPPORT", value: support, color: levelColors.support },
-    { label: "RESISTANCE", value: resistance, color: levelColors.resistance },
-  ].filter((level) => level.value > 0);
+
+  // A real trade plan (live signal with its own stop/target, not the
+  // chart-derived support/resistance fallback) gets the full risk ladder:
+  // stop-loss plus a 3-tier scale-out target. TP1/TP2/TP3 are NOT separate
+  // numbers the system plans for — they're 1/3, 2/3, and the full distance
+  // to the one real target_price the signal already committed to, the same
+  // convention a scale-out exit uses. Nothing here is a predicted price path;
+  // every level is a real, already-computed number.
+  const planStop = selectedSignal?.trade_plan?.stop_price;
+  const planTarget = selectedSignal?.trade_plan?.target_price;
+  const hasRealPlan = entry > 0 && planStop != null && planTarget != null;
+
+  const levels = hasRealPlan
+    ? [
+        { label: "ENTRY", value: entry, color: levelColors.entry },
+        { label: "STOP", value: planStop!, color: levelColors.stop },
+        { label: "TP1", value: entry + (planTarget! - entry) * (1 / 3), color: levelColors.tp1 },
+        { label: "TP2", value: entry + (planTarget! - entry) * (2 / 3), color: levelColors.tp2 },
+        { label: "TP3", value: planTarget!, color: levelColors.tp3 },
+      ].filter((level) => level.value > 0)
+    : [
+        { label: "ENTRY", value: entry, color: levelColors.entry },
+        { label: "SUPPORT", value: support, color: levelColors.support },
+        { label: "RESISTANCE", value: resistance, color: levelColors.resistance },
+      ].filter((level) => level.value > 0);
 
   const actionableSignals = signals.filter((item) => item.action !== "HOLD");
   const netLiq = portfolio?.account_value ?? portfolio?.starting_capital ?? 0;

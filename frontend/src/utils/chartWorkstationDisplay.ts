@@ -28,7 +28,12 @@ export function formatExecutionModeDisplay(
 export function chartLevelColors() {
   return {
     entry: "var(--amber)",
-    target: "var(--red)",
+    stop: "var(--red)",
+    // Graduated green scale-out ladder — lightest at TP1 (first, nearest
+    // target) to the standard --green token at TP3 (the plan's full target).
+    tp1: "#4ade80",
+    tp2: "#22c55e",
+    tp3: "var(--green)",
     support: "var(--cyan)",
     resistance: "#a78bfa", // distinct from entry amber — not a CSS token yet
   };
