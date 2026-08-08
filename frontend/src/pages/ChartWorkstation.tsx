@@ -76,7 +76,25 @@ interface Signal {
   };
 }
 
-const WATCHLIST = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "QQQ", "SPY"];
+// Mag7 + broad index ETFs as the default — user can add/remove any ticker
+// beyond this from the Market Watch panel; the list persists to localStorage.
+const DEFAULT_WATCHLIST = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "SPY", "QQQ", "IWM"];
+const WATCHLIST_STORAGE_KEY = "olbos.chart.watchlist";
+
+function loadStoredWatchlist(): string[] {
+  try {
+    const raw = localStorage.getItem(WATCHLIST_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string") && parsed.length) {
+        return parsed;
+      }
+    }
+  } catch {
+    /* ignore malformed storage */
+  }
+  return DEFAULT_WATCHLIST;
+}
 const TIMEFRAMES: { key: Timeframe; label: string; limit: number }[] = [
   { key: "5m", label: "5M", limit: 78 },
   { key: "15m", label: "15M", limit: 96 },
@@ -447,10 +465,33 @@ export default function ChartWorkstation({
   const [catalystEvents, setCatalystEvents] = useState<CatalystEvent[]>([]);
   const [signalDrawerOpen, setSignalDrawerOpen] = useState(false);
   const [execMode, setExecMode] = useState<ExecMode>("manual");
+  const [watchlist, setWatchlist] = useState<string[]>(loadStoredWatchlist);
+  const [tickerInput, setTickerInput] = useState("");
+
+  const persistWatchlist = (next: string[]) => {
+    setWatchlist(next);
+    try {
+      localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota/storage errors — in-memory state still updates */
+    }
+  };
+
+  const addTicker = () => {
+    const t = tickerInput.trim().toUpperCase();
+    if (!t || watchlist.includes(t)) { setTickerInput(""); return; }
+    persistWatchlist([...watchlist, t]);
+    setTickerInput("");
+    setSymbol(t);
+  };
+
+  const removeTicker = (ticker: string) => {
+    persistWatchlist(watchlist.filter((t) => t !== ticker));
+  };
 
   const loadWatchlist = async () => {
     const entries = await Promise.all(
-      WATCHLIST.map(async (ticker) => {
+      watchlist.map(async (ticker) => {
         try {
           const snap = await (api.getSnapshot(ticker) as Promise<WatchSnapshot>);
           return [ticker, { symbol: ticker, last_close: snap.last_close, change_pct: snap.change_pct }] as const;
@@ -472,7 +513,6 @@ export default function ChartWorkstation({
   };
 
   useEffect(() => {
-    loadWatchlist();
     loadSignals();
     (api.getRegime() as Promise<any>).then(setRegime).catch(() => setRegime(null));
     const loadExec = () =>
@@ -487,6 +527,10 @@ export default function ChartWorkstation({
     const ei = setInterval(loadExec, 15000);
     return () => clearInterval(ei);
   }, []);
+
+  useEffect(() => {
+    loadWatchlist();
+  }, [watchlist]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     (api.getIVRank(symbol) as Promise<any>).then(setIvRank).catch(() => setIvRank(null));
@@ -565,32 +609,65 @@ export default function ChartWorkstation({
         {!compact && (
         <div className="workstation-col">
           <InfoCard title="Market Watch">
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {WATCHLIST.map((ticker) => {
-                const snap = watchSnapshots[ticker];
-                const active = ticker === symbol;
-                return (
-                  <button
-                    key={ticker}
-                    onClick={() => setSymbol(ticker)}
-                    className={`watch-item ${active ? "active" : ""}`}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>{ticker}</span>
-                      <span style={{
-                        fontFamily: "var(--mono)",
-                        fontSize: 10,
-                        color: (snap?.change_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)",
-                      }}>
-                        {fmtPct(snap?.change_pct, 2)}
-                      </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  value={tickerInput}
+                  onChange={(e) => setTickerInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addTicker(); }}
+                  placeholder="Add ticker…"
+                  aria-label="Add ticker to Market Watch"
+                  style={{
+                    flex: 1, minWidth: 0, background: "var(--bg-3)",
+                    border: "1px solid var(--line-dim)", color: "var(--ink)",
+                    fontFamily: "var(--mono)", fontSize: 11, padding: "6px 8px",
+                    outline: "none", textTransform: "uppercase",
+                  }}
+                />
+                <button className="btn-t" onClick={addTicker} style={{ flexShrink: 0 }}>+</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {watchlist.map((ticker) => {
+                  const snap = watchSnapshots[ticker];
+                  const active = ticker === symbol;
+                  return (
+                    <div key={ticker} style={{ position: "relative" }}>
+                      <button
+                        onClick={() => setSymbol(ticker)}
+                        className={`watch-item ${active ? "active" : ""}`}
+                        style={{ width: "100%", paddingRight: 24 }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>{ticker}</span>
+                          <span style={{
+                            fontFamily: "var(--mono)",
+                            fontSize: 10,
+                            color: (snap?.change_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)",
+                          }}>
+                            {fmtPct(snap?.change_pct, 2)}
+                          </span>
+                        </div>
+                        <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
+                          {fmtMoney(snap?.last_close, 2)}
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeTicker(ticker); }}
+                        aria-label={`Remove ${ticker} from Market Watch`}
+                        title={`Remove ${ticker}`}
+                        style={{
+                          position: "absolute", right: 4, top: 4,
+                          background: "transparent", border: "none", cursor: "pointer",
+                          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
+                          padding: "2px 4px", lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
                     </div>
-                    <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
-                      {fmtMoney(snap?.last_close, 2)}
-                    </div>
-                  </button>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </InfoCard>
 
