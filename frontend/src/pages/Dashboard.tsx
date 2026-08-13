@@ -159,7 +159,7 @@ function PositionRow({ pos }: { pos: any }) {
   return (
     <tr style={untracked ? { opacity: 0.55 } : undefined}>
       <td className="mono" style={{ color: "var(--cyan)" }}>{pos.symbol || "—"}</td>
-      <td className="mono">{pos.option_type?.toUpperCase() || pos.strategy || "EQUITY"}</td>
+      <td className="mono">{pos.option_type?.toUpperCase() || pos.strategy?.toUpperCase() || "EQUITY"}</td>
       <td className="mono">{pos.strike || pos.avg_cost?.toFixed(2) || "—"}</td>
       <td className="mono">{pos.expiration || pos.entry_date || "—"}</td>
       <td className="mono">{pos.quantity ?? 1}</td>

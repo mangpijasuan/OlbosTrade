@@ -633,7 +633,7 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                     <td className="mono" style={{ color: "var(--ink)" }}>{p.symbol || p.underlying || "—"}</td>
                     <td><Badge text={p.asset_type?.toUpperCase() || "OPTIONS"} color="var(--ink-dim)" /></td>
                     <td className="mono" style={{ fontSize: 10 }}>{p.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
-                    <td className="mono">${(p.credit_received || p.entry_credit || 0).toFixed(2)}</td>
+                    <td className="mono">${(p.credit_received ?? p.entry_credit ?? p.avg_cost ?? 0).toFixed(2)}</td>
                     <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
                       {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
                     </td>

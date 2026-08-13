@@ -137,6 +137,19 @@ async def get_positions():
         else:
             market_value   = None
             unrealized_pnl = None
+
+        spread_type = db.spread_type if db else None
+        # This branch (a broker position matched to a DB trade) previously
+        # returned none of asset_type/hold_days/trading_mode/mfe_pnl/mae_pnl —
+        # only the separate db_only fallback branch below (open in the DB but
+        # not currently at the broker, a rare case) ever included them. Since
+        # every live position normally goes through THIS branch, the Trade
+        # Desk Positions table — which reads all of those fields — was
+        # silently showing wrong defaults for every real position: "OPTIONS"
+        # for equities (asset_type undefined), "$0.00" entry credit, blank
+        # MFE/MAE, "—" hold days, and "balanced" regardless of the real
+        # active trading mode. All of this data already exists on `db` (the
+        # matched Trade row) — it just was never included in the response.
         positions.append({
             # Needed by the frontend's manual close action (POST
             # /api/trade-desk/close-position) — no trade to close if there's
@@ -149,8 +162,14 @@ async def get_positions():
             "market_value":   market_value,
             "unrealized_pnl": unrealized_pnl,
             "strategy":       db.strategy if db else "unknown",
+            "asset_type":     "equity" if (spread_type or "").lower().startswith("equity") else "options",
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
-            "spread_type":    (db.spread_type if db else None),
+            "spread_type":    spread_type,
+            "hold_days":      max((date.today() - db.entry_date.date()).days, 0) if (db and db.entry_date) else None,
+            "trading_mode":   db.trading_mode_at_entry if db else None,
+            "credit_received": float(db.credit_received) if (db and db.credit_received is not None) else None,
+            "mfe_pnl":        float(db.mfe) if (db and db.mfe is not None) else None,
+            "mae_pnl":        float(db.mae) if (db and db.mae is not None) else None,
             # A broker position with no matching DB open trade is "untracked" —
             # OlbosTrade did not open it (e.g. pre-existing holdings in a shared
             # paper account). The reconciler flags these as ghost positions; the
@@ -165,6 +184,7 @@ async def get_positions():
                 "id":              str(t.id),
                 "symbol":          sym,
                 "strategy":        t.strategy,
+                "asset_type":      "equity" if (t.spread_type or "").lower().startswith("equity") else "options",
                 "spread_type":     t.spread_type,
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
                 "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,
