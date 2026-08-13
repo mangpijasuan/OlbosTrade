@@ -215,6 +215,12 @@ async def on_startup() -> None:
         from app.services.execution_mode import execution_mode_manager
         await execution_mode_manager.rehydrate()
 
+        # Restore trading mode (conservative/balanced/aggressive/scalper) from
+        # the DB — same rationale as execution mode above. Previously read from
+        # a container-local /tmp file, wiped on every deploy.
+        from app.services.trading_mode import trading_mode_manager
+        await trading_mode_manager.rehydrate()
+
         # Account mode guard — log loudly at startup if the gateway's real account
         # doesn't match IBKR_TRADING_MODE (e.g. configured paper but logged into a
         # live account). Execution is independently fail-closed per order; this is

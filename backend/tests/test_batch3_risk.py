@@ -177,19 +177,20 @@ async def test_execute_signal_allows_credit_spread_in_preservation():
 # 3. Scalper mode risk_per_trade_pct reaches position sizing
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_active_risk_pct_reads_from_trading_mode():
+@pytest.mark.asyncio
+async def test_active_risk_pct_reads_from_trading_mode():
     """_active_risk_pct() must return the active mode's risk_per_trade_pct, not 0.02."""
     from app.services.strategy_engine import _active_risk_pct
     from app.services.trading_mode import trading_mode_manager, TradingModeType
 
     # Set to scalper mode (risk_per_trade_pct = 0.0075 — 2026-07-28 rebalance)
-    trading_mode_manager.set_mode(TradingModeType.SCALPER)
+    await trading_mode_manager.set_mode(TradingModeType.SCALPER)
     pct = _active_risk_pct()
     assert pct == 0.0075, f"Expected scalper risk 0.0075, got {pct}"
 
     # Reset to balanced (risk_per_trade_pct = 0.01 since the 2026-07-28
     # rebalance — Balanced now runs the old Conservative profile)
-    trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
     pct = _active_risk_pct()
     assert pct == 0.01, f"Expected balanced risk 0.01, got {pct}"
 

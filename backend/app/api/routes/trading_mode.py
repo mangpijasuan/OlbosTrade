@@ -74,7 +74,7 @@ async def set_trading_mode(body: SetModeRequest):
             }
         )
 
-    new_state = trading_mode_manager.set_mode(mode, activated_by="user")
+    new_state = await trading_mode_manager.set_mode(mode, activated_by="user")
     return {
         "success": True,
         "mode": new_state.active_mode.value,
@@ -87,5 +87,5 @@ async def set_trading_mode(body: SetModeRequest):
 @router.post("/reset-to-balanced")
 async def reset_to_balanced():
     """Reset to default Balanced mode."""
-    trading_mode_manager.set_mode(TradingModeType.BALANCED, activated_by="user")
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED, activated_by="user")
     return {"success": True, "mode": "balanced"}

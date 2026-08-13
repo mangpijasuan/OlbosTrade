@@ -271,26 +271,23 @@ class TradingModeManager:
       - frontend reads mode for display and user switching
     """
 
-    _PERSIST_PATH = "/tmp/olbostrade_trading_mode.json"
-
     def __init__(self) -> None:
-        # Try to restore previously persisted mode
-        persisted_mode = TradingModeType.BALANCED
-        try:
-            import json, os
-            if os.path.exists(self._PERSIST_PATH):
-                data = json.loads(open(self._PERSIST_PATH).read())
-                persisted_mode = TradingModeType(data.get("mode", "balanced"))
-        except Exception:
-            pass
-
+        # Safe default until rehydrate() restores the real last-set mode from
+        # the DB. Previously restored synchronously from
+        # /tmp/olbostrade_trading_mode.json — wiped on every deploy (the
+        # container's /tmp is not persisted across image rebuilds), so the
+        # trading mode silently reset to Balanced on every restart. Same bug
+        # class as execution_mode's pre-fix behavior (see execution_mode.py);
+        # never got the same fix. Confirmed in production: the mode reset to
+        # Balanced (activated_by="restored") at the exact timestamp of a
+        # routine backend deploy, silently overriding whatever mode
+        # (Aggressive) had actually been chosen.
         self._current = TradingModeState(
-            active_mode=persisted_mode,
-            config=TRADING_MODES[persisted_mode],
+            active_mode=TradingModeType.BALANCED,
+            config=TRADING_MODES[TradingModeType.BALANCED],
             activated_at=datetime.now(timezone.utc),
-            activated_by="restored",
+            activated_by="default",
         )
-        logger.info("TradingModeManager initialized — mode: %s", persisted_mode.value.upper())
 
     @property
     def current(self) -> TradingModeState:
@@ -300,7 +297,39 @@ class TradingModeManager:
     def config(self) -> TradingModeConfig:
         return self._current.config
 
-    def set_mode(
+    async def rehydrate(self) -> None:
+        """Restore the last-set mode from the DB on startup. Defaults to
+        Balanced (the safe default) if there's no history or the read fails.
+        Mirrors ExecutionModeManager.rehydrate()'s DB-backed pattern."""
+        from app.core.database import AsyncSessionLocal
+        from app.models.execution_event import ExecutionEvent
+        from sqlalchemy import select
+
+        try:
+            async with AsyncSessionLocal() as session:
+                row = (await session.execute(
+                    select(ExecutionEvent)
+                    .where(ExecutionEvent.kind == "trading_mode_change")
+                    .order_by(ExecutionEvent.created_at.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
+            if row is not None:
+                mode = TradingModeType(row.status)
+                self._current = TradingModeState(
+                    active_mode=mode,
+                    config=TRADING_MODES[mode],
+                    activated_at=row.created_at,
+                    activated_by=(row.payload or {}).get("activated_by", "restored"),
+                )
+                logger.info("TradingModeManager restored — mode: %s", mode.value.upper())
+            else:
+                logger.info("TradingModeManager initialized — mode: BALANCED (default, no history)")
+        except Exception as exc:
+            logger.error(
+                "TradingModeManager rehydrate failed (defaulting to BALANCED): %s", exc
+            )
+
+    async def set_mode(
         self,
         mode: TradingModeType,
         activated_by: str = "user",
@@ -341,16 +370,29 @@ class TradingModeManager:
             "Trading mode changed: %s → %s (by %s)",
             previous.value, mode.value, activated_by,
         )
-        # Persist mode so it survives backend restarts
+        # Persist so it survives backend restarts — writes to the same
+        # execution_events table execution_mode.py uses, keyed by a distinct
+        # kind, rather than a container-local file.
         try:
-            import json
-            with open(self._PERSIST_PATH, "w") as f:
-                json.dump({"mode": mode.value}, f)
+            from app.core.database import AsyncSessionLocal
+            from app.models.execution_event import ExecutionEvent
+
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    session.add(ExecutionEvent(
+                        kind="trading_mode_change",
+                        status=mode.value,
+                        payload={
+                            "mode": mode.value,
+                            "activated_by": activated_by,
+                            "override_reason": override_reason,
+                        },
+                    ))
         except Exception as e:
             logger.warning("Could not persist trading mode: %s", e)
         return self._current
 
-    def auto_downgrade(self, reason: str) -> TradingModeState:
+    async def auto_downgrade(self, reason: str) -> TradingModeState:
         """
         Automatically downgrade to Conservative mode.
         Called by capital preservation logic when account
@@ -367,7 +409,7 @@ class TradingModeManager:
             "(was: %s)",
             reason, self._current.active_mode.value,
         )
-        return self.set_mode(
+        return await self.set_mode(
             TradingModeType.CONSERVATIVE,
             activated_by="auto_capital_preservation",
             override_reason=reason,
