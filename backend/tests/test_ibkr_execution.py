@@ -327,3 +327,90 @@ class TestEquityBracketAck:
         # Children still get sent (matching current behaviour: log + proceed
         # rather than silently dropping the bracket's protective exits).
         assert len(client.ib.placed) == 3
+
+
+# ── Equity LMT retry-and-reprice (mirrors options' place_order behavior) ────────
+#
+# Regression coverage for a real production bug: equity LMT orders that timed
+# out unfilled were given up on after a single attempt and left "working" at
+# IBKR indefinitely, with only a DB-side 30-minute grace period marking the
+# trade cancelled (never telling the broker to cancel the resting order).
+# Confirmed in production: AMZN/NVDA/QQQ timed out on effectively every
+# attempt for days (IBKR's free delayed 15-min data feed means the "live"
+# quote used to set the limit is itself already stale, and faster-moving
+# names drift past a stale limit within that window). place_equity_order now
+# retries like place_order already does: cancel, reprice more aggressively,
+# resubmit, up to _max_retries() times.
+
+class TestEquityLimitRetry:
+    @pytest.mark.asyncio
+    async def test_lmt_timeout_retries_then_cancels(self):
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0), \
+             patch("app.broker.ibkr_client._max_retries", return_value=2):
+            client = _make_client([_OrderStatus("Submitted", 0, 0.0)] * 3)
+            result = await client.place_equity_order(
+                "AMZN", 74, "BUY", order_type="limit", limit_price=268.00,
+            )
+        assert result.status == "cancelled"
+        assert len(client.ib.placed) == 3        # initial + 2 retries
+        assert len(client.ib.cancelled) == 3
+
+    @pytest.mark.asyncio
+    async def test_buy_reprices_upward_on_each_retry(self):
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0), \
+             patch("app.broker.ibkr_client._max_retries", return_value=2):
+            client = _make_client([_OrderStatus("Submitted", 0, 0.0)] * 3)
+            await client.place_equity_order(
+                "AMZN", 74, "BUY", order_type="limit", limit_price=268.00,
+            )
+        prices = [order.lmtPrice for _, order in client.ib.placed]
+        # BUY retries get more aggressive (higher) each attempt — more likely
+        # to be marketable against a price that has drifted upward.
+        assert prices[0] == 268.00
+        assert prices[1] > prices[0]
+        assert prices[2] > prices[1]
+
+    @pytest.mark.asyncio
+    async def test_sell_reprices_downward_on_each_retry(self):
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0), \
+             patch("app.broker.ibkr_client._max_retries", return_value=2):
+            client = _make_client([_OrderStatus("Submitted", 0, 0.0)] * 3)
+            await client.place_equity_order(
+                "AMZN", 74, "SELL", order_type="limit", limit_price=268.00,
+            )
+        prices = [order.lmtPrice for _, order in client.ib.placed]
+        assert prices[0] == 268.00
+        assert prices[1] < prices[0]
+        assert prices[2] < prices[1]
+
+    @pytest.mark.asyncio
+    async def test_mkt_no_fill_stays_working_not_cancelled(self):
+        with patch("app.broker.ibkr_client._fill_timeout", return_value=0):
+            client = _make_client([_OrderStatus("Submitted", 0, 0.0)])
+            result = await client.place_equity_order(
+                "AMZN", 74, "BUY", order_type="market",
+            )
+        assert result.status == "submitted"
+        assert len(client.ib.cancelled) == 0
+        assert len(client.ib.placed) == 1        # MKT does not retry
+
+    @pytest.mark.asyncio
+    async def test_rejected_no_fill_not_retried(self):
+        client = _make_client([_OrderStatus("Rejected", 0, 0.0)])
+        result = await client.place_equity_order(
+            "AMZN", 74, "BUY", order_type="limit", limit_price=268.00,
+        )
+        assert result.status == "rejected"
+        assert len(client.ib.placed) == 1
+
+    @pytest.mark.asyncio
+    async def test_partial_fill_reported_as_filled_not_cancelled(self):
+        # Terminated with a real, non-zero fill — must report status="filled"
+        # (EquityOrderResult has no "partial" status) rather than "cancelled",
+        # which would wrongly suggest nothing happened at the broker.
+        client = _make_client([_OrderStatus("Cancelled", 40, 268.50)])
+        result = await client.place_equity_order(
+            "AMZN", 74, "BUY", order_type="limit", limit_price=268.00,
+        )
+        assert result.status == "filled"
+        assert result.fill_price == Decimal("268.5")

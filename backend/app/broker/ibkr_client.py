@@ -41,6 +41,11 @@ RETRY_DELAY_SECONDS = 5
 FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
 RETRY_PRICE_STEP = 0.05          # On retry, lower limit by $0.05 (accept less credit)
 MAX_ORDER_RETRIES = 2            # Cancel + retry up to this many times
+# Options price in a narrow $ range so a flat $ step works; equities span
+# ~$50-$800/share, so retries reprice by a percentage of the current limit
+# instead. 30bps roughly matches the drift a fast-moving name (AMZN, NVDA)
+# can see within IBKR's free 15-min-delayed data window between attempts.
+EQUITY_RETRY_STEP_PCT = 0.003
 
 # How long to wait for the Gateway to acknowledge a bracket's parent order
 # before submitting its children. The children reference the parent via
@@ -69,6 +74,13 @@ def _max_retries() -> int:
         return settings.max_order_retries
     except Exception:
         return MAX_ORDER_RETRIES
+
+def _equity_retry_step_pct() -> float:
+    try:
+        from app.core.config import settings
+        return settings.equity_retry_step_pct
+    except Exception:
+        return EQUITY_RETRY_STEP_PCT
 
 
 class IBKRClient(BrokerInterface):
@@ -628,7 +640,23 @@ class IBKRClient(BrokerInterface):
         stop: Optional[float] = None,
         take_profit: Optional[float] = None,
     ) -> EquityOrderResult:
-        """Submit an equity order via IBKR."""
+        """Submit an equity order via IBKR.
+
+        LMT orders retry on a timeout: cancel, reprice more aggressively, and
+        resubmit — mirroring place_order's (options) existing behavior. This
+        account runs on IBKR's free delayed (15-min) market data feed, so the
+        "live" quote used to set the initial limit is itself already stale;
+        for steadier names the small initial buffer is normally still close
+        enough to fill, but for faster-moving names (confirmed in production:
+        AMZN/NVDA/QQQ) the price can drift past a stale limit within the
+        15-minute delay window. Previously a single attempt just gave up after
+        one _fill_timeout() wait and returned "submitted", leaving the order
+        working at IBKR indefinitely with no further management — the DB-side
+        30-minute grace period would later mark the trade "cancelled" without
+        ever telling the broker to cancel the resting order. Retrying with a
+        widening price step closes the gap for these names instead of
+        silently failing every attempt.
+        """
         self._require_connection()
         stock = Stock(ticker, "SMART", "USD")
         await self.ib.qualifyContractsAsync(stock)
@@ -636,13 +664,18 @@ class IBKRClient(BrokerInterface):
         from ib_insync import MarketOrder, StopOrder
 
         ib_action = side
+        is_market = order_type == "market"
+        _retries = 0 if is_market else _max_retries()
+        _timeout = _fill_timeout()
+        _step_pct = _equity_retry_step_pct()
+        px = limit_price
 
-        def _build_entry() -> object:
-            if order_type == "market":
+        def _build_entry(price: Optional[float]) -> object:
+            if is_market:
                 return MarketOrder(action=ib_action, totalQuantity=qty, tif="DAY")
             # explicit DAY to match IB Gateway order preset — avoids Error 10349 cancel
             return LimitOrder(action=ib_action, totalQuantity=qty,
-                              lmtPrice=limit_price or 0.0, tif="DAY")
+                              lmtPrice=price or 0.0, tif="DAY")
 
         # A stop and/or take-profit means a bracket: a parent entry order with
         # OCO child exit orders attached via parentId. The previous code set
@@ -650,120 +683,173 @@ class IBKRClient(BrokerInterface):
         # ib_insync ignores entirely — so protective exits NEVER reached IBKR.
         use_bracket = (stop is not None) or (take_profit is not None)
 
-        if use_bracket:
-            exit_action = "SELL" if ib_action == "BUY" else "BUY"
-            parent_id = self.ib.client.getReqId()
+        async def _submit(price: Optional[float]):
+            if use_bracket:
+                exit_action = "SELL" if ib_action == "BUY" else "BUY"
+                parent_id = self.ib.client.getReqId()
 
-            parent = _build_entry()
-            parent.orderId = parent_id
-            parent.transmit = False   # hold until all children are queued
+                parent = _build_entry(price)
+                parent.orderId = parent_id
+                parent.transmit = False   # hold until all children are queued
 
-            children = []
-            if take_profit:
-                tp = LimitOrder(action=exit_action, totalQuantity=qty,
-                                lmtPrice=round(float(take_profit), 2), tif="GTC")
-                tp.orderId = self.ib.client.getReqId()
-                tp.parentId = parent_id
-                # transmit the whole bracket on the last child only
-                tp.transmit = stop is None
-                children.append(tp)
-            if stop:
-                sl = StopOrder(action=exit_action, totalQuantity=qty,
-                               stopPrice=round(float(stop), 2), tif="GTC")
-                sl.orderId = self.ib.client.getReqId()
-                sl.parentId = parent_id
-                sl.transmit = True   # last leg fires the entire bracket
-                children.append(sl)
+                children = []
+                if take_profit:
+                    tp = LimitOrder(action=exit_action, totalQuantity=qty,
+                                    lmtPrice=round(float(take_profit), 2), tif="GTC")
+                    tp.orderId = self.ib.client.getReqId()
+                    tp.parentId = parent_id
+                    # transmit the whole bracket on the last child only
+                    tp.transmit = stop is None
+                    children.append(tp)
+                if stop:
+                    sl = StopOrder(action=exit_action, totalQuantity=qty,
+                                   stopPrice=round(float(stop), 2), tif="GTC")
+                    sl.orderId = self.ib.client.getReqId()
+                    sl.parentId = parent_id
+                    sl.transmit = True   # last leg fires the entire bracket
+                    children.append(sl)
 
-            logger.info(
-                "Submitting equity BRACKET: %s %s x%d @ %s | TP=%s SL=%s",
-                side, ticker, qty,
-                f"${limit_price:.2f}" if limit_price else "MKT",
-                f"${take_profit:.2f}" if take_profit else "—",
-                f"${stop:.2f}" if stop else "—",
-            )
-            trade = self.ib.placeOrder(stock, parent)
-            # Gateway registration of the parent is asynchronous — submitting
-            # the children immediately can beat it there, and IBKR rejects
-            # both with "Error 135: Can't find order with id" (parentId not
-            # yet recognized), leaving the entry order dangling with no
-            # protective exits attached. Wait for the parent to reach an
-            # acknowledged status (or a bounded timeout) before firing the
-            # bracket's children.
-            ack_deadline = asyncio.get_event_loop().time() + BRACKET_ACK_TIMEOUT_SECONDS
-            while (
-                not trade.orderStatus.status
-                and asyncio.get_event_loop().time() < ack_deadline
-            ):
-                await asyncio.sleep(0.05)
-            if not trade.orderStatus.status:
-                logger.warning(
-                    "Bracket parent %s %s not acknowledged after %.0fs — "
-                    "submitting children anyway (may hit Error 135)",
-                    ticker, parent.orderId, BRACKET_ACK_TIMEOUT_SECONDS,
+                logger.info(
+                    "Submitting equity BRACKET: %s %s x%d @ %s | TP=%s SL=%s",
+                    side, ticker, qty,
+                    f"${price:.2f}" if price else "MKT",
+                    f"${take_profit:.2f}" if take_profit else "—",
+                    f"${stop:.2f}" if stop else "—",
                 )
-            for child in children:
-                self.ib.placeOrder(stock, child)
-        else:
-            logger.info("Submitting equity order: %s %s x%d @ %s",
-                        side, ticker, qty, f"${limit_price:.2f}" if limit_price else "MKT")
-            trade = self.ib.placeOrder(stock, _build_entry())
+                t = self.ib.placeOrder(stock, parent)
+                # Gateway registration of the parent is asynchronous — submitting
+                # the children immediately can beat it there, and IBKR rejects
+                # both with "Error 135: Can't find order with id" (parentId not
+                # yet recognized), leaving the entry order dangling with no
+                # protective exits attached. Wait for the parent to reach an
+                # acknowledged status (or a bounded timeout) before firing the
+                # bracket's children.
+                ack_deadline = asyncio.get_event_loop().time() + BRACKET_ACK_TIMEOUT_SECONDS
+                while (
+                    not t.orderStatus.status
+                    and asyncio.get_event_loop().time() < ack_deadline
+                ):
+                    await asyncio.sleep(0.05)
+                if not t.orderStatus.status:
+                    logger.warning(
+                        "Bracket parent %s %s not acknowledged after %.0fs — "
+                        "submitting children anyway (may hit Error 135)",
+                        ticker, parent.orderId, BRACKET_ACK_TIMEOUT_SECONDS,
+                    )
+                for child in children:
+                    self.ib.placeOrder(stock, child)
+            else:
+                logger.info("Submitting equity order: %s %s x%d @ %s",
+                            side, ticker, qty, f"${price:.2f}" if price else "MKT")
+                t = self.ib.placeOrder(stock, _build_entry(price))
 
-        # ── Real-time status logging ───────────────────────────────────────────
-        def _on_status(t=trade):
-            logger.info(
-                "Equity order %s — status: %-12s  filled: %s/%s  avg: %.4f",
-                t.order.orderId,
-                t.orderStatus.status,
-                t.orderStatus.filled,
-                t.order.totalQuantity,
-                t.orderStatus.avgFillPrice or 0.0,
-            )
-        trade.statusEvent += _on_status
+            # ── Real-time status/fill logging ────────────────────────────────
+            def _on_status(tr=t):
+                logger.info(
+                    "Equity order %s — status: %-12s  filled: %s/%s  avg: %.4f",
+                    tr.order.orderId, tr.orderStatus.status, tr.orderStatus.filled,
+                    tr.order.totalQuantity, tr.orderStatus.avgFillPrice or 0.0,
+                )
+            t.statusEvent += _on_status
 
-        def _on_fill(trade_, fill_, holding_=None):
-            logger.info(
-                "EQUITY FILL: order %s — %s x%s @ $%.4f",
-                trade_.order.orderId,
-                fill_.contract.symbol,
-                fill_.execution.shares,
-                fill_.execution.price,
-            )
-        trade.fillEvent += _on_fill
+            def _on_fill(trade_, fill_, holding_=None):
+                logger.info(
+                    "EQUITY FILL: order %s — %s x%s @ $%.4f",
+                    trade_.order.orderId, fill_.contract.symbol,
+                    fill_.execution.shares, fill_.execution.price,
+                )
+            t.fillEvent += _on_fill
+            return t
 
-        # ── Wait for fill (market orders fill fast; limit orders may take time) ─
-        _timeout = _fill_timeout()
-        deadline = asyncio.get_event_loop().time() + _timeout
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(1)
-            status = trade.orderStatus.status
-            if status in ("Filled", "Submitted") and trade.orderStatus.filled > 0:
+        last_trade = None
+        for attempt in range(1, _retries + 2):  # +1 initial; +N retries (LMT only)
+            trade = await _submit(px)
+            last_trade = trade
+            logger.info("Equity order attempt %d/%d for %s x%d",
+                        attempt, _retries + 1, ticker, qty)
+
+            outcome, filled, avg = await self._await_order(trade, qty, _timeout)
+
+            if outcome == "filled":
+                logger.info("Equity order %s fully filled: %d @ avg $%.4f",
+                            trade.order.orderId, filled, avg)
                 return EquityOrderResult(
                     order_id=str(trade.order.orderId),
                     status="filled",
-                    fill_price=__import__("decimal").Decimal(
-                        str(round(trade.orderStatus.avgFillPrice, 4))
-                    ),
+                    fill_price=Decimal(str(round(avg, 4))),
                     filled_at=datetime.now(timezone.utc),
-                    message=f"Filled {trade.orderStatus.filled} shares @ "
-                            f"${trade.orderStatus.avgFillPrice:.4f}",
-                )
-            if status in ("Cancelled", "Rejected", "Inactive"):
-                return EquityOrderResult(
-                    order_id=str(trade.order.orderId),
-                    status="rejected" if status == "Rejected" else "cancelled",
-                    message=status,
+                    message=f"Filled {filled} shares @ ${avg:.4f}",
                 )
 
-        # Timed out — return submitted status (order stays working at IBKR)
-        logger.warning(
-            "Equity order %s still pending after %ds — returning submitted status",
-            trade.order.orderId, _timeout,
-        )
+            if outcome == "partial":
+                # Terminated (cancelled/rejected) with a real, non-zero fill —
+                # some shares genuinely bought/sold at the broker. Report it
+                # as "filled" (the closest honest status this result type
+                # supports) rather than "cancelled", which would wrongly
+                # suggest nothing happened.
+                logger.warning(
+                    "Equity order %s PARTIAL: %d/%d filled — not retrying "
+                    "(would double the filled portion)",
+                    trade.order.orderId, filled, qty,
+                )
+                return EquityOrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="filled",
+                    fill_price=Decimal(str(round(avg, 4))) if filled else None,
+                    filled_at=datetime.now(timezone.utc) if filled else None,
+                    message=f"Partial fill {filled}/{qty} @ ${avg:.4f}",
+                )
+
+            if outcome in ("cancelled", "rejected"):
+                logger.warning("Equity order %s %s — not retrying",
+                               trade.order.orderId, outcome)
+                return EquityOrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="rejected" if outcome == "rejected" else "cancelled",
+                    message=outcome,
+                )
+
+            # ── outcome == "timeout" ─────────────────────────────────────────
+            if is_market:
+                # A market order with no fill is still working (e.g. market
+                # closed). Leave it live — cancelling a flatten could strand
+                # naked risk.
+                logger.warning(
+                    "Equity market order %s still working after %ds — leaving it live",
+                    trade.order.orderId, _timeout,
+                )
+                return EquityOrderResult(
+                    order_id=str(trade.order.orderId),
+                    status="submitted",
+                    message=f"Order working — no fill after {_timeout}s",
+                )
+
+            if attempt <= _retries:
+                base_px = px or 0
+                step = round(base_px * _step_pct, 2) or _retry_step()
+                new_px = round(base_px + step, 2) if ib_action == "BUY" else round(base_px - step, 2)
+                logger.warning(
+                    "Equity order %s timed out after %ds — cancelling and retrying "
+                    "at a more aggressive limit (%.2f → %.2f)",
+                    trade.order.orderId, _timeout, base_px, new_px,
+                )
+                self.ib.cancelOrder(trade.order)
+                await asyncio.sleep(2)  # let cancel propagate
+                px = new_px
+                if px <= 0:
+                    logger.error("Equity retry price reached zero — aborting retries")
+                    break
+            else:
+                logger.error("Equity order %s timed out on final attempt — cancelling",
+                             trade.order.orderId)
+                self.ib.cancelOrder(trade.order)
+                await asyncio.sleep(2)
+
+        order_id = str(last_trade.order.orderId) if last_trade else "unknown"
         return EquityOrderResult(
-            order_id=str(trade.order.orderId),
-            status="submitted",
-            message=f"Order working — no fill after {_timeout}s",
+            order_id=order_id,
+            status="cancelled",
+            message=f"No fill after {_retries + 1} attempt(s)",
         )
 
     async def get_bars(

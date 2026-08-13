@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     retry_price_step: float = Field(default=0.05)
     # Maximum number of cancel-and-retry attempts per order.
     max_order_retries: int = Field(default=2)
+    # Equity limit retries reprice by a percentage of the current limit
+    # (options use a flat $ step; equities span too wide a price range for that).
+    equity_retry_step_pct: float = Field(default=0.003)
 
     # ── Execution test mode (PAPER validation) ────────────────────────────
     # When True, the quality/frequency guards are bypassed so the system will
