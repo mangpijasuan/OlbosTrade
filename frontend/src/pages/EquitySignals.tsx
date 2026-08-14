@@ -17,6 +17,7 @@ interface TradePlan {
   entry_price?: number;
   stop_price?: number;
   target_price?: number;
+  target_move_pct?: number;
   shares?: number;
   risk_reward?: number;
   risk_dollars?: number;
@@ -141,12 +142,13 @@ function SignalCard({ sig }: { sig: Signal }) {
       {/* Trade plan */}
       {tp.entry_price && (
         <div style={{
-          display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+          display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
           gap: 8, background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
         }}>
           <PriceCell label="ENTRY" value={tp.entry_price} color="var(--ink)" />
           <PriceCell label="STOP"  value={tp.stop_price}  color="var(--red)" />
           <PriceCell label="TARGET" value={tp.target_price} color="var(--green)" />
+          <PriceCell label="MOVE" value={tp.target_move_pct} color="var(--amber)" suffix="%" />
           {tp.shares !== undefined && (
             <div style={{ gridColumn: "1/-1", display: "flex", gap: 16,
               fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 4 }}>
@@ -192,14 +194,14 @@ function StatPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PriceCell({ label, value, color }: { label: string; value?: number; color: string }) {
+function PriceCell({ label, value, color, suffix }: { label: string; value?: number; color: string; suffix?: "%" }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em" }}>
         {label}
       </span>
       <span style={{ color, fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
-        {value !== undefined ? `$${value.toFixed(2)}` : "—"}
+        {value === undefined ? "—" : suffix === "%" ? `${value.toFixed(1)}%` : `$${value.toFixed(2)}`}
       </span>
     </div>
   );
@@ -244,6 +246,7 @@ function EquitySignalsGrid() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [minMovePct, setMinMovePct] = useState(0);
 
   const loadSignals = () => {
     fetch("/api/equity/signals")
@@ -271,7 +274,10 @@ function EquitySignalsGrid() {
     }
   };
 
-  const actionable = signals.filter(s => s.action !== "HOLD" && !s.earnings_gated);
+  const actionable = signals
+    .filter(s => s.action !== "HOLD" && !s.earnings_gated)
+    .filter(s => (s.trade_plan?.target_move_pct ?? 0) >= minMovePct)
+    .sort((a, b) => (b.trade_plan?.target_move_pct ?? 0) - (a.trade_plan?.target_move_pct ?? 0));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -285,6 +291,26 @@ function EquitySignalsGrid() {
           </p>
         </div>
         <div style={{ flex: 1 }} />
+        <label style={{
+          display: "flex", alignItems: "center", gap: 6,
+          fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)",
+        }}>
+          Min move %
+          <input
+            type="number"
+            min={0}
+            step={0.5}
+            value={minMovePct || ""}
+            onChange={(e) => setMinMovePct(e.target.value ? parseFloat(e.target.value) : 0)}
+            placeholder="0"
+            title="Only show signals whose target price implies at least this % move from entry"
+            style={{
+              width: 56, background: "var(--bg-2)", border: "1px solid var(--line-dim)",
+              borderRadius: 4, padding: "5px 8px", color: "var(--ink)", fontFamily: "var(--mono)",
+              fontSize: 11,
+            }}
+          />
+        </label>
         <button
           onClick={runScan}
           disabled={scanning}

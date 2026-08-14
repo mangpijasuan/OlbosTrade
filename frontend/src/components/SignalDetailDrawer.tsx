@@ -19,6 +19,7 @@ interface SignalLike {
     entry_price?: number;
     stop_price?: number;
     target_price?: number;
+    target_move_pct?: number;
     shares?: number;
     risk_reward?: number;
     risk_dollars?: number;
@@ -160,6 +161,7 @@ export default function SignalDetailDrawer({
                   <Metric label="Entry" value={fmtMoney(signal.trade_plan?.entry_price)} />
                   <Metric label="Stop" value={fmtMoney(signal.trade_plan?.stop_price)} tone="var(--red)" />
                   <Metric label="Target" value={fmtMoney(signal.trade_plan?.target_price)} tone="var(--green)" />
+                  <Metric label="Target Move %" value={signal.trade_plan?.target_move_pct != null ? `${signal.trade_plan.target_move_pct.toFixed(1)}%` : "—"} tone="var(--amber)" />
                   <Metric label="Risk / Reward" value={signal.trade_plan?.risk_reward != null ? `${signal.trade_plan.risk_reward.toFixed(2)}x` : "—"} tone="var(--amber)" />
                 </div>
               </section>

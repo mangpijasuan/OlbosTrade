@@ -73,8 +73,27 @@ class Settings(BaseSettings):
     paper_visibility_capital_preservation_threshold: float = Field(default=0.65)
 
     # ── Equity signal settings ────────────────────────────────────────────
+    # Widened from the original 13 (mega-cap tech + 2 ETFs + 3 financials, an
+    # unexamined default from 2026-06-26) to ~59 liquid, optionable names
+    # spanning tech, financials, healthcare, consumer, energy, industrials,
+    # and index ETFs. Confirmed safe at this size: sequential per-ticker
+    # scanning would have blown past the 15-minute cycle and risked IBKR's
+    # concurrent market-data-line cap (~100 on a standard account) — see
+    # equity_scan_concurrency below, which bounds this properly. Going all
+    # the way to the full S&P 500 was considered and rejected: it needs a
+    # genuinely different bulk-data architecture (not a config change) for
+    # coverage that's mostly names unlikely to ever get traded here.
     equity_watchlist: str = Field(
-        default="AAPL,NVDA,MSFT,META,AMZN,GOOGL,AMD,TSLA,SPY,QQQ,JPM,V,MA"
+        default=(
+            "AAPL,MSFT,GOOGL,AMZN,META,NVDA,AMD,TSLA,AVGO,ORCL,CRM,ADBE,NFLX,"
+            "INTC,QCOM,TXN,MU,PLTR,NOW,PANW,SNDK,SMCI,"
+            "JPM,V,MA,BAC,WFC,GS,MS,AXP,C,SCHW,"
+            "UNH,LLY,JNJ,MRK,ABBV,PFE,TMO,"
+            "WMT,COST,HD,NKE,MCD,SBUX,DIS,"
+            "XOM,CVX,OXY,"
+            "BA,CAT,HON,GE,UPS,RTX,"
+            "SPY,QQQ,IWM,DIA"
+        )
     )
     equity_signal_interval_minutes: int = Field(default=15)
     # Symbols scanned per background-scan tick. 0 = scan the whole watchlist
@@ -84,6 +103,12 @@ class Settings(BaseSettings):
     # chance to clear the confidence bar. Widening this changes how many
     # candidates get evaluated, not how good a candidate has to be.
     equity_scan_window_size: int = Field(default=0)
+    # Bounded parallelism for the per-ticker scan loop (bars fetch + live
+    # quote + scoring). At 8 concurrent tickers, ~59 symbols clears in well
+    # under a minute of wall-clock time instead of ~90s+ sequential, while
+    # keeping simultaneous IBKR market-data requests far below its pacing
+    # limits — a burst of 8, not 59, in flight at once.
+    equity_scan_concurrency: int = Field(default=8)
     equity_min_confidence: float = Field(default=0.62)
     # Paper mode uses a lower confidence threshold to accumulate trade data
     # for ML model training. Set equal to equity_min_confidence for live.

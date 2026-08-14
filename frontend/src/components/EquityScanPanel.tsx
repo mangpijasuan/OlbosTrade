@@ -55,7 +55,14 @@ interface ScanResult {
   error?: string;
 }
 
-type SortBy = "ev" | "confidence" | "kelly" | "action" | "ticker";
+type SortBy = "ev" | "confidence" | "kelly" | "action" | "ticker" | "target_pct";
+
+/** % move from entry to target — lets a candidate be judged by projected
+ * size (e.g. "only show setups targeting 5%+"), not just EV/confidence. */
+function targetMovePct(cand: { entry_price: number; target_price: number }): number {
+  if (!cand.entry_price) return 0;
+  return (Math.abs(cand.target_price - cand.entry_price) / cand.entry_price) * 100;
+}
 type ActionFilter = "ALL" | "BUY" | "SELL";
 
 // Toast component
@@ -320,7 +327,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
+              gridTemplateColumns: "repeat(4, 1fr)",
               gap: 12,
             }}
           >
@@ -346,6 +353,14 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               </div>
               <div style={{ fontSize: 14, fontWeight: 700, color: "var(--green)", fontFamily: "var(--mono)" }}>
                 ${candidate.target_price.toFixed(2)}
+              </div>
+            </div>
+            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+              <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontWeight: 600 }}>
+                TARGET MOVE
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--amber)", fontFamily: "var(--mono)" }}>
+                {targetMovePct(candidate).toFixed(1)}%
               </div>
             </div>
           </div>
@@ -564,6 +579,7 @@ export default function EquityScanPanel() {
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [minEV, setMinEV] = useState(0);
   const [minConfidence, setMinConfidence] = useState(0);
+  const [minTargetPct, setMinTargetPct] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
@@ -592,6 +608,7 @@ export default function EquityScanPanel() {
       "Entry",
       "Stop",
       "Target",
+      "Target Move %",
       "EV",
       "POP",
       "Confidence",
@@ -609,6 +626,7 @@ export default function EquityScanPanel() {
       c.entry_price.toFixed(2),
       c.stop_price.toFixed(2),
       c.target_price.toFixed(2),
+      targetMovePct(c).toFixed(1),
       c.expected_value.toFixed(2),
       (c.pop * 100).toFixed(1),
       (c.confidence * 100).toFixed(1),
@@ -777,6 +795,7 @@ export default function EquityScanPanel() {
       if (actionFilter !== "ALL" && c.action !== actionFilter) return false;
       if (c.expected_value < minEV) return false;
       if (c.confidence < minConfidence) return false;
+      if (targetMovePct(c) < minTargetPct) return false;
       return true;
     });
 
@@ -792,6 +811,8 @@ export default function EquityScanPanel() {
           return a.action.localeCompare(b.action);
         case "ticker":
           return a.ticker.localeCompare(b.ticker);
+        case "target_pct":
+          return targetMovePct(b) - targetMovePct(a);
         default:
           return 0;
       }
@@ -1054,6 +1075,7 @@ export default function EquityScanPanel() {
         >
           <option value="ev">Sort: EV (High → Low)</option>
           <option value="confidence">Sort: Confidence</option>
+          <option value="target_pct">Sort: Target Move %</option>
           <option value="kelly">Sort: Kelly %</option>
           <option value="action">Sort: Action</option>
           <option value="ticker">Sort: Ticker</option>
@@ -1110,6 +1132,25 @@ export default function EquityScanPanel() {
             color: "var(--ink)",
             fontSize: 11,
             width: 80,
+          }}
+        />
+
+        <input
+          type="number"
+          min="0"
+          placeholder="Min Move %"
+          title="Only show candidates whose target price implies at least this % move from entry"
+          value={minTargetPct || ""}
+          onChange={(e) => setMinTargetPct(e.target.value ? parseFloat(e.target.value) : 0)}
+          step="0.5"
+          style={{
+            background: "var(--bg-2)",
+            border: "1px solid var(--line-dim)",
+            borderRadius: 4,
+            padding: "6px 8px",
+            color: "var(--ink)",
+            fontSize: 11,
+            width: 100,
           }}
         />
       </div>
@@ -1259,7 +1300,7 @@ export default function EquityScanPanel() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(3, 1fr)",
+                      gridTemplateColumns: "repeat(4, 1fr)",
                       gap: 4,
                       background: "var(--bg-3)",
                       borderRadius: 3,
@@ -1283,6 +1324,12 @@ export default function EquityScanPanel() {
                       <div style={{ color: "var(--ink-dim)", marginBottom: 2 }}>TARGET</div>
                       <div style={{ color: "var(--green)", fontFamily: "var(--mono)", fontWeight: 600, fontSize: 10 }}>
                         ${cand.target_price.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ color: "var(--ink-dim)", marginBottom: 2 }}>MOVE</div>
+                      <div style={{ color: "var(--amber)", fontFamily: "var(--mono)", fontWeight: 600, fontSize: 10 }}>
+                        {targetMovePct(cand).toFixed(1)}%
                       </div>
                     </div>
                   </div>

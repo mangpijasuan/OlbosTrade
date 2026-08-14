@@ -303,15 +303,20 @@ def compute_equity_trade_plan(
     risk_dollars  = shares * risk_per_share
     reward_dollars = shares * abs(target - entry)
     risk_reward   = round(reward_dollars / max(risk_dollars, 0.01), 2)
+    # % move from entry to the 4xATR target — lets a caller judge a signal's
+    # projected size (e.g. "only trade setups targeting 5%+") without having
+    # to recompute it from entry_price/target_price everywhere it's shown.
+    target_move_pct = round(abs(target - entry) / entry * 100, 2) if entry else 0.0
 
     return {
-        "entry_price":    round(entry, 4),
-        "stop_price":     round(stop, 4),
-        "target_price":   round(target, 4),
-        "position_size":  round(position_size, 2),
-        "shares":         shares,
-        "risk_reward":    risk_reward,
-        "risk_dollars":   round(risk_dollars, 2),
+        "entry_price":     round(entry, 4),
+        "stop_price":      round(stop, 4),
+        "target_price":    round(target, 4),
+        "target_move_pct": target_move_pct,
+        "position_size":   round(position_size, 2),
+        "shares":          shares,
+        "risk_reward":     risk_reward,
+        "risk_dollars":    round(risk_dollars, 2),
         "sentiment_scale": round(sentiment_scale, 3),
     }
 

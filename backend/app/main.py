@@ -591,7 +591,6 @@ async def _run_equity_scan() -> None:
         from app.api.routes.equity import _recent_signals   # shared in-memory store
 
         watchlist = settings.get_equity_watchlist()
-        routable: list = []   # qualifying signals to rank + route highest-first
         # One live account fetch per scan cycle, not per-ticker.
         account_value = await get_account_value()
 
@@ -603,80 +602,97 @@ async def _run_equity_scan() -> None:
             watchlist, _equity_scan_offset, size=window_size,
         )
 
-        for ticker in scan_window:
-            try:
-                if earnings_gate(ticker, settings.earnings_gate_days):
-                    continue
-                # Use yfinance for historical bars — no broker subscription needed.
-                # Need >=200 bars so EMA200 computes; with only 120 it was always
-                # NaN, forcing above_ema200=False and skewing every signal bearish.
-                bars = await _yf_bars(ticker, limit=250)
-                if len(bars) < 30:
-                    continue
-                df = pd.DataFrame([{
-                    "open": float(b.open), "high": float(b.high),
-                    "low": float(b.low),  "close": float(b.close), "volume": b.volume,
-                } for b in bars])
-                ind = compute_indicators(df)
-                if not ind:
-                    continue
-                broker = get_broker()
-                orderflow = await get_orderflow_score(ticker, broker)
-                action, confidence, reasons = score_equity_signal(ind, orderflow_score=orderflow)
+        broker = get_broker()
+        # Bounded concurrency: the watchlist grew from 13 to ~59 symbols, and
+        # a fully sequential loop (bars fetch + live IBKR quote per ticker)
+        # would take minutes, risking overlap with the next scan cycle. A
+        # semaphore caps how many tickers are in flight at once rather than
+        # firing all of them at IBKR simultaneously (which would risk its
+        # market-data pacing limits) or scanning one at a time (too slow).
+        semaphore = asyncio.Semaphore(max(1, settings.equity_scan_concurrency))
 
-                # Test mode routes any BUY/SELL regardless of confidence so the
-                # pipeline actually trades for validation.
-                routable_signal = action in ("BUY", "SELL") and (
-                    settings.execution_test_mode
-                    or confidence >= settings.effective_equity_min_confidence
-                )
+        async def _scan_one(ticker: str) -> Optional[dict]:
+            async with semaphore:
+                try:
+                    if earnings_gate(ticker, settings.earnings_gate_days):
+                        return None
+                    # Use yfinance for historical bars — no broker subscription needed.
+                    # Need >=200 bars so EMA200 computes; with only 120 it was always
+                    # NaN, forcing above_ema200=False and skewing every signal bearish.
+                    bars = await _yf_bars(ticker, limit=250)
+                    if len(bars) < 30:
+                        return None
+                    df = pd.DataFrame([{
+                        "open": float(b.open), "high": float(b.high),
+                        "low": float(b.low),  "close": float(b.close), "volume": b.volume,
+                    } for b in bars])
+                    ind = compute_indicators(df)
+                    if not ind:
+                        return None
+                    orderflow = await get_orderflow_score(ticker, broker)
+                    action, confidence, reasons = score_equity_signal(ind, orderflow_score=orderflow)
 
-                trade_plan = {}
-                if routable_signal:
-                    trade_plan = compute_equity_trade_plan(
-                        ind, action, portfolio_value=account_value,
+                    # Test mode routes any BUY/SELL regardless of confidence so the
+                    # pipeline actually trades for validation.
+                    routable_signal = action in ("BUY", "SELL") and (
+                        settings.execution_test_mode
+                        or confidence >= settings.effective_equity_min_confidence
                     )
 
-                signal = {
-                    "id":              str(uuid.uuid4()),
-                    "ticker":          ticker,
-                    "asset_type":      "equity",
-                    "source":          "Equity Signal Scanner",
-                    "generated_at":    datetime.now(timezone.utc).isoformat(),
-                    "action":          action,
-                    "confidence":      round(confidence, 4),
-                    # Equities have no separate POP-derived score — confidence IS
-                    # the signal quality. Without this key, record_fill's
-                    # signal.get("signal_score", 0) always fell back to 0 and every
-                    # equity trade's journal entry showed a blank score.
-                    "signal_score":    round(confidence, 4),
-                    "orderflow_score": round(orderflow, 4),
-                    "iv_overlay_boost": 0.0,
-                    "earnings_gated":  False,
-                    "reasons":         reasons,
-                    "trade_plan":      trade_plan,
-                    # Same gap as signal_score: without this key, record_fill's
-                    # signal.get("regime", "unknown") always fell back to "unknown"
-                    # and every equity trade's journal "market context" was useless.
-                    "regime": getattr(getattr(_current_regime, "regime", None), "value", None) or "unknown",
-                    "indicators": {
-                        "rsi":          ind.get("rsi"),
-                        "macd":         ind.get("macd"),
-                        "bb_pct_b":     ind.get("bb_pct_b"),
-                        "atr":          ind.get("atr"),
-                        "volume_ratio": ind.get("volume_ratio"),
-                    },
-                }
-                _recent_signals.insert(0, signal)
-                logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
+                    trade_plan = {}
+                    if routable_signal:
+                        trade_plan = compute_equity_trade_plan(
+                            ind, action, portfolio_value=account_value,
+                        )
 
-                # Collect actionable signals; rank + route after the loop so the
-                # highest-quality opportunities reach the frequency controller first.
-                if routable_signal:
-                    routable.append(signal)
+                    signal = {
+                        "id":              str(uuid.uuid4()),
+                        "ticker":          ticker,
+                        "asset_type":      "equity",
+                        "source":          "Equity Signal Scanner",
+                        "generated_at":    datetime.now(timezone.utc).isoformat(),
+                        "action":          action,
+                        "confidence":      round(confidence, 4),
+                        # Equities have no separate POP-derived score — confidence IS
+                        # the signal quality. Without this key, record_fill's
+                        # signal.get("signal_score", 0) always fell back to 0 and every
+                        # equity trade's journal entry showed a blank score.
+                        "signal_score":    round(confidence, 4),
+                        "orderflow_score": round(orderflow, 4),
+                        "iv_overlay_boost": 0.0,
+                        "earnings_gated":  False,
+                        "reasons":         reasons,
+                        "trade_plan":      trade_plan,
+                        "routable":        routable_signal,
+                        # Same gap as signal_score: without this key, record_fill's
+                        # signal.get("regime", "unknown") always fell back to "unknown"
+                        # and every equity trade's journal "market context" was useless.
+                        "regime": getattr(getattr(_current_regime, "regime", None), "value", None) or "unknown",
+                        "indicators": {
+                            "rsi":          ind.get("rsi"),
+                            "macd":         ind.get("macd"),
+                            "bb_pct_b":     ind.get("bb_pct_b"),
+                            "atr":          ind.get("atr"),
+                            "volume_ratio": ind.get("volume_ratio"),
+                        },
+                    }
+                    logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
+                    return signal
+                except Exception as exc:
+                    logger.warning("Equity scan failed for %s: %s", ticker, exc)
+                    return None
 
-            except Exception as exc:
-                logger.warning("Equity scan failed for %s: %s", ticker, exc)
+        results = await asyncio.gather(*[_scan_one(t) for t in scan_window])
+
+        routable: list = []   # qualifying signals to rank + route highest-first
+        for signal in results:
+            if signal is None:
+                continue
+            _recent_signals.insert(0, signal)
+            # Collect actionable signals; rank + route after the loop so the
+            # highest-quality opportunities reach the frequency controller first.
+            if signal["routable"]:
+                routable.append(signal)
 
         # Rank by weighted quality score, then route highest-first. The frequency
         # controller inside handle_signal enforces the per-mode daily cap, so once
@@ -1369,15 +1385,26 @@ async def _run_options_scan_watchlist() -> None:
     candidates to choose from each cycle.
     """
     watchlist = settings.get_equity_watchlist()
-    candidates: list[dict] = []
-    for symbol in watchlist:
-        try:
-            sig = await _run_options_scan(symbol, execute=False)
-        except Exception as exc:
-            logger.warning("Options scan failed for %s: %s", symbol, exc)
-            continue
-        if sig is not None:
-            candidates.append(sig)
+    # Bounded concurrency — same rationale as _run_equity_scan: the watchlist
+    # widened from 13 to ~59 symbols, and this call is wrapped in a 240s hard
+    # timeout (_guarded, in the scheduler). A sequential loop over 59 symbols
+    # (each doing a full options-chain fetch, heavier than an equity bars
+    # fetch) could plausibly exceed 240s — and asyncio.wait_for cancels the
+    # whole coroutine on timeout, discarding every candidate found so far,
+    # not just the tail of the list. A semaphore keeps this well under the
+    # timeout instead of risking losing the entire cycle's scan.
+    semaphore = asyncio.Semaphore(max(1, settings.equity_scan_concurrency))
+
+    async def _scan_one(symbol: str) -> Optional[dict]:
+        async with semaphore:
+            try:
+                return await _run_options_scan(symbol, execute=False)
+            except Exception as exc:
+                logger.warning("Options scan failed for %s: %s", symbol, exc)
+                return None
+
+    results = await asyncio.gather(*[_scan_one(s) for s in watchlist])
+    candidates: list[dict] = [sig for sig in results if sig is not None]
 
     if not candidates:
         return
