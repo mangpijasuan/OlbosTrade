@@ -67,6 +67,48 @@ function sortRecentThenConfident(a: Signal, b: Signal): number {
   return b.confidence - a.confidence;
 }
 
+/** Deterministic color from the ticker string — used for the fallback
+ * initials avatar so a given ticker always gets the same color, not a
+ * random one on every render. */
+function tickerColor(ticker: string): string {
+  let hash = 0;
+  for (let i = 0; i < ticker.length; i++) {
+    hash = ticker.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return `hsl(${Math.abs(hash) % 360}, 55%, 42%)`;
+}
+
+function InitialsAvatar({ ticker, size }: { ticker: string; size: number }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: 6, background: tickerColor(ticker),
+      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      fontFamily: "var(--mono)", fontSize: size * 0.36, fontWeight: 700, color: "#fff",
+    }}>
+      {ticker.slice(0, 2)}
+    </div>
+  );
+}
+
+/** Best-effort real company logo, falling back to a generated initials
+ * avatar on load failure — never leaves a broken image icon, and works for
+ * any ticker without needing a hand-maintained name/domain lookup table. */
+function TickerLogo({ ticker, size = 28 }: { ticker: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <InitialsAvatar ticker={ticker} size={size} />;
+  return (
+    <img
+      src={`https://companiesmarketcap.com/img/company-logos/64/${ticker}.png`}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      style={{ borderRadius: 6, objectFit: "contain", background: "var(--bg-3)", flexShrink: 0 }}
+    />
+  );
+}
+
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const color = pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
@@ -121,6 +163,7 @@ function SignalCard({ sig }: { sig: Signal }) {
     }}>
       {/* Header row */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <TickerLogo ticker={sig.ticker} />
         <span style={{
           color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700,
         }}>
@@ -294,6 +337,102 @@ function SignalGroup({ action, signals }: { action: Signal["action"]; signals: S
   );
 }
 
+function buildShareText(top: Signal[]): string {
+  const lines = top.map(sig => {
+    const emoji = sig.action === "BUY" ? "🟢" : "🔴";
+    const pct = Math.round(sig.confidence * 100);
+    const move = sig.trade_plan?.target_move_pct;
+    const moveStr = move != null ? ` · ${move.toFixed(1)}% target move` : "";
+    return `${emoji} ${sig.ticker} — ${sig.action} · ${pct}% confidence${moveStr}`;
+  });
+  const when = new Date().toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+  return [
+    `📊 Top Signals — OlbosTrade (${when})`,
+    "",
+    ...lines,
+    "",
+    "Paper trading signals — not investment advice.",
+  ].join("\n");
+}
+
+function TopSignals({ top }: { top: Signal[] }) {
+  const [copied, setCopied] = useState(false);
+  if (top.length === 0) return null;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildShareText(top));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can fail (permissions, insecure context) — the
+      // button just won't flip to "Copied!"; no error worth surfacing.
+    }
+  };
+
+  return (
+    <div style={{
+      background: "var(--bg-2)", border: "1px solid var(--line-dim)",
+      borderRadius: 6, padding: "14px 16px", display: "flex",
+      flexDirection: "column", gap: 12,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{
+          color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 12,
+          fontWeight: 700, letterSpacing: "0.1em",
+        }}>
+          TOP {top.length} SIGNAL{top.length > 1 ? "S" : ""}
+        </span>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={handleCopy}
+          style={{
+            background: copied ? "var(--green)" : "var(--bg-3)",
+            color: copied ? "var(--bg)" : "var(--ink)",
+            border: "1px solid var(--line-dim)", borderRadius: 4,
+            padding: "5px 12px", fontFamily: "var(--mono)", fontSize: 10,
+            fontWeight: 600, letterSpacing: "0.06em", cursor: "pointer",
+          }}
+        >
+          {copied ? "COPIED ✓" : "COPY TO SHARE"}
+        </button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {top.map(sig => {
+          const move = sig.trade_plan?.target_move_pct;
+          return (
+            <div key={sig.id} style={{
+              display: "flex", alignItems: "center", gap: 10,
+              background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
+            }}>
+              <TickerLogo ticker={sig.ticker} size={24} />
+              <span style={{ color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 13, fontWeight: 700, minWidth: 56 }}>
+                {sig.ticker}
+              </span>
+              <span style={{
+                color: sig.action === "BUY" ? "var(--green)" : "var(--red)",
+                fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700, minWidth: 36,
+              }}>
+                {sig.action}
+              </span>
+              <div style={{ flex: 1, maxWidth: 160 }}>
+                <ConfidenceBar value={sig.confidence} />
+              </div>
+              {move != null && (
+                <span style={{ color: "var(--amber)", fontFamily: "var(--mono)", fontSize: 11, fontWeight: 600 }}>
+                  {move.toFixed(1)}% target
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EquitySignalsGrid() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -341,6 +480,11 @@ function EquitySignalsGrid() {
     .filter(s => s.action === "HOLD" || s.earnings_gated)
     .sort(sortRecentThenConfident);
   const actionableCount = buySignals.length + sellSignals.length;
+  // Same filtered set the BUY/SELL sections show (respects Min move %),
+  // just combined and re-sorted so the top 3 can be BUY, SELL, or a mix.
+  const topSignals = [...buySignals, ...sellSignals]
+    .sort(sortRecentThenConfident)
+    .slice(0, 3);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -410,6 +554,7 @@ function EquitySignalsGrid() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <TopSignals top={topSignals} />
           <SignalGroup action="BUY" signals={buySignals} />
           <SignalGroup action="SELL" signals={sellSignals} />
           <SignalGroup action="HOLD" signals={holdSignals} />
