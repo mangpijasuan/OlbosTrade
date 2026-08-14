@@ -231,10 +231,10 @@ class BearCallSpread(BaseStrategy):
                          direction="bearish", entry_allowed=False,
                          reason=guardrail_status.reason or "Not allowed", iv_rank=iv_rank, rsi=rsi)
 
-        if iv_rank < 5:
+        if iv_rank < 30:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bearish", entry_allowed=False,
-                         reason=f"IV rank too low: {iv_rank:.1f}", iv_rank=iv_rank, rsi=rsi)
+                         reason=f"IV rank too low: {iv_rank:.1f} (need >30)", iv_rank=iv_rank, rsi=rsi)
         if above_sma20:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bearish", entry_allowed=False,

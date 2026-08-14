@@ -102,6 +102,30 @@ def test_bear_call_happy_and_rejections():
     assert not BearCallSpread().generate_signal(_chain(calls=[]), 40, 50, 20, False, 18, _clean()).entry_allowed
 
 
+def test_bear_call_iv_rank_threshold_matches_docstring():
+    """The docstring says "IV rank > 30", but the entry check only rejected
+    below 5 — a bear_call_spread would enter selling calls at IV rank 10-29,
+    collecting thin credit for the risk taken. Confirmed in a walk-forward
+    backtest: bear_call_spread lost money in every calendar year 2015-2025
+    (bull_put_spread, the identical exit-rule mirror strategy, was
+    profitable most years) — a low IV bar was part of why the credit
+    collected didn't compensate for the risk of a short call getting run
+    over by a snapback rally."""
+    # IV rank 29 — below the documented >30 bar, must now be rejected.
+    below = BearCallSpread().generate_signal(_chain(), 29, 50, 20, False, 18, _clean())
+    assert not below.entry_allowed
+    assert "need >30" in below.reason
+    # IV rank 30 — clears the bar (matches the sibling strategies' "< threshold"
+    # rejection idiom used throughout this file, e.g. BullPutSpread's "need >5"
+    # also technically passes at exactly 5).
+    at_bar = BearCallSpread().generate_signal(_chain(), 30, 50, 20, False, 18, _clean())
+    assert at_bar.entry_allowed
+    # Old behavior for reference: IV rank 10 used to pass (old bar was >5);
+    # under the fixed threshold it must now be rejected.
+    old_threshold_gap = BearCallSpread().generate_signal(_chain(), 10, 50, 20, False, 18, _clean())
+    assert not old_threshold_gap.entry_allowed
+
+
 def test_bear_call_size_and_exit():
     bc = BearCallSpread()
     sz = bc.size_position(Signal("bear_call_spread", "SPY", "bearish", True, "ok"),
