@@ -44,6 +44,29 @@ interface Signal {
   };
 }
 
+// Signals from the same scan cycle land within a few seconds of each other
+// (the backend scans the whole watchlist concurrently, not one at a time),
+// but cycles themselves are ~15 minutes apart. Bucketing to a coarser
+// interval than that scan spacing groups a whole cycle together instead of
+// having near-simultaneous signals split arbitrarily by their few-second
+// timestamp differences — "recent" should mean "which cycle", not "which
+// second within a cycle".
+const CYCLE_BUCKET_MS = 10 * 60 * 1000;
+
+function cycleBucket(generatedAt: string): number {
+  return Math.floor(new Date(generatedAt).getTime() / CYCLE_BUCKET_MS);
+}
+
+/** Newest scan cycle first; within the same cycle, highest confidence first.
+ * Recency wins the primary sort — a high-confidence signal from three cycles
+ * ago is more likely stale than useful, so it shouldn't outrank a fresh one
+ * just because its own number was higher when it was generated. */
+function sortRecentThenConfident(a: Signal, b: Signal): number {
+  const cycleDiff = cycleBucket(b.generated_at) - cycleBucket(a.generated_at);
+  if (cycleDiff !== 0) return cycleDiff;
+  return b.confidence - a.confidence;
+}
+
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const color = pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
@@ -242,6 +265,35 @@ function AssetToggle({ tab, onChange }: { tab: AssetTab; onChange: (t: AssetTab)
   );
 }
 
+const ACTION_GROUP_COLOR: Record<Signal["action"], string> = {
+  BUY: "var(--green)",
+  SELL: "var(--red)",
+  HOLD: "var(--ink-dim)",
+};
+
+function SignalGroup({ action, signals }: { action: Signal["action"]; signals: Signal[] }) {
+  if (signals.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{
+          color: ACTION_GROUP_COLOR[action], fontFamily: "var(--mono)", fontSize: 12,
+          fontWeight: 700, letterSpacing: "0.1em",
+        }}>
+          {action}
+        </span>
+        <span style={{ color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+          ({signals.length})
+        </span>
+        <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+        {signals.map(sig => <SignalCard key={sig.id} sig={sig} />)}
+      </div>
+    </div>
+  );
+}
+
 function EquitySignalsGrid() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -274,10 +326,21 @@ function EquitySignalsGrid() {
     }
   };
 
-  const actionable = signals
-    .filter(s => s.action !== "HOLD" && !s.earnings_gated)
+  // Min move % only makes sense for BUY/SELL — a HOLD has no trade_plan
+  // (no target price to measure a move against), so it's left out of that
+  // filter entirely rather than being silently dropped by an ?? 0 default.
+  const buySignals = signals
+    .filter(s => s.action === "BUY" && !s.earnings_gated)
     .filter(s => (s.trade_plan?.target_move_pct ?? 0) >= minMovePct)
-    .sort((a, b) => (b.trade_plan?.target_move_pct ?? 0) - (a.trade_plan?.target_move_pct ?? 0));
+    .sort(sortRecentThenConfident);
+  const sellSignals = signals
+    .filter(s => s.action === "SELL" && !s.earnings_gated)
+    .filter(s => (s.trade_plan?.target_move_pct ?? 0) >= minMovePct)
+    .sort(sortRecentThenConfident);
+  const holdSignals = signals
+    .filter(s => s.action === "HOLD" || s.earnings_gated)
+    .sort(sortRecentThenConfident);
+  const actionableCount = buySignals.length + sellSignals.length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -287,7 +350,7 @@ function EquitySignalsGrid() {
             EQUITY SIGNALS
           </h2>
           <p style={{ margin: "4px 0 0", color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11 }}>
-            {actionable.length} actionable · {signals.length} total
+            {actionableCount} actionable ({buySignals.length} buy · {sellSignals.length} sell) · {signals.length} total
           </p>
         </div>
         <div style={{ flex: 1 }} />
@@ -346,10 +409,10 @@ function EquitySignalsGrid() {
           No signals yet. Click RUN SCAN to generate equity signals.
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
-          {[...actionable, ...signals.filter(s => s.action === "HOLD" || s.earnings_gated)]
-            .map(sig => <SignalCard key={sig.id} sig={sig} />)
-          }
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <SignalGroup action="BUY" signals={buySignals} />
+          <SignalGroup action="SELL" signals={sellSignals} />
+          <SignalGroup action="HOLD" signals={holdSignals} />
         </div>
       )}
     </div>
