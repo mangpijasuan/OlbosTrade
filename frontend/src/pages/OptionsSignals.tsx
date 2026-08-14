@@ -32,7 +32,7 @@ interface OptionsSignal {
   id: string;
   ticker: string;
   generated_at: string;
-  action: "BUY_SPREAD" | "SELL_SPREAD" | string;
+  action: "BUY_SPREAD" | "SELL_SPREAD" | "HOLD" | string;
   confidence: number;
   pop?: number | null;
   kelly_fraction?: number | null;
@@ -44,6 +44,8 @@ interface OptionsSignal {
   source?: string;
   spread?: Spread;
   intelligence?: OptionsIntelligence | null;
+  // Only set on HOLD entries — a scanned-but-not-qualified ticker, with why.
+  reason?: string;
 }
 
 function ConfidenceBar({ value }: { value: number }) {
@@ -236,10 +238,33 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
   );
 }
 
+function RejectionRow({ sig }: { sig: OptionsSignal }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      background: "var(--bg-2)", border: "1px solid var(--line-dim)",
+      borderRadius: 4, padding: "7px 12px", fontFamily: "var(--mono)", fontSize: 11,
+    }}>
+      <span style={{ color: "var(--ink)", fontWeight: 700, minWidth: 52 }}>{sig.ticker}</span>
+      <span style={{
+        color: "var(--cyan)", fontSize: 9, letterSpacing: "0.06em",
+        textTransform: "uppercase", minWidth: 130,
+      }}>
+        {sig.strategy ? sig.strategy.replace(/_/g, " ") : "—"}
+      </span>
+      <span style={{ color: "var(--ink-dim)", flex: 1 }}>{sig.reason || "no signal"}</span>
+      <span style={{ color: "var(--ink-faint)", fontSize: 9, flexShrink: 0 }}>
+        {new Date(sig.generated_at).toLocaleTimeString()}
+      </span>
+    </div>
+  );
+}
+
 export default function OptionsSignals() {
   const [signals, setSignals] = useState<OptionsSignal[]>([]);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showReasons, setShowReasons] = useState(false);
 
   const loadSignals = () => {
     (api.getOptionsSignals() as Promise<{ signals?: OptionsSignal[] }>)
@@ -269,6 +294,10 @@ export default function OptionsSignals() {
   const actionable = signals.filter(
     s => s.action === "BUY_SPREAD" || s.action === "SELL_SPREAD",
   );
+  // Scanned-but-not-qualified tickers — previously these reasons only ever
+  // reached a server log line, so "0 total" told you nothing about whether
+  // the scanner was broken or genuinely found nothing, and why.
+  const notQualified = signals.filter(s => s.action === "HOLD");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -278,10 +307,23 @@ export default function OptionsSignals() {
             OPTIONS SIGNALS
           </h2>
           <p style={{ margin: "4px 0 0", color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11 }}>
-            {actionable.length} actionable · {signals.length} total
+            {actionable.length} actionable · {notQualified.length} not qualified · {signals.length} total
           </p>
         </div>
         <div style={{ flex: 1 }} />
+        {notQualified.length > 0 && (
+          <button
+            onClick={() => setShowReasons(v => !v)}
+            style={{
+              background: "var(--bg-3)", color: "var(--ink)",
+              border: "1px solid var(--line-dim)", borderRadius: 4,
+              padding: "8px 14px", fontFamily: "var(--mono)", fontSize: 11,
+              letterSpacing: "0.06em", cursor: "pointer", fontWeight: 600,
+            }}
+          >
+            {showReasons ? "HIDE REASONS" : "SHOW REASONS"} ({notQualified.length})
+          </button>
+        )}
         <button
           onClick={runScan}
           disabled={scanning}
@@ -317,9 +359,36 @@ export default function OptionsSignals() {
           No options signals yet. Click RUN SCAN to generate spread signals across the watchlist.
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
-          {signals.map(sig => <OptionsSignalCard key={sig.id} sig={sig} />)}
-        </div>
+        <>
+          {actionable.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+              {actionable.map(sig => <OptionsSignalCard key={sig.id} sig={sig} />)}
+            </div>
+          )}
+          {actionable.length === 0 && (
+            <div style={{
+              color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
+              textAlign: "center", padding: 24,
+            }}>
+              Nothing qualified this scan — {notQualified.length} ticker{notQualified.length === 1 ? "" : "s"} scanned,
+              none passed. Click SHOW REASONS to see why, per ticker.
+            </div>
+          )}
+          {showReasons && notQualified.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11,
+                  fontWeight: 700, letterSpacing: "0.1em",
+                }}>
+                  NOT QUALIFIED
+                </span>
+                <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
+              </div>
+              {notQualified.map(sig => <RejectionRow key={sig.id} sig={sig} />)}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

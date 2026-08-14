@@ -624,6 +624,38 @@ def _equity_confluence_reason(
     return None
 
 
+def _record_options_rejection(symbol: str, reason: str, strategy_name: Optional[str] = None) -> None:
+    """
+    Record a scanned-but-not-qualified options attempt into the same store
+    the Options Signals UI reads (_recent_options_signals) — mirrors how
+    the equity scanner already records HOLD signals with a reason, not just
+    the ones that qualify.
+
+    Previously every rejection reason (entry conditions failing, a
+    confluence conflict, insufficient price history) only ever reached a
+    log line — the UI's "0 total" told the user nothing about whether the
+    scanner was broken or genuinely found nothing, and why. This makes
+    those same reasons visible on the page itself instead of requiring a
+    server-log lookup.
+    """
+    import uuid
+    from datetime import datetime, timezone
+    from app.api.routes.options import _recent_options_signals
+
+    _recent_options_signals.insert(0, {
+        "id":           str(uuid.uuid4()),
+        "ticker":       symbol,
+        "asset_type":   "options",
+        "source":       "Options Signal Scanner",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "action":       "HOLD",
+        "confidence":   0.0,
+        "reason":       reason,
+        "strategy":     strategy_name,
+    })
+    del _recent_options_signals[200:]
+
+
 async def _run_equity_scan() -> None:
     """Background scan — writes results into the same in-memory store as POST /api/equity/scan."""
     global _equity_scan_offset
@@ -999,6 +1031,10 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
     Routes through execution handler (manual/copilot/autopilot), same as before.
     """
     if _current_regime is None or not getattr(_current_regime, "options_allowed", False):
+        # Not recorded per-symbol here (unlike every rejection below) — this
+        # is a single market-wide gate, so recording it for all 59 watchlist
+        # symbols every cycle would just be 59 duplicate entries. The regime's
+        # own options_allowed state is already visible via /api/market/regime.
         return None
     try:
         import uuid
@@ -1032,6 +1068,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         # leaves headroom for the leading NaN run its rolling windows produce.
         underlying_bars = await _yf_bars(symbol, limit=60)
         if len(underlying_bars) < 30:
+            _record_options_rejection(symbol, "insufficient price history")
             return None
 
         closes = [float(b.close) for b in underlying_bars]
@@ -1161,10 +1198,12 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
             rejections.append(f"{name}: {sig.reason}")
 
         if strategy_obj is None:
+            _reason = "; ".join(rejections) or "no candidates"
             logger.info(
                 "Options scan %s: no regime-allowed strategy qualified — %s",
-                symbol, "; ".join(rejections) or "no candidates",
+                symbol, _reason,
             )
+            _record_options_rejection(symbol, _reason)
             return None
 
         from app.api.routes.equity import _recent_signals as _equity_signals
@@ -1174,6 +1213,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         if _confluence_reject:
             logger.info("Options scan %s: %s %s — skipping",
                         symbol, strategy_name, _confluence_reject)
+            _record_options_rejection(symbol, _confluence_reject, strategy_name)
             return None
 
         is_debit = strategy_name == "bull_call_debit_spread"
@@ -1244,15 +1284,24 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
 
         if spread_width <= 0:
             logger.info("Options scan: no usable spread width — skipping")
+            _record_options_rejection(symbol, "no usable spread width", strategy_name)
             return None
         if is_debit:
             net_debit = -net_amount
             if net_debit <= 0.05:
                 logger.info("Options scan: debit too small ($%.2f) — skipping", net_debit)
+                _record_options_rejection(
+                    symbol, f"debit too small (${net_debit:.2f})", strategy_name,
+                )
                 return None
         elif net_amount <= 0.05:
             logger.info("Options scan: no usable spread (width=%.1f credit=%.2f) — skipping",
                         spread_width, net_amount)
+            _record_options_rejection(
+                symbol,
+                f"no usable spread (width={spread_width:.1f}, credit=${net_amount:.2f})",
+                strategy_name,
+            )
             return None
 
         credit_per_share = net_amount / 100.0
@@ -1293,6 +1342,11 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "Options signal rejected by AI scorer: %s %s score=%.3f — %s",
                 symbol, strategy_name, signal_score, score_result.rejection_reason,
             )
+            _record_options_rejection(
+                symbol,
+                f"AI scorer: {score_result.rejection_reason or f'score {signal_score:.3f}'}",
+                strategy_name,
+            )
             return None
         if not score_result.approved:
             logger.warning(
@@ -1328,6 +1382,9 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "(portfolio=$%.0f max_loss=$%.0f risk_pct=%.3f mult=%.2f)",
                 portfolio_value, max_loss_dollars, risk_pct, size_mult,
             )
+            _record_options_rejection(
+                symbol, f"sized to 0 contracts (max loss ${max_loss_dollars:.0f})", strategy_name,
+            )
             return None
 
         # ── Single-underlying / sector concentration check ──────────────────
@@ -1358,6 +1415,12 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                     "of portfolio (max %.0f%%)",
                     symbol, underlying_pct * 100, RiskManager.MAX_SINGLE_UNDERLYING * 100,
                 )
+                _record_options_rejection(
+                    symbol,
+                    f"{symbol} concentration would be {underlying_pct * 100:.1f}% of portfolio "
+                    f"(max {RiskManager.MAX_SINGLE_UNDERLYING * 100:.0f}%)",
+                    strategy_name,
+                )
                 return None
             new_sector_exposure = (
                 portfolio_risk.positions_by_sector.get(trade_sector, 0.0) + total_new_risk
@@ -1368,6 +1431,12 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                     "Options signal blocked — sector %r (%s) concentration would be "
                     "%.1f%% of portfolio (max %.0f%%)",
                     trade_sector, symbol, sector_pct * 100, RiskManager.MAX_SECTOR_CONCENTRATION * 100,
+                )
+                _record_options_rejection(
+                    symbol,
+                    f"sector {trade_sector!r} concentration would be {sector_pct * 100:.1f}% "
+                    f"of portfolio (max {RiskManager.MAX_SECTOR_CONCENTRATION * 100:.0f}%)",
+                    strategy_name,
                 )
                 return None
 
@@ -1453,6 +1522,9 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
 
     except Exception as exc:
         logger.warning("Options scan failed: %s", exc)
+        # Generic, user-facing reason — the real exception (which may include
+        # internals not worth surfacing) stays in the server log above.
+        _record_options_rejection(symbol, "scan error — see server log")
         return None
 
 
