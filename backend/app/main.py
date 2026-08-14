@@ -573,6 +573,57 @@ def _rotate_watchlist_window(watchlist: list, offset: int, size: int = 5) -> tup
     return window, start + size
 
 
+def _equity_confluence_reason(
+    ticker: str,
+    strategy_name: str,
+    recent_equity_signals: list,
+    now,
+    staleness_seconds: int = 3600,
+) -> Optional[str]:
+    """
+    Check whether an options strategy's direction actively conflicts with
+    this same ticker's own most recent equity signal. The equity and
+    options engines analyze the same stock independently (different
+    indicators, different scoring) — one selling calls into a stock the
+    equity engine currently reads as strongly bullish (or vice versa) is
+    exactly the mismatch worth catching, rather than trusting either read
+    in isolation.
+
+    Returns a rejection reason only if the equity engine's most recent
+    signal for this ticker is fresh (within staleness_seconds) AND
+    actively opposes the strategy's direction. Returns None — no block —
+    if there's no equity signal for this ticker yet, it's stale, or it
+    doesn't disagree (a HOLD reading isn't a contradiction). This is a
+    confirming filter, not a hard prerequisite: missing or stale equity
+    data must never itself block options from firing.
+
+    `recent_equity_signals` must be newest-first (matches
+    app.api.routes.equity._recent_signals's insert(0, ...) ordering) — the
+    first entry matching `ticker` is treated as its most recent signal.
+    """
+    bullish_strategies = ("bull_put_spread", "bull_call_debit_spread")
+    opposing_action = "SELL" if strategy_name in bullish_strategies else "BUY"
+
+    for sig in recent_equity_signals:
+        if sig.get("ticker") != ticker:
+            continue
+        generated_at = sig.get("generated_at")
+        try:
+            from datetime import datetime as _dt
+            age_seconds = (now - _dt.fromisoformat(generated_at)).total_seconds()
+        except (TypeError, ValueError):
+            return None
+        if age_seconds > staleness_seconds:
+            return None
+        if sig.get("action") == opposing_action:
+            return (
+                f"conflicts with this ticker's own equity signal "
+                f"({opposing_action}, {age_seconds / 60:.0f}min old)"
+            )
+        return None
+    return None
+
+
 async def _run_equity_scan() -> None:
     """Background scan — writes results into the same in-memory store as POST /api/equity/scan."""
     global _equity_scan_offset
@@ -952,6 +1003,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
     try:
         import uuid
         import numpy as np
+        import pandas as pd
         from datetime import datetime, timezone, timedelta, date
         from decimal import Decimal
         from app.broker.broker_factory import get_broker
@@ -961,6 +1013,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         from app.services.strategy_engine import (
             BullPutSpread, BearCallSpread, IronCondor, BullCallDebitSpread,
         )
+        from app.services.equity_signal_engine import compute_indicators
         from app.api.routes.trade_desk import _fetch_portfolio_state, RiskGateError
 
         strategy_classes = {
@@ -974,9 +1027,11 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         dte_target = trading_mode_manager.config.dte_target or 30
         RISK_FREE  = 0.05
 
-        # Get the underlying's bars via yfinance — no broker subscription needed
-        underlying_bars = await _yf_bars(symbol, limit=30)
-        if len(underlying_bars) < 20:
+        # Get the underlying's bars via yfinance — no broker subscription needed.
+        # limit=60 (not 30) so compute_indicators' own >=30-bar floor still
+        # leaves headroom for the leading NaN run its rolling windows produce.
+        underlying_bars = await _yf_bars(symbol, limit=60)
+        if len(underlying_bars) < 30:
             return None
 
         closes = [float(b.close) for b in underlying_bars]
@@ -986,10 +1041,34 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         log_rets = np.diff(np.log(closes))
         sigma   = float(np.std(log_rets) * np.sqrt(252))
 
+        # RSI and ADX are now THIS symbol's own values, computed the same way
+        # the equity scanner already computes them for these same 59
+        # watchlist tickers — not a single market-wide reading applied
+        # uniformly to all of them. Previously every symbol shared one RSI
+        # and one ADX off the regime classifier, so a strategy's own entry
+        # gate (e.g. bull_call_debit_spread's RSI>55) either passed for the
+        # WHOLE watchlist at once or failed for all of it together,
+        # regardless of any individual stock's real condition — the
+        # reachable cause of options signals almost never firing in
+        # production (confirmed: one options trade total, ever, vs. the
+        # equity side firing continuously on the same tickers).
+        _ind_df = pd.DataFrame([{
+            "open": float(b.open), "high": float(b.high),
+            "low": float(b.low), "close": float(b.close), "volume": b.volume,
+        } for b in underlying_bars])
+        _ind = compute_indicators(_ind_df)
+        rsi = float(_ind.get("rsi", 50.0)) if _ind else 50.0
+        adx = float(_ind.get("adx", 20.0)) if _ind else 20.0
+
+        # IV rank stays a shared, market-wide vol-regime proxy (VIX-derived) —
+        # unlike RSI/ADX, a real per-symbol equivalent needs actual per-stock
+        # options history, which isn't reliably available here without a paid
+        # data feed. This is a smaller compromise than RSI/ADX were: implied
+        # vol genuinely co-moves across the market far more than momentum
+        # does, so one shared reading is a defensible approximation rather
+        # than the same-number-for-every-stock problem RSI/ADX had.
         feat    = _current_regime.features_used
         iv_rank = float(getattr(feat, "iv_rank", 30.0)) if feat else 30.0
-        rsi     = float(getattr(feat, "rsi_14", 50.0)) if feat else 50.0
-        adx     = float(getattr(feat, "adx_14", 20.0)) if feat else 20.0
         vix_pct = float(getattr(feat, "vix", sigma * 100)) if feat else sigma * 100
         vix_est = vix_pct / 100.0
 
@@ -1086,6 +1165,15 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "Options scan %s: no regime-allowed strategy qualified — %s",
                 symbol, "; ".join(rejections) or "no candidates",
             )
+            return None
+
+        from app.api.routes.equity import _recent_signals as _equity_signals
+        _confluence_reject = _equity_confluence_reason(
+            symbol, strategy_name, _equity_signals, datetime.now(timezone.utc),
+        )
+        if _confluence_reject:
+            logger.info("Options scan %s: %s %s — skipping",
+                        symbol, strategy_name, _confluence_reject)
             return None
 
         is_debit = strategy_name == "bull_call_debit_spread"

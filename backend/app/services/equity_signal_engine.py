@@ -24,7 +24,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     """
     try:
         import ta as ta_lib  # type: ignore
-        from ta.trend import EMAIndicator, MACD
+        from ta.trend import EMAIndicator, MACD, ADXIndicator
         from ta.momentum import RSIIndicator, StochasticOscillator
         from ta.volatility import BollingerBands, AverageTrueRange
         from ta.volume import OnBalanceVolumeIndicator
@@ -70,6 +70,12 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     # ATR
     df["atr"] = AverageTrueRange(high=high, low=low, close=close, window=14).average_true_range()
 
+    # ADX — trend strength. Previously only available as a single shared
+    # market-wide reading (main.py's options scan read it off the regime
+    # classifier for every symbol); computed per-symbol here so each stock's
+    # own trend strength is available wherever this function's output is used.
+    df["adx"] = ADXIndicator(high=high, low=low, close=close, window=14).adx()
+
     # OBV
     df["obv"] = OnBalanceVolumeIndicator(close=close, volume=volume).on_balance_volume()
 
@@ -103,6 +109,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "macd_hist":       float(latest.get("macd_hist", 0) or 0),
         "bb_pct_b":        float(latest.get("bb_pct_b", 0.5) or 0.5),
         "atr":             float(latest.get("atr", 1) or 1),
+        "adx":             float(latest.get("adx", 20.0) or 20.0),
         "obv":             float(latest.get("obv", 0) or 0),
         "stoch_k":         float(latest.get("stoch_k", 50) or 50),
         "stoch_d":         float(latest.get("stoch_d", 50) or 50),
