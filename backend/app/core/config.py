@@ -73,26 +73,31 @@ class Settings(BaseSettings):
     paper_visibility_capital_preservation_threshold: float = Field(default=0.65)
 
     # ── Equity signal settings ────────────────────────────────────────────
-    # Widened from the original 13 (mega-cap tech + 2 ETFs + 3 financials, an
-    # unexamined default from 2026-06-26) to ~59 liquid, optionable names
-    # spanning tech, financials, healthcare, consumer, energy, industrials,
-    # and index ETFs. Confirmed safe at this size: sequential per-ticker
-    # scanning would have blown past the 15-minute cycle and risked IBKR's
-    # concurrent market-data-line cap (~100 on a standard account) — see
-    # equity_scan_concurrency below, which bounds this properly. Going all
-    # the way to the full S&P 500 was considered and rejected: it needs a
-    # genuinely different bulk-data architecture (not a config change) for
-    # coverage that's mostly names unlikely to ever get traded here.
+    # The real, current Nasdaq-100 constituent list (102 tickers, including
+    # both GOOGL/GOOG share classes) — fetched live from
+    # https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies rather than
+    # hand-picked, and spot-checked against yfinance to confirm every symbol
+    # actually resolves to a real, currently-traded instrument. Previously an
+    # ad-hoc ~59-name list (mega-cap tech/financials/healthcare/etc, hand
+    # assembled); this replaces it with an objective, sourced index rather
+    # than a curated guess. Confirmed safe at this size (~1.7x the prior
+    # list): the scan loop's bounded concurrency (equity_scan_concurrency
+    # below) means wall-clock time scales with ticker-count/concurrency, not
+    # ticker count alone — a live production options scan of 50 symbols
+    # completed in ~47s, well under the 240s scan-cycle guard, so ~102
+    # comfortably fits. Going all the way to the full S&P 500 was considered
+    # separately and rejected: that needs a genuinely different bulk-data
+    # architecture, not a config change.
     equity_watchlist: str = Field(
         default=(
-            "AAPL,MSFT,GOOGL,AMZN,META,NVDA,AMD,TSLA,AVGO,ORCL,CRM,ADBE,NFLX,"
-            "INTC,QCOM,TXN,MU,PLTR,NOW,PANW,SNDK,SMCI,"
-            "JPM,V,MA,BAC,WFC,GS,MS,AXP,C,SCHW,"
-            "UNH,LLY,JNJ,MRK,ABBV,PFE,TMO,"
-            "WMT,COST,HD,NKE,MCD,SBUX,DIS,"
-            "XOM,CVX,OXY,"
-            "BA,CAT,HON,GE,UPS,RTX,"
-            "SPY,QQQ,IWM,DIA"
+            "AAPL,ABNB,ADBE,ADI,ADP,ADSK,AEP,ALAB,ALNY,AMAT,AMD,AMGN,AMZN,APP,"
+            "ARM,ASML,AVGO,AXON,BKNG,BKR,CCEP,CDNS,CEG,CMCSA,COST,CPRT,CRWD,"
+            "CRWV,CSCO,CSX,CTAS,DASH,DDOG,DXCM,EXC,FANG,FAST,FER,FTNT,GEHC,"
+            "GILD,GOOG,GOOGL,HON,HONA,IDXX,INTC,INTU,ISRG,KDP,KHC,KLAC,LIN,"
+            "LITE,LRCX,MAR,MCHP,MDLZ,MELI,META,MNST,MPWR,MRVL,MSFT,MSTR,MU,"
+            "NBIS,NFLX,NVDA,NXPI,ODFL,ORLY,PANW,PAYX,PCAR,PDD,PEP,PLTR,PYPL,"
+            "QCOM,REGN,RKLB,ROP,ROST,SBUX,SHOP,SNDK,SNPS,SPCX,STX,TER,TMUS,"
+            "TRI,TSLA,TTWO,TXN,VRTX,WBD,WDAY,WDC,WMT,XEL"
         )
     )
     equity_signal_interval_minutes: int = Field(default=15)
