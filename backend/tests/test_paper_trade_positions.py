@@ -30,7 +30,8 @@ def _broker_position(*, symbol, quantity, avg_cost, underlying=None):
 
 
 def _db_trade(*, underlying, entry_date, spread_type, strategy="equity",
-              trading_mode="aggressive", credit_received=Decimal("362.808"),
+              trading_mode="aggressive", approved_by="autopilot",
+              credit_received=Decimal("362.808"),
               mfe=Decimal("120.5"), mae=Decimal("-63.43")):
     t = MagicMock()
     t.id = "11111111-1111-1111-1111-111111111111"
@@ -39,6 +40,7 @@ def _db_trade(*, underlying, entry_date, spread_type, strategy="equity",
     t.spread_type = spread_type
     t.entry_date = entry_date
     t.trading_mode_at_entry = trading_mode
+    t.approved_by = approved_by
     t.credit_received = credit_received
     t.mfe = mfe
     t.mae = mae
@@ -81,6 +83,11 @@ async def test_tracked_equity_position_includes_asset_type_hold_days_mode_and_ex
     assert pos["asset_type"] == "equity"
     assert pos["hold_days"] == 5
     assert pos["trading_mode"] == "aggressive"
+    # trading_mode (risk-style: conservative/balanced/aggressive/scalper) and
+    # approved_by (who/what approved the fill) are separate columns — a prior
+    # bug conflated them, feeding the Trade Desk mode badge "manual"/
+    # "autopilot" instead of the actual risk mode.
+    assert pos["approved_by"] == "autopilot"
     assert pos["credit_received"] == pytest.approx(362.808)
     assert pos["mfe_pnl"] == pytest.approx(120.5)
     assert pos["mae_pnl"] == pytest.approx(-63.43)
@@ -126,6 +133,7 @@ async def test_untracked_broker_position_has_no_db_derived_fields():
     assert pos["tracked"] is False
     assert pos["hold_days"] is None
     assert pos["trading_mode"] is None
+    assert pos["approved_by"] is None
     assert pos["mfe_pnl"] is None
     assert pos["mae_pnl"] is None
     assert pos["asset_type"] == "options"  # no spread_type known -> can't claim equity

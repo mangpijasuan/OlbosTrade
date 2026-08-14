@@ -28,6 +28,7 @@ interface ReplayTrade {
   short_strike?: number;
   long_strike?: number;
   trading_mode?: string | null;
+  approved_by?: string | null;
   source?: string | null;
 }
 
@@ -66,10 +67,14 @@ function envLabel(trade: ReplayTrade, accountEnv: string): { text: string; color
 
 function sourceLabel(trade: ReplayTrade): string {
   if (trade.source) return trade.source;
-  const m = (trade.trading_mode || "").toLowerCase();
-  if (m === "user" || m === "copilot") return "Copilot / manual approve";
-  if (m === "manual") return "Manual trade";
-  if (m === "autopilot") return "Autopilot";
+  // approved_by is the dedicated field (added alongside the fix that
+  // restored trading_mode to its actual conservative/balanced/aggressive/
+  // scalper meaning). Rows recorded before that fix have no approved_by,
+  // so fall back to the old trading_mode-as-approver heuristic for them.
+  const a = (trade.approved_by || trade.trading_mode || "").toLowerCase();
+  if (a === "user" || a === "copilot") return "Copilot / manual approve";
+  if (a === "manual") return "Manual trade";
+  if (a === "autopilot") return "Autopilot";
   if ((trade.strategy || "").toLowerCase() === "equity") return "Equity desk / scanner";
   return "Trade recorder";
 }

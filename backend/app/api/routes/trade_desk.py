@@ -1051,7 +1051,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),
                 regime=signal.get("regime", "unknown"),
-                trading_mode=approved_by,
+                approved_by=approved_by,
                 dispatch_id=result.order_id or signal.get("id", ""),
                 status=entry_status,
             )
@@ -1151,7 +1151,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),
                 regime=signal.get("regime", "unknown"),
-                trading_mode=approved_by,
+                approved_by=approved_by,
                 dispatch_id=result.order_id or signal.get("id", ""),
                 status=entry_status,
             )

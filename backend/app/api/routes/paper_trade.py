@@ -167,6 +167,7 @@ async def get_positions():
             "spread_type":    spread_type,
             "hold_days":      max((date.today() - db.entry_date.date()).days, 0) if (db and db.entry_date) else None,
             "trading_mode":   db.trading_mode_at_entry if db else None,
+            "approved_by":    db.approved_by if db else None,
             "credit_received": float(db.credit_received) if (db and db.credit_received is not None) else None,
             "mfe_pnl":        float(db.mfe) if (db and db.mfe is not None) else None,
             "mae_pnl":        float(db.mae) if (db and db.mae is not None) else None,
@@ -189,6 +190,7 @@ async def get_positions():
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
                 "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,
                 "trading_mode":    t.trading_mode_at_entry,
+                "approved_by":     t.approved_by,
                 "credit_received": float(t.credit_received or 0),
                 "mfe_pnl":         float(t.mfe_pnl or 0),
                 "mae_pnl":         float(t.mae_pnl or 0),
@@ -250,6 +252,7 @@ async def get_trade_history(
                     "signal_score":    float(t.signal_score or 0),
                     "hold_days":       max(((t.exit_date or datetime.now(timezone.utc)) - t.entry_date).days, 0) if t.entry_date else None,
                     "trading_mode":    getattr(t, "trading_mode_at_entry", None),
+                    "approved_by":     getattr(t, "approved_by", None),
                 }
                 for t in trades
             ],

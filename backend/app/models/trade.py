@@ -76,7 +76,12 @@ class Trade(Base):
 
     # Quantity and mode
     quantity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=1)
+    # Risk-style mode active at entry: conservative|balanced|aggressive|scalper.
+    # Feeds ModeAnalyticsEngine and the Trade Desk mode badge.
     trading_mode_at_entry: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Who/what approved the trade: manual|autopilot|user|copilot|scan_panel.
+    # A separate concept from trading_mode_at_entry — do not conflate the two.
+    approved_by: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # AI & execution
     signal_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4), nullable=True)
