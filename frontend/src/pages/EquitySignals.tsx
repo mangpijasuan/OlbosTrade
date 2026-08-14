@@ -440,7 +440,12 @@ function EquitySignalsGrid() {
   const [minMovePct, setMinMovePct] = useState(0);
 
   const loadSignals = () => {
-    fetch("/api/equity/signals")
+    // Explicit limit — a single scan cycle across the equity watchlist (102
+    // tickers as of the Nasdaq-100 switch) can produce one entry per
+    // ticker; relying on the backend's implicit default silently truncated
+    // a full cycle in the past. 150 covers the current watchlist with room
+    // to grow.
+    fetch("/api/equity/signals?limit=150")
       .then(r => r.json())
       .then(d => setSignals(d.signals || []))
       .catch(e => setError(String(e)));

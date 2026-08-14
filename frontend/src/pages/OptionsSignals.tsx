@@ -267,7 +267,9 @@ export default function OptionsSignals() {
   const [showReasons, setShowReasons] = useState(false);
 
   const loadSignals = () => {
-    (api.getOptionsSignals() as Promise<{ signals?: OptionsSignal[] }>)
+    // Explicit limit — see EquitySignals.tsx's loadSignals for why (same
+    // watchlist-size vs. implicit-default truncation issue).
+    (api.getOptionsSignals(150) as Promise<{ signals?: OptionsSignal[] }>)
       .then(d => setSignals(d.signals || []))
       .catch(e => setError(String(e)));
   };

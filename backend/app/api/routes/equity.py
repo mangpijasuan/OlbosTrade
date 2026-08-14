@@ -99,8 +99,18 @@ async def scan_equity_signals(tickers: list[str] = None, limit: int = 10):
 
 
 @router.get("/signals")
-async def list_equity_signals(limit: int = 50):
-    """Return recent equity signals (most recent first)."""
+async def list_equity_signals(limit: int = 150):
+    """
+    Return recent equity signals (most recent first).
+
+    Default bumped from 50 — the same "stale, unexamined default" pattern
+    the watchlist itself had. A single scan cycle across the equity
+    watchlist (102 tickers as of the Nasdaq-100 switch) produces one entry
+    per ticker; a limit of 50 silently truncated a full cycle to half of
+    it. 150 comfortably covers the current watchlist with room to grow,
+    while staying under the 200-entry store cap (_recent_signals) so
+    nothing already recorded gets hidden.
+    """
     return {"signals": _recent_signals[:limit], "total": len(_recent_signals)}
 
 

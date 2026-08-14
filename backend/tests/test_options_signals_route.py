@@ -22,6 +22,17 @@ async def test_list_options_signals_empty():
 
 
 @pytest.mark.asyncio
+async def test_default_limit_covers_a_full_watchlist_cycle():
+    """The default was 50 — a single scan cycle across the equity
+    watchlist (102 tickers as of the Nasdaq-100 switch) can produce one
+    entry per ticker, so 50 silently truncated a full cycle to half of
+    it. Must stay comfortably above the current watchlist size."""
+    import inspect
+    default = inspect.signature(options_routes.list_options_signals).parameters["limit"].default
+    assert default >= 102
+
+
+@pytest.mark.asyncio
 async def test_list_options_signals_returns_stored():
     options_routes._recent_options_signals.append({
         "id": "opt-1",

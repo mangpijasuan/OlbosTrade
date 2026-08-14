@@ -23,8 +23,18 @@ class SpreadAnalyzeRequest(BaseModel):
 
 
 @router.get("/signals")
-async def list_options_signals(limit: int = 50):
-    """Return recent options spread signals (most recent first)."""
+async def list_options_signals(limit: int = 150):
+    """
+    Return recent options spread signals (most recent first).
+
+    Default bumped from 50 — the same "stale, unexamined default" pattern
+    the watchlist itself had. A single scan cycle across the equity
+    watchlist (102 tickers as of the Nasdaq-100 switch) can produce up to
+    one entry per ticker; a limit of 50 silently truncated a full cycle to
+    half of it. 150 comfortably covers the current watchlist with room for
+    it to grow, while staying under the 200-entry store cap
+    (_recent_options_signals) so nothing already recorded gets hidden.
+    """
     return {
         "signals": _recent_options_signals[:limit],
         "total": len(_recent_options_signals),
@@ -53,7 +63,11 @@ async def trigger_options_signal_scan():
             pass
 
     return {
-        "signals": _recent_options_signals[:50],
+        # Same fix as GET /signals — this scan just recorded up to one entry
+        # per watchlist ticker (102 as of the Nasdaq-100 switch); a hardcoded
+        # :50 here truncated the "RUN SCAN" button's own response to half a
+        # cycle regardless of what GET /signals' own limit was.
+        "signals": _recent_options_signals[:150],
         "total": len(_recent_options_signals),
     }
 
