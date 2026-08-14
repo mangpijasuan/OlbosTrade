@@ -337,7 +337,7 @@ function SignalGroup({ action, signals }: { action: Signal["action"]; signals: S
   );
 }
 
-function buildShareText(top: Signal[]): string {
+function buildShareText(top: Signal[], label: string): string {
   const lines = top.map(sig => {
     const emoji = sig.action === "BUY" ? "🟢" : "🔴";
     const pct = Math.round(sig.confidence * 100);
@@ -349,7 +349,7 @@ function buildShareText(top: Signal[]): string {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
   return [
-    `📊 Top Signals — OlbosTrade (${when})`,
+    `📊 Top ${label} Signals — OlbosTrade (${when})`,
     "",
     ...lines,
     "",
@@ -357,13 +357,13 @@ function buildShareText(top: Signal[]): string {
   ].join("\n");
 }
 
-function TopSignals({ top }: { top: Signal[] }) {
+function TopSignals({ top, label }: { top: Signal[]; label: string }) {
   const [copied, setCopied] = useState(false);
   if (top.length === 0) return null;
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(buildShareText(top));
+      await navigator.clipboard.writeText(buildShareText(top, label));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -383,7 +383,7 @@ function TopSignals({ top }: { top: Signal[] }) {
           color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 12,
           fontWeight: 700, letterSpacing: "0.1em",
         }}>
-          TOP {top.length} SIGNAL{top.length > 1 ? "S" : ""}
+          TOP {top.length} {label}
         </span>
         <div style={{ flex: 1 }} />
         <button
@@ -485,11 +485,11 @@ function EquitySignalsGrid() {
     .filter(s => s.action === "HOLD" || s.earnings_gated)
     .sort(sortRecentThenConfident);
   const actionableCount = buySignals.length + sellSignals.length;
-  // Same filtered set the BUY/SELL sections show (respects Min move %),
-  // just combined and re-sorted so the top 3 can be BUY, SELL, or a mix.
-  const topSignals = [...buySignals, ...sellSignals]
-    .sort(sortRecentThenConfident)
-    .slice(0, 3);
+  // Split rather than merged: a mixed top-3 can get crowded out entirely by
+  // one side (e.g. three high-confidence BUYs hiding a strong SELL), so BUY
+  // and SELL each get their own top-3-by-confidence ranking.
+  const topBuySignals = buySignals.slice(0, 3);
+  const topSellSignals = sellSignals.slice(0, 3);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -559,7 +559,10 @@ function EquitySignalsGrid() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <TopSignals top={topSignals} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
+            <TopSignals top={topBuySignals} label="BUY" />
+            <TopSignals top={topSellSignals} label="SELL" />
+          </div>
           <SignalGroup action="BUY" signals={buySignals} />
           <SignalGroup action="SELL" signals={sellSignals} />
           <SignalGroup action="HOLD" signals={holdSignals} />
