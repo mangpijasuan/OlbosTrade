@@ -6,6 +6,7 @@
  */
 
 import React from "react";
+import { Panel, StatTile, Button } from "./ui";
 
 interface SignalLike {
   id?: string;
@@ -114,7 +115,7 @@ export default function SignalDetailDrawer({
               {timeframe.toUpperCase()} · {lifecycle.toUpperCase()} · evidence only
             </div>
           </div>
-          <button className="btn-t" onClick={onClose}>Close</button>
+          <Button onClick={onClose}>Close</Button>
         </div>
 
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -122,16 +123,15 @@ export default function SignalDetailDrawer({
             <div className="empty-state">No signal payload is selected for this symbol yet.</div>
           ) : (
             <>
-              <section className="panel" style={{ padding: 14 }}>
+              <Panel>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
-                  <Metric label="Action" value={signal.action || "HOLD"} tone={signal.action === "BUY" ? "var(--green)" : signal.action === "SELL" ? "var(--red)" : "var(--ink-dim)"} />
-                  <Metric label="Confidence" value={signal.confidence != null ? `${Math.round(signal.confidence * 100)}%` : "—"} tone="var(--amber)" />
-                  <Metric label="Generated" value={fmtDate(signal.generated_at)} />
+                  <StatTile variant="boxed" label="Action" value={signal.action || "HOLD"} tone={signal.action === "BUY" ? "var(--green)" : signal.action === "SELL" ? "var(--red)" : "var(--ink-dim)"} />
+                  <StatTile variant="boxed" label="Confidence" value={signal.confidence != null ? `${Math.round(signal.confidence * 100)}%` : "—"} tone="var(--amber)" />
+                  <StatTile variant="boxed" label="Generated" value={fmtDate(signal.generated_at)} />
                 </div>
-              </section>
+              </Panel>
 
-              <section className="panel" style={{ padding: 14 }}>
-                <div className="panel-title" style={{ marginBottom: 10 }}>Closed-Bar Lifecycle</div>
+              <Panel title="Closed-Bar Lifecycle">
                 <div style={{ color: lifecycle === "confirmed" ? "var(--green)" : "var(--amber)", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>
                   {lifecycle}
                 </div>
@@ -140,34 +140,31 @@ export default function SignalDetailDrawer({
                   Preliminary evidence is not eligible for backtest performance claims or direct execution.
                 </div>
                 <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <Metric label="Bar timestamp" value={latestBar ? fmtDate(latestBar.timestamp) : "—"} />
-                  <Metric label="Bar close" value={fmtMoney(latestBar?.close)} />
+                  <StatTile variant="boxed" label="Bar timestamp" value={latestBar ? fmtDate(latestBar.timestamp) : "—"} />
+                  <StatTile variant="boxed" label="Bar close" value={fmtMoney(latestBar?.close)} />
                 </div>
-              </section>
+              </Panel>
 
-              <section className="panel" style={{ padding: 14 }}>
-                <div className="panel-title" style={{ marginBottom: 10 }}>Technical Evidence</div>
+              <Panel title="Technical Evidence">
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
-                  <Metric label="RSI" value={fmtNum(signal.indicators?.rsi, 1)} />
-                  <Metric label="MACD" value={fmtNum(signal.indicators?.macd, 3)} />
-                  <Metric label="BB %B" value={fmtNum(signal.indicators?.bb_pct_b, 2)} />
-                  <Metric label="Volume x" value={fmtNum(signal.indicators?.volume_ratio, 2)} />
+                  <StatTile variant="boxed" label="RSI" value={fmtNum(signal.indicators?.rsi, 1)} />
+                  <StatTile variant="boxed" label="MACD" value={fmtNum(signal.indicators?.macd, 3)} />
+                  <StatTile variant="boxed" label="BB %B" value={fmtNum(signal.indicators?.bb_pct_b, 2)} />
+                  <StatTile variant="boxed" label="Volume x" value={fmtNum(signal.indicators?.volume_ratio, 2)} />
                 </div>
-              </section>
+              </Panel>
 
-              <section className="panel" style={{ padding: 14 }}>
-                <div className="panel-title" style={{ marginBottom: 10 }}>Trade Plan Evidence</div>
+              <Panel title="Trade Plan Evidence">
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
-                  <Metric label="Entry" value={fmtMoney(signal.trade_plan?.entry_price)} />
-                  <Metric label="Stop" value={fmtMoney(signal.trade_plan?.stop_price)} tone="var(--red)" />
-                  <Metric label="Target" value={fmtMoney(signal.trade_plan?.target_price)} tone="var(--green)" />
-                  <Metric label="Target Move %" value={signal.trade_plan?.target_move_pct != null ? `${signal.trade_plan.target_move_pct.toFixed(1)}%` : "—"} tone="var(--amber)" />
-                  <Metric label="Risk / Reward" value={signal.trade_plan?.risk_reward != null ? `${signal.trade_plan.risk_reward.toFixed(2)}x` : "—"} tone="var(--amber)" />
+                  <StatTile variant="boxed" label="Entry" value={fmtMoney(signal.trade_plan?.entry_price)} />
+                  <StatTile variant="boxed" label="Stop" value={fmtMoney(signal.trade_plan?.stop_price)} tone="var(--red)" />
+                  <StatTile variant="boxed" label="Target" value={fmtMoney(signal.trade_plan?.target_price)} tone="var(--green)" />
+                  <StatTile variant="boxed" label="Target Move %" value={signal.trade_plan?.target_move_pct != null ? `${signal.trade_plan.target_move_pct.toFixed(1)}%` : "—"} tone="var(--amber)" />
+                  <StatTile variant="boxed" label="Risk / Reward" value={signal.trade_plan?.risk_reward != null ? `${signal.trade_plan.risk_reward.toFixed(2)}x` : "—"} tone="var(--amber)" />
                 </div>
-              </section>
+              </Panel>
 
-              <section className="panel" style={{ padding: 14 }}>
-                <div className="panel-title" style={{ marginBottom: 10 }}>Narrative</div>
+              <Panel title="Narrative">
                 {reasons.length ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {reasons.map((reason, index) => (
@@ -179,7 +176,7 @@ export default function SignalDetailDrawer({
                 ) : (
                   <div style={{ color: "var(--ink-faint)", fontSize: 12 }}>No signal narrative available yet.</div>
                 )}
-              </section>
+              </Panel>
 
               <div style={{ color: "var(--ink-faint)", fontSize: 11, lineHeight: 1.7 }}>
                 No chart signal or drawer action can submit a broker order. Candidates still require macro, risk, portfolio, guardrail, and execution-mode gates.
@@ -188,17 +185,6 @@ export default function SignalDetailDrawer({
           )}
         </div>
       </aside>
-    </div>
-  );
-}
-
-function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-3)", padding: "10px 12px", minWidth: 0 }}>
-      <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
-      <div className="mono" style={{ color: tone || "var(--ink)", fontWeight: 700, wordBreak: "break-word" }}>
-        {value}
-      </div>
     </div>
   );
 }

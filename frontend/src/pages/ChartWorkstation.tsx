@@ -370,10 +370,7 @@ export default function ChartWorkstation({
           { label: "Portfolio", value: fmtMoney(netLiq, 2), tone: "var(--cyan)" },
           { label: "Reconciliation", value: reconciliation?.clean ? "CLEAN" : "WATCH", tone: reconciliation?.clean ? "var(--green)" : "var(--amber)" },
         ].map((item) => (
-          <div key={item.label} className="panel" style={{ padding: "12px 14px" }}>
-            <div className="kicker" style={{ marginBottom: 8 }}>{item.label}</div>
-            <div className="data-val sm" style={{ color: item.tone }}>{item.value}</div>
-          </div>
+          <StatTile key={item.label} variant="boxed" label={item.label} hint={hintFor(item.label)} value={item.value} tone={item.tone} />
         ))}
       </div>
       )}
@@ -479,33 +476,28 @@ export default function ChartWorkstation({
         )}
 
         <div className="workstation-center">
-          <section className="panel" style={{ overflow: "hidden" }}>
-            <div className="panel-head" style={{ gap: 12, flexWrap: "wrap" }}>
+          <Panel
+            sectionStyle={{ overflow: "hidden" }}
+            padding={0}
+            title={
               <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 28, fontWeight: 700, color: "var(--cyan)" }}>{symbol}</span>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-dim)" }}>
                   {selectedSnapshot?.last_close != null ? fmtMoney(selectedSnapshot.last_close, 2) : "—"} · {fmtPct(selectedSnapshot?.change_pct, 2)}
                 </span>
               </div>
+            }
+            action={
               <div style={{ display: "flex", gap: 8, marginLeft: "auto", flexWrap: "wrap" }}>
                 {TIMEFRAMES.map((item) => (
-                  <button
-                    key={item.key}
-                    className={`btn-t ${timeframe === item.key ? "active" : ""}`}
-                    onClick={() => setTimeframe(item.key)}
-                  >
+                  <Button key={item.key} active={timeframe === item.key} onClick={() => setTimeframe(item.key)}>
                     {item.label}
-                  </button>
+                  </Button>
                 ))}
-                <button
-                  className="btn-t"
-                  onClick={() => setSignalDrawerOpen(true)}
-                >
-                  Signal Detail
-                </button>
+                <Button onClick={() => setSignalDrawerOpen(true)}>Signal Detail</Button>
               </div>
-            </div>
-
+            }
+          >
             <div style={{ padding: 14 }}>
               <div style={{
                 display: "grid",
@@ -547,7 +539,7 @@ export default function ChartWorkstation({
                 </div>
               )}
             </div>
-          </section>
+          </Panel>
 
           {!compact && (
           <section className="chart-intel-grid">

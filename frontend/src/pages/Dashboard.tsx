@@ -483,10 +483,13 @@ export default function Dashboard() {
               <span className="panel-title">Active Risk Profile</span>
             </div>
             <div style={{ padding: "12px 14px" }}>
-              <span className={`mode-badge ${guardrailStatus?.trading_mode || "balanced"}`}
-                style={{ fontSize: 12, padding: "4px 12px" }}>
+              <Badge
+                kind="mode"
+                tone={(guardrailStatus?.trading_mode as any) || "balanced"}
+                style={{ fontSize: 12, padding: "4px 12px" }}
+              >
                 {(guardrailStatus?.trading_mode || "balanced").toUpperCase()}
-              </span>
+              </Badge>
               <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
                 {guardrailStatus?.trading_allowed ? "TRADING ACTIVE" : "TRADING SUSPENDED"}
               </div>

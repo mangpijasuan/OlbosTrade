@@ -9,7 +9,7 @@ export function Panel({
   sectionStyle,
   className,
 }: {
-  title: string;
+  title?: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
   padding?: number | string;
@@ -19,10 +19,12 @@ export function Panel({
 }) {
   return (
     <section className={`panel${className ? ` ${className}` : ""}`} style={sectionStyle}>
-      <div className="panel-head">
-        <div className="panel-title">{title}</div>
-        {action}
-      </div>
+      {(title != null || action != null) && (
+        <div className="panel-head">
+          {title != null && <div className="panel-title">{title}</div>}
+          {action}
+        </div>
+      )}
       <div style={{ padding, ...bodyStyle }}>{children}</div>
     </section>
   );
@@ -88,8 +90,8 @@ export function StatTile({
 // Dashboard's UNTRACKED/OPEN position tags) — pass `bg` to get filled, omit
 // it for outline.
 type BadgeProps =
-  | { kind: "mode"; tone: "conservative" | "balanced" | "aggressive" | "scalper"; children: React.ReactNode }
-  | { kind: "signal"; tone: "bullish" | "bearish" | "neutral"; children: React.ReactNode }
+  | { kind: "mode"; tone: "conservative" | "balanced" | "aggressive" | "scalper"; children: React.ReactNode; style?: React.CSSProperties }
+  | { kind: "signal"; tone: "bullish" | "bearish" | "neutral"; children: React.ReactNode; style?: React.CSSProperties }
   | { kind: "tag"; tone: string; bg?: string; children: React.ReactNode };
 
 export function Badge(props: BadgeProps) {
@@ -109,7 +111,7 @@ export function Badge(props: BadgeProps) {
     );
   }
   return (
-    <span className={`${props.kind === "mode" ? "mode-badge" : "signal-badge"} ${props.tone}`}>
+    <span className={`${props.kind === "mode" ? "mode-badge" : "signal-badge"} ${props.tone}`} style={props.style}>
       {props.children}
     </span>
   );
