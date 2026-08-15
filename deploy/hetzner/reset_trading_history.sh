@@ -15,10 +15,13 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-# DB_USER/DB_NAME deliberately unchanged — see docker-compose.hetzner.yml note.
+# DB_USER/DB_NAME: switch to the new `olbostrade` role/db in Compose/docs.
+# If you're running against an existing deployment that still uses the old
+# `olbosquant` names, update these values or perform the migration described
+# in deploy/hetzner/README.md before running this script.
 DB_CONTAINER="olbostrade-db"
-DB_USER="olbosquant"
-DB_NAME="olbosquantdb"
+DB_USER="olbostrade"
+DB_NAME="olbostrade"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQL_FILE="${SCRIPT_DIR}/reset_trading_history.sql"
 

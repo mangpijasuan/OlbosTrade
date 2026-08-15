@@ -50,11 +50,15 @@ nano backend/.env.prod
 Fill in these required values:
 | Variable | How to get it |
 |----------|--------------|
-| `OLBOSQUANT_DB_PASSWORD` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `OLBOSTRADE_DB_PASSWORD` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `OLBOS_API_KEY` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 
-`OLBOSQUANT_DB_PASSWORD` keeps its original name (matches the unchanged
-Postgres user/db — see the note above); it is NOT `OLBOSTRADE_DB_PASSWORD`.
+`OLBOSTRADE_DB_PASSWORD` is the database password variable referenced by
+`docker-compose.hetzner.yml`. IMPORTANT: changing the Compose DB role/DB
+name on a running system does not migrate existing data. The production
+Postgres data volume created by the previous deploy is still pinned by name
+— you must perform a dump+restore or in-database migration to move data to
+the new role/db names. See the "Migration" section below before switching.
 
 Leave `DATABASE_URL` and `REDIS_URL` blank — docker-compose fills them in.
 
@@ -139,8 +143,8 @@ docker exec -it olbostrade-backend bash
 # Run a migration manually
 docker exec olbostrade-backend python3 -m alembic upgrade head
 
-# Check database (user/db name unchanged — see note above)
-docker exec -it olbostrade-db psql -U olbosquant -d olbosquantdb
+# Check database (use new names after migration)
+docker exec -it olbostrade-db psql -U olbostrade -d olbostrade
 ```
 
 ---
@@ -196,6 +200,31 @@ async def t():
     ib.disconnect()
 asyncio.run(t())
 "
+
+## Migration
+
+If you are migrating an existing deployment that used the old `olbosquant` role
+and `olbosquantdb` database, follow one of these approaches before switching
+the Compose file to reference `olbostrade` fully:
+
+- Dump and restore (recommended):
+
+```bash
+# on the host, create a dump from the old DB
+docker exec -t olbostrade-db pg_dump -U olbosquant olbosquantdb > /tmp/olbosquantdb.sql
+# create target DB/role on the server (or use a temporary container)
+docker exec -it olbostrade-db psql -U postgres -c "CREATE ROLE olbostrade WITH LOGIN PASSWORD 'secret';"
+docker exec -it olbostrade-db psql -U postgres -c "CREATE DATABASE olbostrade OWNER olbostrade;"
+# restore
+cat /tmp/olbosquantdb.sql | docker exec -i olbostrade-db psql -U olbostrade -d olbostrade
+```
+
+- In-cluster migration: create the new role/db and copy data using SQL tools
+  (for advanced users only). Ensure you have backups before attempting.
+
+After migration, update `backend/.env.prod` to set `OLBOSTRADE_DB_PASSWORD` and
+bring the stack up. If you prefer to keep the old DB names in Compose and
+avoid migrating, you can do so — but update env var names accordingly.
 ```
 
 ---

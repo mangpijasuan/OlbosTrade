@@ -8,11 +8,14 @@
 # Usage — on the server inside /opt/olbostrade:
 #   bash deploy/hetzner/up.sh
 #
-# NOTE on the DB service: container/network names below were renamed from the
-# old "olbosquant" branding, but POSTGRES_USER/POSTGRES_DB/the data volume
-# name were deliberately LEFT UNCHANGED (still olbosquant/olbosquantdb/
-# olbosquant_pgdata). Renaming those would need a live ALTER DATABASE/ALTER
-# USER or a dump+restore.
+# NOTE on the DB service: we are renaming the Postgres role and database to
+# the new `olbostrade` names in this Compose file and the deploy docs. The
+# actual on-disk data volume was created previously and is pinned by name to
+# the existing volume. To avoid accidental data loss the Compose volume is
+# still mapped to the original external volume name (see `volumes:` below).
+# Changing these names on a running cluster requires a migration (dump+restore
+# or in-cluster CREATE ROLE/CREATE DATABASE + data copy). Read the migration
+# notes in `deploy/hetzner/README.md` before applying on production.
 #
 # IMPORTANT — the pgdata volume is pinned with `external: true` + an explicit
 # `name:` below, pointing at the volume Compose actually created back when
@@ -34,7 +37,7 @@ services:
     env_file:
       - backend/.env.prod
     environment:
-      DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbostrade-db:5432/olbosquantdb
+      DATABASE_URL: postgresql+asyncpg://olbostrade:${OLBOSTRADE_DB_PASSWORD}@olbostrade-db:5432/olbostrade
     depends_on:
       olbostrade-db:
         condition: service_healthy
@@ -101,15 +104,15 @@ services:
     container_name: olbostrade-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER:     olbosquant
-      POSTGRES_PASSWORD: ${OLBOSQUANT_DB_PASSWORD:?set OLBOSQUANT_DB_PASSWORD in backend/.env.prod}
-      POSTGRES_DB:       olbosquantdb
+      POSTGRES_USER:     olbostrade
+      POSTGRES_PASSWORD: ${OLBOSTRADE_DB_PASSWORD:?set OLBOSTRADE_DB_PASSWORD in backend/.env.prod}
+      POSTGRES_DB:       olbostrade
     volumes:
-      - olbosquant_pgdata:/var/lib/postgresql/data
+      - olbostrade_pgdata:/var/lib/postgresql/data
     networks:
       - olbostrade_internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U olbosquant -d olbosquantdb"]
+      test: ["CMD-SHELL", "pg_isready -U olbostrade -d olbostrade"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -124,10 +127,10 @@ services:
         max-file: "3"
 
 volumes:
-  olbosquant_pgdata:
+  olbostrade_pgdata:
     external: true
-    name: olbosquant_olbosquant_pgdata   # the real volume — see NOTE above
-  olbosquant_archive:
+    name: olbosquant_olbosquant_pgdata   # pinned to the original external volume (see NOTE above)
+  olbostrade_archive:
 
 networks:
   olbostrade_internal:

@@ -21,7 +21,7 @@ vars, no secrets, no destructive migrations. Existing data is untouched.
 Confirm you're on the server, in the project root:
 
 ```
-cd /opt/olbosquant
+cd /opt/olbostrade
 ```
 
 Snapshot the current commit so rollback is trivial:
@@ -93,26 +93,26 @@ Give the backend a few seconds to come up before migrating:
 docker compose -f docker-compose.hetzner.yml ps
 ```
 
-(Wait until `olbosquant-backend` shows `healthy`.)
+(Wait until `olbostrade-backend` shows `healthy`.)
 
 ---
 
 ## 5. Apply the database migration (creates `research_experiments`)
 
 ```
-docker exec olbosquant-backend python3 -m alembic upgrade head
+docker exec olbostrade-backend python3 -m alembic upgrade head
 ```
 
 Confirm the head is `0006`:
 
 ```
-docker exec olbosquant-backend python3 -m alembic current
+docker exec olbostrade-backend python3 -m alembic current
 ```
 
 You should see `0006 (head)`. Verify the table exists:
 
 ```
-docker exec olbosquant-db psql -U olbosquant -d olbosquantdb -c "\dt research_experiments"
+docker exec olbostrade-db psql -U olbostrade -d olbostrade -c "\dt research_experiments"
 ```
 
 ---
@@ -146,7 +146,7 @@ curl -fsS http://127.0.0.1:8000/api/research/lab/experiments
 Watch the logs for a scan cycle and the new vol-sizing line:
 
 ```
-docker logs olbosquant-backend -f
+docker logs olbostrade-backend -f
 ```
 
 (Look for `Vol sizing:` and `Strategy health` / `Frequency controller` lines. Ctrl-C to stop.)
@@ -181,7 +181,7 @@ docker compose -f docker-compose.hetzner.yml up -d
 To also drop the table (optional, only if you want a clean revert):
 
 ```
-docker exec olbosquant-backend python3 -m alembic downgrade 0005
+docker exec olbostrade-backend python3 -m alembic downgrade 0005
 ```
 
 ---

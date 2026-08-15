@@ -25,12 +25,13 @@ if [[ -f backend/.env.prod ]]; then
   set -a; source backend/.env.prod; set +a
 fi
 
-# NOTE: DB_USER/DB_NAME are deliberately unchanged from the old olbosquant
-# branding — the Postgres database itself was not renamed during the
-# OlbosTrade infra migration (only the container/network names were).
+# NOTE: this repository now references the `olbostrade` role/database by
+# default. If your running deployment still uses the old `olbosquant` names,
+# set `POSTGRES_USER`/`POSTGRES_DB` in backend/.env.prod accordingly or follow
+# the migration steps in deploy/hetzner/README.md before switching.
 DB_CONTAINER="${DB_CONTAINER:-olbostrade-db}"
-DB_USER="${POSTGRES_USER:-olbosquant}"
-DB_NAME="${POSTGRES_DB:-olbosquantdb}"
+DB_USER="${POSTGRES_USER:-olbostrade}"
+DB_NAME="${POSTGRES_DB:-olbostrade}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/olbostrade-backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
@@ -74,7 +75,8 @@ echo "  ✅ Backup complete: $OUT"
 # /opt/olbosquant path, update it after the directory rename — cron does not
 # follow renames.
 #
-# Restore a dump into the running DB container:
+# Restore a dump into the running DB container (adjust user/db if you kept
+# the old names):
 #   gunzip -c /opt/olbostrade-backups/olbostrade-YYYYMMDD-HHMMSS.sql.gz \
-#     | docker exec -i olbostrade-db psql -U olbosquant -d olbosquantdb
+#     | docker exec -i olbostrade-db psql -U olbostrade -d olbostrade
 # ───────────────────────────────────────────────────────────────────────────────
