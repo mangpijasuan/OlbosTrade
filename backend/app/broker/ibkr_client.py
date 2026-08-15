@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math as _math
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Dict, List, Literal, Tuple
@@ -35,6 +36,15 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
+
+
+def _safe_int(value, default: int = 0) -> int:
+    """int(value or default), but NaN-safe — IBKR returns NaN (not None) for
+    volume/open-interest on untraded contracts, and int(nan) raises ValueError."""
+    if value is None or (isinstance(value, float) and _math.isnan(value)):
+        return default
+    return int(value)
+
 
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
@@ -201,8 +211,8 @@ class IBKRClient(BrokerInterface):
                         bid=Decimal(str(ticker.bid or 0)),
                         ask=Decimal(str(ticker.ask or 0)),
                         last=Decimal(str(ticker.last or 0)),
-                        volume=int(ticker.volume or 0),
-                        open_interest=int(ticker.callOpenInterest or ticker.putOpenInterest or 0),
+                        volume=_safe_int(ticker.volume),
+                        open_interest=_safe_int(ticker.callOpenInterest) or _safe_int(ticker.putOpenInterest),
                         greeks=greeks,
                     )
                     if option_type == "C":
