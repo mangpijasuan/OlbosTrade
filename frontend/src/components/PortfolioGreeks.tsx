@@ -3,6 +3,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { Badge } from "./ui";
 
 interface Greeks {
   net_delta: number;
@@ -70,20 +71,14 @@ export default function PortfolioGreeks() {
       }}>
         PORTFOLIO GREEKS
         {greeks.needs_hedge && (
-          <span style={{
-            color: "var(--amber)", border: "1px solid var(--amber)",
-            borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8,
-          }}>
+          <Badge kind="tag" tone="var(--amber)" style={{ borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8, opacity: 1 }}>
             HEDGE NEEDED
-          </span>
+          </Badge>
         )}
         {greeks.is_delta_neutral && (
-          <span style={{
-            color: "var(--green)", border: "1px solid var(--green)",
-            borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8,
-          }}>
+          <Badge kind="tag" tone="var(--green)" style={{ borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8, opacity: 1 }}>
             DELTA NEUTRAL
-          </span>
+          </Badge>
         )}
       </div>
 

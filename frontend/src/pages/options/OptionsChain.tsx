@@ -4,6 +4,7 @@
  * shows the underlying error if the gateway is down.
  */
 import React, { useEffect, useState } from "react";
+import { Button } from "../../components/ui";
 
 interface Contract {
   strike: number; bid: number; ask: number; last: number;
@@ -91,7 +92,7 @@ export default function OptionsChain({
               padding: "4px 8px",
             }}
           />
-          <button className="btn-t" type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Load</button>
+          <Button type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Load</Button>
         </form>
         {spot != null && (
           <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--cyan)" }}>

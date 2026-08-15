@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Button } from "./ui";
 
 interface ModeInfo {
   display_name: string; description: string; dte_range: string;
@@ -118,12 +119,12 @@ export default function TradingModeSelector() {
               </p>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn-t" onClick={() => setWarning(null)} style={{ flex: 1 }}>
+              <Button onClick={() => setWarning(null)} style={{ flex: 1 }}>
                 Cancel
-              </button>
-              <button className="btn-t danger" onClick={() => activate(warning.mode, true)} style={{ flex: 1 }}>
+              </Button>
+              <Button danger onClick={() => activate(warning.mode, true)} style={{ flex: 1 }}>
                 Confirm scalper
-              </button>
+              </Button>
             </div>
           </div>
         </div>

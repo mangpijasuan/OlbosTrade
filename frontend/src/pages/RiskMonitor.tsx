@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api, getOperatorApiKey, setOperatorApiKey } from "../api/client";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
+import { Panel, Button } from "../components/ui";
 
 interface MarginInfo {
   available: boolean;
@@ -66,12 +67,7 @@ export default function RiskMonitor() {
   const ksEngaged = !!(ks?.engaged ?? ks?.is_engaged);
 
   const Section = ({ title, children }: any) => (
-    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", marginBottom: 16 }}>
-      <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-        <span className="panel-title">{title}</span>
-      </div>
-      <div>{children}</div>
-    </div>
+    <Panel padding={0} sectionStyle={{ marginBottom: 16 }} title={title}>{children}</Panel>
   );
 
   const Meter = ({ label, val, max, unit = "", warn = 0.6, crit = 0.85 }: any) => {
@@ -245,14 +241,13 @@ export default function RiskMonitor() {
                   border: "1px solid var(--line)", borderRadius: 4,
                 }}
               />
-              <button
-                className="btn-t"
+              <Button
                 type="button"
                 onClick={() => setOperatorApiKey(operatorKey.trim())}
                 style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}
               >
                 SAVE SESSION KEY
-              </button>
+              </Button>
             </div>
           </Section>
           <Section title="Kill Switch">
@@ -281,14 +276,13 @@ export default function RiskMonitor() {
                       border: "1px solid var(--line)", borderRadius: 4,
                     }}
                   />
-                  <button
-                    className="btn-t"
+                  <Button
                     disabled={ksBusy || !resetCode.trim()}
                     onClick={resetKs}
                     style={{ padding: "10px 0", justifyContent: "center", display: "flex" }}
                   >
                     {ksBusy ? "RESETTING…" : "RESET KILL SWITCH"}
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>

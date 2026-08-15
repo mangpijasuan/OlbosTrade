@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { api } from "../api/client";
 import TradeMarkerChart from "../components/TradeMarkerChart";
+import { Panel, Button } from "../components/ui";
 
 const WATCHLIST = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "QQQ", "SPY"];
 
@@ -89,10 +90,10 @@ export default function StrategyComparison() {
         <Field label="End Date">
           <input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} />
         </Field>
-        <button className="btn-t" onClick={run} disabled={loading}
+        <Button onClick={run} disabled={loading}
           style={{ width: "100%", marginTop: 8, padding: "10px", justifyContent: "center", display: "flex" }}>
           {loading ? "Running…" : "Run comparison ↗"}
-        </button>
+        </Button>
         {error && (
           <div style={{ marginTop: 12, fontSize: 11, color: "var(--red)", fontFamily: "var(--mono)" }}>
             ⚠ {error}
@@ -110,10 +111,7 @@ export default function StrategyComparison() {
           </div>
         ) : (
           <>
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                <span className="panel-title">{result.symbol} · {result.start} to {result.end}</span>
-              </div>
+            <Panel padding={0} title={`${result.symbol} · ${result.start} to ${result.end}`}>
               <table className="t-table">
                 <thead>
                   <tr>
@@ -150,19 +148,17 @@ export default function StrategyComparison() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Panel>
 
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", justifyContent: "space-between" }}>
-                <span className="panel-title">Trade History — {chartModel}</span>
-                <span style={{ fontSize: 10, color: "var(--ink-faint)" }}>click a row above to switch model</span>
-              </div>
-              <div style={{ padding: 12 }}>
-                {selected && (
-                  <TradeMarkerChart bars={result.bars} markers={selected.markers} equityCurve={selected.equity_curve} />
-                )}
-              </div>
-            </div>
+            <Panel
+              padding={12}
+              title={`Trade History — ${chartModel}`}
+              action={<span style={{ fontSize: 10, color: "var(--ink-faint)" }}>click a row above to switch model</span>}
+            >
+              {selected && (
+                <TradeMarkerChart bars={result.bars} markers={selected.markers} equityCurve={selected.equity_curve} />
+              )}
+            </Panel>
 
             <div style={{ fontSize: 10, color: "var(--ink-faint)", fontFamily: "var(--mono)" }}>
               {result.disclaimer}

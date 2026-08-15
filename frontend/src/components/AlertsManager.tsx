@@ -7,6 +7,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Badge, Button } from "./ui";
 
 interface Rule {
   id: string; name: string; symbol: string; mode: string; enabled: boolean;
@@ -50,13 +51,13 @@ export default function AlertsManager() {
                 <td style={{ color: "var(--ink-dim)", fontSize: 12 }}>
                   {r.predicates.map(p => `${p.metric} ${p.op} ${p.value}`).join(" and ")}
                 </td>
-                <td><span className={`mode-badge ${MODE_CLASS[r.mode] || "conservative"}`}>{r.mode}</span></td>
+                <td><Badge kind="mode" tone={(MODE_CLASS[r.mode] || "conservative") as any}>{r.mode}</Badge></td>
                 <td>
                   <input type="checkbox" checked={r.enabled}
                     onChange={e => api.toggleAlertRule(r.id, e.target.checked).then(load)} />
                 </td>
-                <td><button className="btn-t danger" style={{ fontSize: 11, padding: "2px 8px" }}
-                  onClick={() => api.deleteAlertRule(r.id).then(load)}>Delete</button></td>
+                <td><Button danger style={{ fontSize: 11, padding: "2px 8px" }}
+                  onClick={() => api.deleteAlertRule(r.id).then(load)}>Delete</Button></td>
               </tr>
             ))}
           </tbody>
@@ -82,11 +83,11 @@ export default function AlertsManager() {
         <Field label="Mode">
           <div style={{ display: "flex", gap: 6 }}>
             {["manual", "copilot", "autopilot"].map(m => (
-              <button key={m} className={`btn-t ${mode === m ? "active" : ""}`} style={{ fontSize: 12, textTransform: "capitalize" }} onClick={() => setMode(m)}>{m}</button>
+              <Button key={m} active={mode === m} style={{ fontSize: 12, textTransform: "capitalize" }} onClick={() => setMode(m)}>{m}</Button>
             ))}
           </div>
         </Field>
-        <button className="btn-t active" style={{ marginTop: 4 }} onClick={create}>Create alert</button>
+        <Button active style={{ marginTop: 4 }} onClick={create}>Create alert</Button>
         <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 10, lineHeight: 1.6 }}>
           Alerts create notifications or gated candidates only — never orders. Copilot/Autopilot candidates still pass every risk, portfolio, and macro gate.
         </div>

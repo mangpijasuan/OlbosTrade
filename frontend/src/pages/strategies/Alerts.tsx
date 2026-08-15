@@ -5,6 +5,7 @@
  * services/alerts/service.py).
  */
 import React, { useEffect, useState } from "react";
+import { Button } from "../../components/ui";
 
 const METRICS = ["iv_rank", "iv_percentile", "vix", "rsi_14", "change_pct", "price", "volume"];
 const OPS = ["gt", "gte", "lt", "lte", "eq", "ne"] as const;
@@ -103,7 +104,7 @@ export default function Alerts() {
             <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>cooldown (min)</span>
             <input style={{ ...inp, width: 60 }} type="number" value={cooldown} onChange={e => setCooldown(+e.target.value)} />
           </label>
-          <button onClick={create} disabled={busy} className="btn-t active">{busy ? "…" : "Create"}</button>
+          <Button onClick={create} disabled={busy} active>{busy ? "…" : "Create"}</Button>
         </div>
         {msg && <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)", marginTop: 8 }}>{msg}</div>}
       </div>

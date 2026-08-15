@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api } from "../api/client";
+import { Panel, Button } from "../components/ui";
 
 // daily_loss_pct/weekly_loss_pct from the API are signed P&L ratios (positive
 // on a gain day, negative on a loss day) — not always a loss despite the field
@@ -117,9 +118,9 @@ export default function Guardrails() {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--line-dim)", background: "var(--bg-2)", display: "flex", gap: 1 }}>
         {(["status","history"] as const).map(t => (
-          <button key={t} className={`btn-t ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+          <Button key={t} active={tab === t} onClick={() => setTab(t)}>
             {t.toUpperCase()}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -178,10 +179,7 @@ export default function Guardrails() {
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Rule status */}
-              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-                <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                  <span className="panel-title">Active Rules</span>
-                </div>
+              <Panel padding={0} title="Active Rules">
                 {rules.map((r, i) => (
                   <div key={r.label} style={{
                     padding: "8px 14px",
@@ -200,14 +198,11 @@ export default function Guardrails() {
                     </div>
                   </div>
                 ))}
-              </div>
+              </Panel>
 
               {/* State snapshot */}
-              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-                <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                  <span className="panel-title">Current State</span>
-                </div>
-                <div style={{ padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 12px" }}>
+              <Panel padding={12} title="Current State">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 12px" }}>
                   {[
                     { label: "Trades Today",       val: String(guardrailStatus?.trades_today || 0) },
                     { label: "Consecutive Losses", val: String(guardrailStatus?.consecutive_losses || 0) },
@@ -232,17 +227,15 @@ export default function Guardrails() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </Panel>
             </div>
 
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span className="panel-title">Reconciliation Status</span>
-                <button className="btn-t" onClick={runReconciliation} disabled={reconRunning}>
-                  {reconRunning ? "Running..." : "Run Check"}
-                </button>
-              </div>
-              <div style={{ padding: 16, display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
+            <Panel
+              padding={16}
+              title="Reconciliation Status"
+              action={<Button onClick={runReconciliation} disabled={reconRunning}>{reconRunning ? "Running..." : "Run Check"}</Button>}
+            >
+              <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
                 <div style={{
                   border: `1px solid ${reconColor}55`,
                   background: "var(--bg-1)",
@@ -308,15 +301,12 @@ export default function Guardrails() {
                   </div>
                 </div>
               </div>
-            </div>
+            </Panel>
           </div>
         )}
 
         {tab === "history" && (
-          <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">Guardrail Event Log</span>
-            </div>
+          <Panel padding={0} title="Guardrail Event Log">
             <table className="t-table">
               <thead><tr>
                 {["Timestamp","Event","Rule","Value","Action"].map(h => <th key={h}>{h}</th>)}
@@ -329,7 +319,7 @@ export default function Guardrails() {
                 </tr>
               </tbody>
             </table>
-          </div>
+          </Panel>
         )}
       </div>
     </div>

@@ -20,6 +20,7 @@ import { statusLabelForPage, filterNavForDisplay, type NavGroup } from "../utils
 import { NAV_MODEL_LEGACY, NAV_MODEL_V2, groupIdForKey } from "../utils/navModels";
 import { isTradeDeskV2Enabled } from "../trade-desk/featureFlags";
 import { TerminalNavProvider } from "./TerminalNavContext";
+import { Badge } from "./ui";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -322,7 +323,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         {sep}
       </>}
       <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>MODE</span>
-      <span className={`mode-badge ${mode}`} style={{ marginRight: 20 }}>{mode}</span>
+      <Badge kind="mode" tone={mode as "conservative" | "balanced" | "aggressive" | "scalper"} style={{ marginRight: 20 }}>{mode}</Badge>
       {/* Guard on regime.regime specifically, not just the object: a partial
           or error payload (e.g. `{}`) is still a truthy object but has no
           `.regime` string, and `.includes()`/`.replace()` on `undefined`

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Button } from "./ui";
 
 type Variant = "sidebar" | "panel";
 
@@ -93,15 +94,15 @@ export default function KillSwitchButton({
 
   return (
     <>
-      <button
-        className="btn-t danger"
+      <Button
+        danger
         onClick={() => !engaged && setConfirming(true)}
         aria-label={engaged ? "Kill switch engaged" : "Engage kill switch"}
         disabled={engaged || busy}
         style={{ padding: "10px 0", justifyContent: "center", display: "flex", fontWeight: 600 }}
       >
         {engaged ? "KILL SWITCH ENGAGED" : busy ? "ENGAGING..." : "ENGAGE KILL SWITCH"}
-      </button>
+      </Button>
       {message && !confirming && (
         <div style={{ fontSize: 11, color: engaged ? "var(--red)" : "var(--ink-dim)", lineHeight: 1.6 }}>
           {message}
@@ -152,12 +153,12 @@ function KillConfirmModal({
           </div>
         )}
         <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn-t" onClick={onCancel} disabled={busy} style={{ flex: 1 }}>
+          <Button onClick={onCancel} disabled={busy} style={{ flex: 1 }}>
             Cancel
-          </button>
-          <button className="btn-t danger" onClick={onConfirm} disabled={busy} style={{ flex: 1 }}>
+          </Button>
+          <Button danger onClick={onConfirm} disabled={busy} style={{ flex: 1 }}>
             {busy ? "Engaging..." : "Confirm halt"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@
  * kill-switch state, regime classification, and observability counters/events.
  */
 import React, { useEffect, useState } from "react";
+import { Panel } from "../../components/ui";
 
 interface ObsEvent {
   ts: number;
@@ -166,13 +167,11 @@ export default function DataQuality() {
             {obs.counters && <CounterStrip counters={obs.counters} />}
           </div>
 
-          <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">Recent Events</span>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginLeft: 12 }}>
-                {obs.event_count ?? events.length} newest first
-              </span>
-            </div>
+          <Panel
+            padding={0}
+            title="Recent Events"
+            action={<span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>{obs.event_count ?? events.length} newest first</span>}
+          >
             {events.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
                 No events recorded yet this process.
@@ -182,7 +181,7 @@ export default function DataQuality() {
                 {events.map((e, i) => <EventRow key={`${e.ts}-${i}`} e={e} now={now} />)}
               </div>
             )}
-          </div>
+          </Panel>
         </div>
       )}
     </div>

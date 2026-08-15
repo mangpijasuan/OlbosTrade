@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { api } from "../api/client";
+import { Panel, Button } from "../components/ui";
 
 interface IVData {
   symbol: string;
@@ -372,9 +373,9 @@ export default function Research() {
           maxLength={6}
           placeholder="TICKER"
         />
-        <button className="btn-t" onClick={() => load(input)} style={{ color: loading ? "var(--ink-dim)" : "var(--cyan)", cursor: loading ? "default" : "pointer" }}>
+        <Button onClick={() => load(input)} style={{ color: loading ? "var(--ink-dim)" : "var(--cyan)", cursor: loading ? "default" : "pointer" }}>
           {loading ? "LOADING…" : `LOAD ↗`}
-        </button>
+        </Button>
         <div className="div-v" style={{ height: 20 }} />
         <span className="kicker" style={{ color: "var(--ink-dim)" }}>
           {symbol} — IV SURFACE + REGIME + CHAIN ANALYSIS
@@ -405,11 +406,7 @@ export default function Research() {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0 }}>
           {/* IV Term Structure */}
-          <div style={{ border: "1px solid var(--line-dim)", borderTop: "none", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">IV Term Structure</span>
-            </div>
-            <div style={{ padding: 16 }}>
+          <Panel sectionStyle={{ borderTop: "none" }} title="IV Term Structure">
               {(termStruct ?? buildTermStructure(18.4)).map(row => (
                 <div key={row.exp} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                   <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", width: 50 }}>{row.exp}</span>
@@ -426,15 +423,10 @@ export default function Research() {
                   52w IV range: {fmtPct(iv.iv_low_pct)} – {fmtPct(iv.iv_high_pct)}
                 </div>
               )}
-            </div>
-          </div>
+          </Panel>
 
           {/* Regime Classification */}
-          <div style={{ border: "1px solid var(--line-dim)", borderTop: "none", borderLeft: "none", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">Regime Classification</span>
-            </div>
-            <div style={{ padding: 16 }}>
+          <Panel sectionStyle={{ borderTop: "none", borderLeft: "none" }} title="Regime Classification">
               {regime ? (
                 <>
                   <div style={{ marginBottom: 12 }}>
@@ -553,15 +545,10 @@ export default function Research() {
                   {loading ? "Loading…" : "No regime data"}
                 </div>
               )}
-            </div>
-          </div>
+          </Panel>
 
           {/* Put/Call Skew */}
-          <div style={{ border: "1px solid var(--line-dim)", borderTop: "none", borderLeft: "none", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">Put/Call Skew</span>
-            </div>
-            <div style={{ padding: 16 }}>
+          <Panel sectionStyle={{ borderTop: "none", borderLeft: "none" }} title="Put/Call Skew">
               {(skew ?? buildSkew(18.4)) && (() => {
                 const s = skew ?? buildSkew(18.4);
                 return [
@@ -585,8 +572,7 @@ export default function Research() {
               <div style={{ marginTop: 12, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
                 Skew = put IV premium over call IV at 25-delta
               </div>
-            </div>
-          </div>
+          </Panel>
         </div>
 
         {/* Allowed strategies row */}

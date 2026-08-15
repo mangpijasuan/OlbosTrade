@@ -6,6 +6,7 @@
  * Backed by GET /api/symphony/examples and POST /api/symphony/backtest.
  */
 import React, { useEffect, useRef, useState } from "react";
+import { Button } from "../components/ui";
 
 type Pt = { date: string; value: number };
 interface Example { name: string; description: string; cadence: string; tree: any }
@@ -130,11 +131,11 @@ export default function Symphony() {
         <div className="kicker" style={{ marginBottom: 8 }}>Examples</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
           {examples.map(e => (
-            <button key={e.name} onClick={() => loadExample(e)}
-              className={`btn-t ${name === e.name ? "active" : ""}`}
+            <Button key={e.name} onClick={() => loadExample(e)}
+              active={name === e.name}
               style={{ textAlign: "left", fontSize: 10, lineHeight: 1.4, padding: "8px 10px" }}>
               {e.name}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -163,10 +164,10 @@ export default function Symphony() {
           </div>
         </div>
 
-        <button className="btn-t active" onClick={run} disabled={running}
+        <Button active onClick={run} disabled={running}
           style={{ width: "100%", marginTop: 14, padding: "10px" }}>
           {running ? "RUNNING BACKTEST…" : "▶ RUN BACKTEST"}
-        </button>
+        </Button>
         {error && <div className="mono" style={{ marginTop: 10, fontSize: 10, color: "var(--red)" }}>{error}</div>}
       </div>
 
