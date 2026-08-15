@@ -6,6 +6,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Panel, StatTile } from "../components/ui";
 
 interface ConfidenceBucket { count: number; hit_rate: number | null }
 interface TickerRow { ticker: string; total: number; hit_rate: number | null }
@@ -40,12 +41,8 @@ const days = (n: number | null) => n == null ? "—" : `${n.toFixed(1)}d`;
 
 function StatCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{
-      background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-      padding: "12px 16px", flex: 1, minWidth: 130,
-    }}>
-      <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
-      <div className="data-val sm" style={{ color: color || "var(--ink)" }}>{value}</div>
+    <div style={{ flex: 1, minWidth: 130 }}>
+      <StatTile variant="boxed" label={label} value={value} tone={color} />
     </div>
   );
 }
@@ -212,25 +209,28 @@ export default function SignalResearch() {
       )}
 
       {/* Raw signal list */}
-      <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-        <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", gap: 12 }}>
-          <span className="panel-title">Tracked Signals</span>
-          <div style={{ flex: 1 }} />
-          {["", "pending", "target_hit", "stop_hit", "expired"].map(s => (
-            <button
-              key={s || "all"}
-              onClick={() => setStatusFilter(s)}
-              style={{
-                background: statusFilter === s ? "var(--bg-4)" : "transparent",
-                color: statusFilter === s ? "var(--ink)" : "var(--ink-faint)",
-                border: "1px solid var(--line-dim)", padding: "3px 10px",
-                fontFamily: "var(--mono)", fontSize: 10, cursor: "pointer",
-              }}
-            >
-              {s ? STATUS_LABEL[s] : "ALL"}
-            </button>
-          ))}
-        </div>
+      <Panel
+        padding={0}
+        title="Tracked Signals"
+        action={
+          <div style={{ display: "flex", gap: 0 }}>
+            {["", "pending", "target_hit", "stop_hit", "expired"].map(s => (
+              <button
+                key={s || "all"}
+                onClick={() => setStatusFilter(s)}
+                style={{
+                  background: statusFilter === s ? "var(--bg-4)" : "transparent",
+                  color: statusFilter === s ? "var(--ink)" : "var(--ink-faint)",
+                  border: "1px solid var(--line-dim)", padding: "3px 10px",
+                  fontFamily: "var(--mono)", fontSize: 10, cursor: "pointer",
+                }}
+              >
+                {s ? STATUS_LABEL[s] : "ALL"}
+              </button>
+            ))}
+          </div>
+        }
+      >
         {raw.length === 0 ? (
           <div style={{ padding: 20, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
             No signals match this filter.
@@ -247,7 +247,7 @@ export default function SignalResearch() {
             </table>
           </div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }

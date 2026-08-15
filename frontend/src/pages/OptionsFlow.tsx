@@ -12,6 +12,7 @@
  * none of those are shown or invented.
  */
 import React, { useEffect, useState } from "react";
+import { Badge, Button } from "../components/ui";
 
 interface FlowRow {
   ticker: string; type: "CALL" | "PUT"; strike: number; expiry: string;
@@ -97,13 +98,13 @@ function FlowCard({ row, onPickTicker }: { row: FlowRow; onPickTicker: (t: strin
         <span style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--ink-dim)", textTransform: "capitalize" }}>
           {row.sentiment}
         </span>
-        <span style={{
-          fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.04em",
-          color: "var(--amber)", border: "1px solid rgba(245,158,11,0.4)",
-          borderRadius: 2, padding: "1px 6px",
+        <Badge kind="tag" tone="var(--amber)" style={{
+          fontSize: 9.5, letterSpacing: "0.04em",
+          border: "1px solid rgba(245,158,11,0.4)",
+          borderRadius: 2, padding: "1px 6px", opacity: 1,
         }}>
           {unusualTag}
-        </span>
+        </Badge>
       </div>
 
       {/* Stat grid — every value is a real field from the scan row */}
@@ -204,22 +205,22 @@ export default function OptionsFlow() {
         <div style={{ flex: 1 }} />
 
         <div style={{ display: "flex", gap: 4 }} role="group" aria-label="View mode">
-          <button
-            className={`btn-t ${view === "cards" ? "active" : ""}`}
+          <Button
+            active={view === "cards"}
             style={{ padding: "4px 10px", fontSize: 10 }}
             aria-pressed={view === "cards"}
             onClick={() => setView("cards")}
           >
             CARDS
-          </button>
-          <button
-            className={`btn-t ${view === "table" ? "active" : ""}`}
+          </Button>
+          <Button
+            active={view === "table"}
             style={{ padding: "4px 10px", fontSize: 10 }}
             aria-pressed={view === "table"}
             onClick={() => setView("table")}
           >
             TABLE
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -236,21 +237,21 @@ export default function OptionsFlow() {
               padding: "4px 8px",
             }}
           />
-          <button className="btn-t" type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Go</button>
+          <Button type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Go</Button>
           {ticker && (
-            <button type="button" className="btn-t" style={{ padding: "4px 10px", fontSize: 10 }}
+            <Button type="button" style={{ padding: "4px 10px", fontSize: 10 }}
               onClick={() => { setTicker(""); setTickerInput(""); }}>
               Clear
-            </button>
+            </Button>
           )}
         </form>
 
         <div style={{ display: "flex", gap: 6 }}>
           {(["all", "call", "put"] as const).map(f => (
-            <button key={f} className={`btn-t ${f === typeFilter ? "active" : ""}`}
+            <Button key={f} active={f === typeFilter}
               style={{ padding: "2px 10px", fontSize: 10 }} onClick={() => setTypeFilter(f)}>
               {f === "all" ? "ALL" : f === "call" ? "CALLS" : "PUTS"}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -261,10 +262,10 @@ export default function OptionsFlow() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP CALLS</span>
               {topCalls.map(([tk, premium], i) => (
-                <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--green)" }}
+                <Button key={tk} style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--green)" }}
                   onClick={() => pickTicker(tk)}>
                   {i + 1}. {tk} {usd(premium)}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -272,10 +273,10 @@ export default function OptionsFlow() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP PUTS</span>
               {topPuts.map(([tk, premium], i) => (
-                <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--red)" }}
+                <Button key={tk} style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--red)" }}
                   onClick={() => pickTicker(tk)}>
                   {i + 1}. {tk} {usd(premium)}
-                </button>
+                </Button>
               ))}
             </div>
           )}

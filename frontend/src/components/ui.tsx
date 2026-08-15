@@ -92,7 +92,7 @@ export function StatTile({
 type BadgeProps =
   | { kind: "mode"; tone: "conservative" | "balanced" | "aggressive" | "scalper"; children: React.ReactNode; style?: React.CSSProperties }
   | { kind: "signal"; tone: "bullish" | "bearish" | "neutral"; children: React.ReactNode; style?: React.CSSProperties }
-  | { kind: "tag"; tone: string; bg?: string; children: React.ReactNode };
+  | { kind: "tag"; tone: string; bg?: string; children: React.ReactNode; style?: React.CSSProperties };
 
 export function Badge(props: BadgeProps) {
   if (props.kind === "tag") {
@@ -105,6 +105,7 @@ export function Badge(props: BadgeProps) {
         ...(filled
           ? { background: props.bg }
           : { border: `1px solid ${props.tone}`, opacity: 0.7 }),
+        ...props.style,
       }}>
         {props.children}
       </span>
