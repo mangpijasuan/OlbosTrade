@@ -14,11 +14,29 @@ interface MarginInfo {
   detail?: string;
 }
 
+// Stress/VaR/exposure — same shapes ExecutiveSummary.tsx already polls; this
+// page shows the meters/margin/Greeks side of risk, ExecutiveSummary only
+// surfaces these behind its advanced-analytics toggle, so they're duplicated
+// here rather than shared, matching this file's existing local-interface style.
+interface ScenarioRow { scenario: string; portfolio_pnl: number; portfolio_pnl_pct: number | null; }
+interface ScenariosResp { scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number; }
+interface VarResp { var: number; expected_shortfall: number; var_pct: number | null; es_pct: number | null; confidence: number; }
+interface HeatInfo {
+  portfolio_heat_pct: number; heat_status: "ok" | "elevated" | "high";
+  largest_underlying: string | null; largest_underlying_pct: number;
+  largest_sector: string | null; largest_sector_pct: number;
+  concentration_flags: string[];
+}
+const HEAT_COLOR = { ok: "var(--green)", elevated: "var(--amber)", high: "var(--red)" } as const;
+
 export default function RiskMonitor() {
   const { guardrailStatus, riskState } = useRisk();
 
   const [margin, setMargin] = useState<MarginInfo | null>(null);
   const [recon, setRecon] = useState<any>(null);
+  const [scen, setScen] = useState<ScenariosResp | null>(null);
+  const [varRep, setVarRep] = useState<VarResp | null>(null);
+  const [heat, setHeat] = useState<HeatInfo | null>(null);
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
@@ -32,6 +50,9 @@ export default function RiskMonitor() {
     const load = () => {
       fetch("/api/risk/margin").then(r => r.json()).then(setMargin).catch(() => {});
       fetch("/api/risk/reconciliation").then(r => r.json()).then(setRecon).catch(() => {});
+      fetch("/api/risk/scenarios").then(r => r.json()).then(setScen).catch(() => {});
+      fetch("/api/risk/var").then(r => r.json()).then(setVarRep).catch(() => {});
+      fetch("/api/portfolio/heat").then(r => r.json()).then(setHeat).catch(() => {});
       loadKs();
     };
     load();
@@ -66,8 +87,8 @@ export default function RiskMonitor() {
 
   const ksEngaged = !!(ks?.engaged ?? ks?.is_engaged);
 
-  const Section = ({ title, children }: any) => (
-    <Panel padding={0} sectionStyle={{ marginBottom: 16 }} title={title}>{children}</Panel>
+  const Section = ({ title, action, children }: any) => (
+    <Panel padding={0} sectionStyle={{ marginBottom: 16 }} title={title} action={action}>{children}</Panel>
   );
 
   const Meter = ({ label, val, max, unit = "", warn = 0.6, crit = 0.85 }: any) => {
@@ -305,6 +326,64 @@ export default function RiskMonitor() {
             </div>
           </Section>
         </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <Section title="Stress & VaR" action={varRep && (
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+            VaR {Math.round((varRep.confidence ?? 0) * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var ?? 0).toLocaleString()}</b>
+            {varRep.var_pct != null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall ?? 0).toLocaleString()}
+          </span>
+        )}>
+          {scen && (scen.scenarios?.length ?? 0) > 0 ? (
+            scen.scenarios.map(r => (
+              <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: "1px solid var(--line-dim)" }}>
+                <span className="mono" style={{ fontSize: 11.5, color: "var(--ink)", minWidth: 150 }}>{r.scenario}</span>
+                <span className="mono" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: r.portfolio_pnl < 0 ? "var(--red)" : "var(--green)" }}>
+                  {r.portfolio_pnl < 0 ? "-" : "+"}${Math.abs(r.portfolio_pnl).toLocaleString()}
+                  {r.portfolio_pnl_pct !== null ? `  (${r.portfolio_pnl_pct}%)` : ""}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              {scen ? "No open positions to stress." : "Loading…"}
+            </div>
+          )}
+        </Section>
+
+        <Section title="Portfolio Exposure">
+          {heat ? (
+            <div style={{ padding: "14px 16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="kicker">Portfolio Heat</span>
+                <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: HEAT_COLOR[heat.heat_status] }}>
+                  {heat.portfolio_heat_pct?.toFixed(1)}%
+                </span>
+              </div>
+              <div className="bar-track" style={{ height: 4, marginBottom: 14 }}>
+                <div className="bar-fill" style={{ width: `${Math.min(heat.portfolio_heat_pct, 100)}%`, background: HEAT_COLOR[heat.heat_status] }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", marginBottom: 8 }}>
+                <span>Top name: <b style={{ color: "var(--ink)" }}>{heat.largest_underlying || "—"}</b></span>
+                <span>{heat.largest_underlying_pct != null ? `${heat.largest_underlying_pct.toFixed(1)}%` : "—"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
+                <span>Sector: <b style={{ color: "var(--ink)" }}>{heat.largest_sector || "—"}</b></span>
+                <span>{heat.largest_sector_pct != null ? `${heat.largest_sector_pct.toFixed(1)}%` : "—"}</span>
+              </div>
+              {heat.concentration_flags?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+                  {heat.concentration_flags.map(f => (
+                    <span key={f} className="mono" style={{ fontSize: 10, color: "var(--amber)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 3, padding: "2px 8px" }}>{f}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>
+          )}
+        </Section>
       </div>
     </div>
   );
