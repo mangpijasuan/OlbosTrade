@@ -18,7 +18,9 @@ import ErrorBoundary     from "../components/ErrorBoundary";
 import WelcomeBanner, { WELCOME_DISMISS_KEY } from "../components/WelcomeBanner";
 import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 import { useIsMobile }   from "../hooks/useIsMobile";
-import { StatTile, Badge, Button } from "../components/ui";
+import { StatTile, Badge, Button, Panel } from "../components/ui";
+import { useTerminalNav } from "../components/TerminalNavContext";
+import { lifecycleColor, lifecycleFromExecution, lifecycleLabel } from "../trade-desk/executionStatus";
 
 function hintFor(label: string): React.ReactNode {
   return resolveMetricHint(label) ? <MetricHint id={label} /> : label;
@@ -210,6 +212,7 @@ export default function Dashboard() {
   const isMobile = useIsMobile();
   const { positions, portfolio, greeks } = usePaperTrade();
   const { guardrailStatus, portfolioState } = useRisk();
+  const nav = useTerminalNav();
 
   // Managed = Olbos-opened positions (tracked). Untracked = pre-existing
   // broker holdings in the (shared paper) account that we did not open.
@@ -292,6 +295,20 @@ export default function Dashboard() {
   }, [portfolio?.starting_capital]);
 
   useEffect(() => { loadCurve(); }, [loadCurve]);
+
+  // Execution activity — Command Center third row (pending approvals + recent
+  // orders). Same endpoints CopilotQueue.tsx / ExecutionMonitor.tsx already poll.
+  const [pending, setPending] = useState<any[]>([]);
+  const [execLog, setExecLog] = useState<any[]>([]);
+  useEffect(() => {
+    const load = () => {
+      (api.getPendingApprovals() as any).then((d: any) => setPending(d.pending || [])).catch(() => {});
+      (api.getExecutionLog() as any).then((d: any) => setExecLog(d.log || [])).catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, []);
 
   const visiblePoints = filterByRange(allPoints, range);
 
@@ -524,6 +541,70 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Execution activity — Command Center third row */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+        <Panel
+          title="Execution Queue"
+          padding={0}
+          action={
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {pending.length > 0 && <Badge kind="tag" tone="var(--orange)">{`${pending.length} PENDING`}</Badge>}
+              <Button size="sm" onClick={() => nav("trade:copilot")}>View all</Button>
+            </div>
+          }
+        >
+          {pending.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              Queue is clear
+            </div>
+          ) : (
+            pending.slice(0, 5).map((s: any) => (
+              <div key={s.id} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "8px 14px",
+                borderBottom: "1px solid var(--line-dim)", flexWrap: "wrap",
+              }}>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 60 }}>{s.ticker}</span>
+                <Badge kind="tag" tone="var(--ink-dim)">{s.asset_type?.toUpperCase() || "EQUITY"}</Badge>
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>{s.action || s.strategy || "—"}</span>
+                <span className="mono" style={{ fontSize: 10, color: "var(--ink-faint)", marginLeft: "auto" }}>
+                  {s.queued_at ? new Date(s.queued_at).toLocaleTimeString() : "—"}
+                </span>
+              </div>
+            ))
+          )}
+        </Panel>
+
+        <Panel
+          title="Recent Orders"
+          padding={0}
+          action={<Button size="sm" onClick={() => nav("trade:execlog")}>View all</Button>}
+        >
+          {execLog.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              No execution events
+            </div>
+          ) : (
+            execLog.slice(0, 5).map((e: any, i: number) => {
+              const life = lifecycleFromExecution(e);
+              const ts = e.executed_at || e.rejected_at;
+              return (
+                <div key={e.signal_id || i} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "8px 14px",
+                  borderBottom: "1px solid var(--line-dim)", flexWrap: "wrap",
+                }}>
+                  <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", minWidth: 60 }}>{e.ticker || "—"}</span>
+                  <Badge kind="tag" tone={lifecycleColor(life)}>{lifecycleLabel(life)}</Badge>
+                  <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>{e.action || e.strategy || "—"}</span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--ink-faint)", marginLeft: "auto" }}>
+                    {ts ? new Date(ts).toLocaleTimeString() : "—"}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </Panel>
       </div>
     </div>
   );
