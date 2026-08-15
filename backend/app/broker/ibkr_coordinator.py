@@ -186,7 +186,14 @@ class IBKRRequestCoordinator:
                 "IBKR REQUEST symbol=%s type=%s priority=%s status=timeout after=%.1fs",
                 symbol, req_type, priority.name, timeout,
             )
-            raise
+            # Bare TimeoutError() stringifies to "" — a route that does
+            # str(exc) on it (as the options-chain route does) would
+            # surface a blank, useless error to the caller. Carry a real
+            # message instead.
+            raise asyncio.TimeoutError(
+                f"IBKR request timed out after {timeout:.0f}s "
+                f"(priority={priority.name}, type={req_type}, symbol={symbol})"
+            ) from None
         finally:
             if key is not None:
                 async with self._in_flight_lock:
