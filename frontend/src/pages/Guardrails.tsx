@@ -2,6 +2,15 @@ import React, { useState, useEffect } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api } from "../api/client";
 
+// daily_loss_pct/weekly_loss_pct from the API are signed P&L ratios (positive
+// on a gain day, negative on a loss day) — not always a loss despite the field
+// name. Format with an explicit sign and color so a gain doesn't read as red.
+function pnlPct(value: number | null | undefined): { text: string; color: string } {
+  const v = (value || 0) * 100;
+  const sign = v >= 0 ? "+" : "";
+  return { text: `${sign}${v.toFixed(2)}%`, color: v >= 0 ? "var(--green)" : "var(--red)" };
+}
+
 export default function Guardrails() {
   const { guardrailStatus, reconciliation, refresh } = useRisk();
   const [tab, setTab] = useState<"status"|"history">("status");
@@ -200,20 +209,25 @@ export default function Guardrails() {
                 </div>
                 <div style={{ padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 12px" }}>
                   {[
-                    { label: "Trades Today",       val: guardrailStatus?.trades_today || 0 },
-                    { label: "Consecutive Losses", val: guardrailStatus?.consecutive_losses || 0 },
+                    { label: "Trades Today",       val: String(guardrailStatus?.trades_today || 0) },
+                    { label: "Consecutive Losses", val: String(guardrailStatus?.consecutive_losses || 0) },
                     { label: "Cooling Off Until",  val: guardrailStatus?.cooling_off_until || "—" },
                     { label: "Capital Remaining",  val: `${((guardrailStatus?.capital_pct_remaining || 1) * 100).toFixed(1)}%` },
-                    { label: "Daily Loss",         val: `${((guardrailStatus?.daily_loss_pct || 0) * 100).toFixed(2)}%` },
-                    { label: "Weekly Loss",        val: `${((guardrailStatus?.weekly_loss_pct || 0) * 100).toFixed(2)}%` },
+                    // Signed P&L %, not always a loss — label and color follow the
+                    // actual sign instead of always reading "Loss" on a gain day.
+                    { label: "Daily P&L",  val: pnlPct(guardrailStatus?.daily_loss_pct) },
+                    { label: "Weekly P&L", val: pnlPct(guardrailStatus?.weekly_loss_pct) },
                   ].map(s => (
                     <div key={s.label} style={{
                       background: "var(--bg-3)", borderRadius: 4, padding: "7px 10px",
                       display: "flex", flexDirection: "column", gap: 3,
                     }}>
                       <span className="kicker">{s.label}</span>
-                      <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
-                        {String(s.val)}
+                      <span className="tnum" style={{
+                        fontSize: 14, fontWeight: 600,
+                        color: typeof s.val === "object" ? s.val.color : "var(--ink)",
+                      }}>
+                        {typeof s.val === "object" ? s.val.text : s.val}
                       </span>
                     </div>
                   ))}
