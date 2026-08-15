@@ -232,6 +232,17 @@ export const api = {
   getModeDetail:         (mode: string) => request(`/api/analytics/mode/${mode}`),
   getSignalScoreImpact:  ()             => request("/api/analytics/signal-score-impact"),
 
+  // ── Signal Research (forward-outcome tracking) ──────────────────────────────
+  getSignalOutcomes:    () => request("/api/signal-research/outcomes"),
+  getSignalOutcomesRaw: (params?: { limit?: number; status?: string }) => {
+    const q = params
+      ? "?" + new URLSearchParams(
+          Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined)) as any
+        ).toString()
+      : "";
+    return request(`/api/signal-research/outcomes/raw${q}`);
+  },
+
   // ── Options Flow (Options Intelligence module) ──────────────────────────────
   getOptionsFlow: (params?: Record<string, string | number | undefined>) => {
     const clean = Object.fromEntries(

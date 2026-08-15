@@ -10,6 +10,7 @@ import ModeAnalytics   from "./pages/ModeAnalytics";
 import RiskCenter      from "./pages/RiskCenter";          // Risk Monitor + Guardrails
 import SignalsCenter   from "./pages/SignalsCenter";       // Equity Signals + Strategy
 import OptionsSignals  from "./pages/OptionsSignals";       // Live options spread signal feed
+import SignalResearch  from "./pages/SignalResearch";       // Forward-return study over tracked signals
 import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab: Strategy Lab + Market/Regime + Chart + Intel
 import BacktestCenter  from "./pages/BacktestCenter";      // Backtest + Symphony
 import ScanCenter      from "./pages/ScanCenter";           // Options + Equity EV scan engines
@@ -82,6 +83,7 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
   "strat:builder":   StrategyBuilder,
   "strat:alerts":    Alerts,
   "options:signals": OptionsSignals,
+  "strat:research":  SignalResearch,
   "options:chain":   OptionsChain,
   "options:income":  IncomeStrategiesCenter,
   "options:flow":    OptionsFlow,

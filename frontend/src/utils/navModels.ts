@@ -35,6 +35,7 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
   { id: "strat", label: "Strategies", icon: "strategy", children: [
     { key: "equity",           label: "Equity Signals" },
     { key: "options:signals",  label: "Options Signals" },
+    { key: "strat:research",   label: "Signal Research" },
     { key: "strat:cards",   label: "Strategy Cards", advanced: true },
     { key: "strat:builder", label: "Strategy Builder", advanced: true },
     { key: "strat:alerts",  label: "Alerts", advanced: true },
@@ -86,6 +87,7 @@ export const NAV_MODEL_V2: NavGroup[] = [
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
     { key: "equity",        label: "Signal Center" },
+    { key: "strat:research", label: "Signal Research" },
     { key: "strat:cards",   label: "Strategy Cards", advanced: true },
     { key: "strat:builder", label: "Strategy Builder", advanced: true },
     { key: "strat:alerts",  label: "Alerts", advanced: true },
