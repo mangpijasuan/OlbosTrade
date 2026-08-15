@@ -81,7 +81,7 @@ else
   echo "  Edit: $CADDYFILE"
   echo "  (if that path doesn't exist, see the NOTE above this section in"
   echo "  deploy/hetzner/up.sh for how to find the real one)"
-  echo "  Replace any olbosquant-backend/olbosquant-frontend entries with the"
+  echo "  Replace any legacy backend/frontend container names with the"
   echo "  block below (replace trading.yourdomain.com with your subdomain):"
   echo ""
   cat deploy/hetzner/Caddyfile.snippet

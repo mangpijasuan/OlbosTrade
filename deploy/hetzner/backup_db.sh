@@ -26,7 +26,7 @@ if [[ -f backend/.env.prod ]]; then
 fi
 
 # NOTE: this repository now references the `olbostrade` role/database by
-# default. If your running deployment still uses the old `olbosquant` names,
+# default. If your running deployment still uses old pre-rebrand names,
 # set `POSTGRES_USER`/`POSTGRES_DB` in backend/.env.prod accordingly or follow
 # the migration steps in deploy/hetzner/README.md before switching.
 DB_CONTAINER="${DB_CONTAINER:-olbostrade-db}"
@@ -72,7 +72,7 @@ echo "  ✅ Backup complete: $OUT"
 #   10 6 * * * /usr/bin/bash /opt/olbostrade/deploy/hetzner/backup_db.sh >> /var/log/olbostrade-backup.log 2>&1
 #
 # IMPORTANT: if you had an existing crontab entry pointing at the old
-# /opt/olbosquant path, update it after the directory rename — cron does not
+# legacy app path, update it after the directory rename — cron does not
 # follow renames.
 #
 # Restore a dump into the running DB container (adjust user/db if you kept

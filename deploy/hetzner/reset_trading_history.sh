@@ -16,8 +16,8 @@
 set -euo pipefail
 
 # DB_USER/DB_NAME: switch to the new `olbostrade` role/db in Compose/docs.
-# If you're running against an existing deployment that still uses the old
-# `olbosquant` names, update these values or perform the migration described
+# If you're running against an existing deployment that still uses old
+# pre-rebrand names, update these values or perform the migration described
 # in deploy/hetzner/README.md before running this script.
 DB_CONTAINER="olbostrade-db"
 DB_USER="olbostrade"

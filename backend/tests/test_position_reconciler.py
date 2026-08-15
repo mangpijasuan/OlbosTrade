@@ -46,7 +46,7 @@ async def test_reconcile_clean_no_positions(mock_broker):
 
 @pytest.mark.asyncio
 async def test_reconcile_untracked_broker_position_raises(mock_broker):
-    """Broker has a position OlbosQuant doesn't know about — must raise."""
+    """Broker has a position OlbosTrade doesn't know about — must raise."""
     mock_broker.get_positions = AsyncMock(
         return_value=[make_position("SPY240119P00450000", "SPY")]
     )
