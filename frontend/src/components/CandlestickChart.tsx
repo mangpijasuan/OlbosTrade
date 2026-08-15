@@ -46,7 +46,7 @@ const COLOR = {
   upVolume: "rgba(24,195,126,0.32)",
   downVolume: "rgba(255,95,109,0.32)",
   sma: "#f4c64f",
-  vwap: "#8e7cfb",
+  vwap: "#8e7cfb",  // matches index.css --violet — lightweight-charts takes plain color strings, not var(), so keep these in sync by convention
 };
 
 export function toUnixSeconds(iso: string): UTCTimestamp {

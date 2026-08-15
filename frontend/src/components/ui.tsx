@@ -8,6 +8,7 @@ export function Panel({
   bodyStyle,
   sectionStyle,
   className,
+  interactive = false,
 }: {
   title?: React.ReactNode;
   action?: React.ReactNode;
@@ -16,9 +17,13 @@ export function Panel({
   bodyStyle?: React.CSSProperties;
   sectionStyle?: React.CSSProperties;
   className?: string;
+  /** Opt-in hover-lift (border/shadow/translateY) for panels that are genuine
+   * navigation affordances. Off by default — never apply to static/inert
+   * data panels (e.g. StatTile grids), only to panels a user actually clicks. */
+  interactive?: boolean;
 }) {
   return (
-    <section className={`panel${className ? ` ${className}` : ""}`} style={sectionStyle}>
+    <section className={`panel${interactive ? " panel-interactive" : ""}${className ? ` ${className}` : ""}`} style={sectionStyle}>
       {(title != null || action != null) && (
         <div className="panel-head">
           {title != null && <div className="panel-title">{title}</div>}
@@ -61,6 +66,7 @@ export function StatTile({
   hint,
   variant = "boxed",
   size = "sm",
+  spark,
 }: {
   label: string;
   value: React.ReactNode;
@@ -69,6 +75,9 @@ export function StatTile({
   hint?: React.ReactNode;
   variant?: "boxed" | "divider";
   size?: "default" | "sm";
+  /** Optional short numeric history rendered as a trend sparkline below the
+   * value. Omit for no sparkline (default) — real data only, never decorative. */
+  spark?: number[];
 }) {
   const wrap: React.CSSProperties = variant === "boxed"
     ? { background: "var(--bg-3)", padding: "10px 12px", border: "1px solid var(--line-dim)" }
@@ -78,6 +87,42 @@ export function StatTile({
       <div className="kicker" style={{ marginBottom: variant === "boxed" ? 8 : 6 }}>{hint ?? label}</div>
       <div className={`data-val${size === "sm" ? " sm" : ""}`} style={{ color: tone || "var(--ink)" }}>{value}</div>
       {sub && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 3 }}>{sub}</div>}
+      {spark && spark.length > 0 && (
+        <div style={{ marginTop: 4 }}><Sparkline values={spark} height={16} barWidth={4} gap={2} /></div>
+      )}
+    </div>
+  );
+}
+
+// ── Sparkline ────────────────────────────────────────────────────────────────
+// Extracted from ModeAnalytics.tsx's local SparkBars — same visual output
+// (green/red bar array, no smoothing). Apply only where real short numeric
+// history already exists.
+export function Sparkline({
+  values,
+  height = 20,
+  barWidth = 6,
+  gap = 2,
+  formatTitle,
+}: {
+  values: number[];
+  height?: number;
+  barWidth?: number;
+  gap?: number;
+  /** Optional per-bar hover tooltip formatter (e.g. "+$120"). Omit for none. */
+  formatTitle?: (v: number) => string;
+}) {
+  if (!values?.length) return null;
+  const max = Math.max(...values.map(Math.abs), 1);
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap, height }}>
+      {values.map((v, i) => (
+        <div key={i} style={{
+          width: barWidth, minHeight: 3, borderRadius: 1,
+          background: v >= 0 ? "var(--green)" : "var(--red)",
+          height: `${Math.max((Math.abs(v) / max) * 100, 15)}%`,
+        }} title={formatTitle ? formatTitle(v) : undefined} />
+      ))}
     </div>
   );
 }

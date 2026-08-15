@@ -300,6 +300,13 @@ export default function Dashboard() {
     ? visiblePoints[visiblePoints.length - 1].value - visiblePoints[0].value
     : 0;
 
+  // Recent equity-curve deltas for the Day P&L sparkline — real data derived
+  // from the already-loaded curve, not decorative/fabricated.
+  const recentPoints = allPoints.slice(-7);
+  const dayPnlSpark = recentPoints.length >= 2
+    ? recentPoints.slice(1).map((p, i) => p.value - recentPoints[i].value)
+    : undefined;
+
   const dismissWelcome = () => {
     try {
       localStorage.setItem(WELCOME_DISMISS_KEY, "1");
@@ -337,6 +344,7 @@ export default function Dashboard() {
           value={`${daily >= 0 ? "+" : ""}$${Math.abs(daily).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
           sub={portfolio?.win_rate != null ? `Win rate: ${(portfolio.win_rate * 100).toFixed(1)}%` : undefined}
           tone={daily >= 0 ? "var(--green)" : "var(--red)"}
+          spark={dayPnlSpark}
         />
         <StatTile
           variant="divider" size="default"

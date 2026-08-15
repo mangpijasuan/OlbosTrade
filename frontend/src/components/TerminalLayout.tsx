@@ -694,13 +694,13 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
               onClick={() => setAccountMenuOpen(false)}
               style={{ position: "fixed", inset: 0, zIndex: 90 }}
             />
-            <div style={{
+            <div className="glass-surface" style={{
               position: "absolute",
               ...(showLabels
                 ? { bottom: "100%", left: 8, right: 8, marginBottom: 4 }
                 : { bottom: 0, left: 52 }),
               width: showLabels ? undefined : 200,
-              background: "var(--bg-4)", border: "1px solid var(--line-dim)",
+              border: "1px solid var(--line-dim)",
               borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
               zIndex: 100, overflow: "hidden",
             }}>

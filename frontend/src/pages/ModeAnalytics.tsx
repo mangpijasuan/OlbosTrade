@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
-import { Panel } from "../components/ui";
+import { Panel, Sparkline } from "../components/ui";
 
 interface ModeStats {
   display_name: string; trade_count: number; win_rate: number;
@@ -24,22 +24,6 @@ const MODE_COLOR: Record<string, string> = {
 };
 const fmt = (n: number) => (n >= 0 ? "+$" : "-$") + Math.abs(n).toFixed(0);
 const pct = (n: number) => (n * 100).toFixed(1) + "%";
-
-function SparkBars({ pnls }: { pnls: number[] }) {
-  if (!pnls?.length) return null;
-  const max = Math.max(...pnls.map(Math.abs), 1);
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 20 }}>
-      {pnls.map((p, i) => (
-        <div key={i} style={{
-          width: 6, minHeight: 3, borderRadius: 1,
-          background: p >= 0 ? "var(--green)" : "var(--red)",
-          height: `${Math.max((Math.abs(p) / max) * 100, 15)}%`,
-        }} title={fmt(p)} />
-      ))}
-    </div>
-  );
-}
 
 function ModeCard({ modeKey, s, isBest }: { modeKey: string; s: ModeStats; isBest: boolean }) {
   const color = MODE_COLOR[modeKey] || "var(--cyan)";
@@ -70,7 +54,7 @@ function ModeCard({ modeKey, s, isBest }: { modeKey: string; s: ModeStats; isBes
             <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--green)" }}>↑</span>
           )}
         </div>
-        <SparkBars pnls={s.last_5_pnl} />
+        <Sparkline values={s.last_5_pnl} formatTitle={fmt} />
       </div>
 
       {/* Stats grid */}

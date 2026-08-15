@@ -99,10 +99,10 @@ export default function SignalDetailDrawer({
       }}
     >
       <aside
+        className="glass-surface"
         style={{
           width: "min(520px, 100vw)",
           height: "100%",
-          background: "var(--bg-2)",
           borderLeft: "1px solid var(--line)",
           boxShadow: "-20px 0 60px rgba(0,0,0,0.45)",
           overflowY: "auto",

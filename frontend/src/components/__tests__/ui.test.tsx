@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { Panel, EmptyState, StatPill, StatTile, Badge, Button } from "../ui";
+import { Panel, EmptyState, StatPill, StatTile, Badge, Button, Sparkline } from "../ui";
 
 describe("Panel", () => {
   it("renders title, action, and children with default padding", () => {
@@ -14,6 +14,36 @@ describe("Panel", () => {
     render(<Panel title="Chart" sectionStyle={{ overflow: "hidden" }}>x</Panel>);
     const section = screen.getByText("Chart").closest("section");
     expect(section).toHaveStyle({ overflow: "hidden" });
+  });
+
+  it("does not apply panel-interactive by default", () => {
+    render(<Panel title="Static">x</Panel>);
+    const section = screen.getByText("Static").closest("section");
+    expect(section?.className).toBe("panel");
+  });
+
+  it("applies panel-interactive only when interactive is set", () => {
+    render(<Panel title="Clickable" interactive>x</Panel>);
+    const section = screen.getByText("Clickable").closest("section");
+    expect(section?.className).toContain("panel-interactive");
+  });
+});
+
+describe("Sparkline", () => {
+  it("renders one bar per value", () => {
+    const { container } = render(<Sparkline values={[1, -2, 3]} />);
+    expect(container.firstElementChild?.children.length).toBe(3);
+  });
+
+  it("renders nothing for an empty array", () => {
+    const { container } = render(<Sparkline values={[]} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("applies the optional per-bar title formatter", () => {
+    const { container } = render(<Sparkline values={[5]} formatTitle={(v) => `+$${v}`} />);
+    const bar = container.firstElementChild?.firstElementChild;
+    expect(bar).toHaveAttribute("title", "+$5");
   });
 });
 

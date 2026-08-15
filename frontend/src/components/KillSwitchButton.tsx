@@ -74,6 +74,7 @@ export default function KillSwitchButton({
             gap: 8,
             border: "1px solid transparent",
             background: engaged ? "rgba(239,68,68,0.12)" : "transparent",
+            boxShadow: engaged ? "var(--glow-neg)" : "none",
             color: "var(--red)",
             cursor: engaged || busy ? "default" : "pointer",
             padding: expanded ? "0 8px" : 0,
@@ -140,7 +141,7 @@ function KillConfirmModal({
         padding: 24,
       }}
     >
-      <div style={{ width: "100%", maxWidth: 440, background: "var(--bg-2)", border: "1px solid rgba(239,68,68,0.48)", padding: 20 }}>
+      <div className="glass-surface" style={{ width: "100%", maxWidth: 440, border: "1px solid rgba(239,68,68,0.48)", padding: 20 }}>
         <div id="kill-switch-title" style={{ fontSize: 15, color: "var(--red)", fontWeight: 700, marginBottom: 10 }}>
           Engage kill switch?
         </div>
