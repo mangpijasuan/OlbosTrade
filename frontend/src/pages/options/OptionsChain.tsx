@@ -4,7 +4,7 @@
  * shows the underlying error if the gateway is down.
  */
 import React, { useEffect, useState } from "react";
-import { Button } from "../../components/ui";
+import { Badge, Button } from "../../components/ui";
 
 interface Contract {
   strike: number; bid: number; ask: number; last: number;
@@ -12,10 +12,16 @@ interface Contract {
   delta: number | null; gamma: number | null; theta: number | null; vega: number | null;
   iv: number | null;
 }
+type DataStatus = "LIVE" | "DEGRADED" | "STALE";
 interface ChainResponse {
   symbol: string; expiry: string; underlying_price?: number;
   calls?: Contract[]; puts?: Contract[]; error?: string;
+  data_status?: DataStatus;
 }
+
+const DATA_STATUS_COLOR: Record<DataStatus, string> = {
+  LIVE: "var(--green)", DEGRADED: "var(--amber)", STALE: "var(--red)",
+};
 
 function ContractRow({ c, atm }: { c: Contract; atm: boolean }) {
   return (
@@ -107,6 +113,14 @@ export default function OptionsChain({
         {data?.expiry && (
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
             exp {data.expiry}
+          </span>
+        )}
+        {data?.data_status && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
+              OPTIONS DATA
+            </span>
+            <Badge kind="tag" tone={DATA_STATUS_COLOR[data.data_status]}>{data.data_status}</Badge>
           </span>
         )}
       </div>

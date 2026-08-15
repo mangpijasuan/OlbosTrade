@@ -48,7 +48,11 @@ async def verify_account_mode(broker) -> tuple[bool, str]:
       - the account could not be determined (fail-closed — we never assume safe).
     """
     try:
-        acct = await broker.get_account_summary()
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+        acct = await ibkr_coordinator.submit(
+            Priority.P0, broker.get_account_summary,
+            req_type="ACCOUNT_SUMMARY",
+        )
         account_id = (acct.account_id or "").strip()
     except Exception as exc:
         return False, f"account_unverified: {exc}"

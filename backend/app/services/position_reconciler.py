@@ -349,8 +349,12 @@ class PositionReconciler:
         from app.models.risk_state import PortfolioSnapshot
         from app.core.config import settings
 
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+
         positions = await self.broker.get_positions()
-        account = await self.broker.get_account_summary()
+        account = await ibkr_coordinator.submit(
+            Priority.P0, self.broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+        )
 
         async with AsyncSessionLocal() as session:
             snap = PortfolioSnapshot(

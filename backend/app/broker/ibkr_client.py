@@ -55,6 +55,15 @@ def _safe_decimal(value, default: float = 0) -> Decimal:
     return Decimal(str(value))
 
 
+# IBKR caps concurrent market-data lines per connection tier — batch chain
+# qualify/ticker requests in conservative chunks rather than one giant call.
+_CHAIN_BATCH_SIZE = 50
+
+
+def _chunked(items: list, size: int) -> "list[list]":
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
 FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
@@ -172,8 +181,19 @@ class IBKRClient(BrokerInterface):
 
     async def get_options_chain(self, symbol: str, expiry: str) -> OptionsChain:
         """
-        Fetch options chain via IBKR's reqSecDefOptParams + reqTickers.
+        Fetch options chain via IBKR's reqSecDefOptParams + batched reqTickers.
         expiry: 'YYYY-MM-DD'
+
+        Previously fetched one strike at a time (qualify + reqTickers per
+        strike, per call/put) — dozens of sequential round-trips per chain,
+        which is what made a single interactive chain request queue for
+        minutes behind background scan traffic. Now qualifies every
+        call/put contract for the expiry in a few batched calls, then
+        fetches tickers for all qualified contracts the same way —
+        ib_insync's own multi-contract API, not ad-hoc parallelism, and
+        still fully subject to the client's built-in message-rate pacing.
+        Chunked (not one giant call) to stay under IBKR's per-connection
+        concurrent market-data-line limits.
         """
         self._require_connection()
 
@@ -191,43 +211,51 @@ class IBKRClient(BrokerInterface):
         if not target_chain:
             raise ValueError(f"No IBKR chain found for {symbol} on {expiry}")
 
+        candidates = [
+            Option(symbol, expiry_ib, strike, option_type, "SMART")
+            for strike in sorted(target_chain.strikes)
+            for option_type in ("C", "P")
+        ]
+
+        # qualifyContractsAsync silently drops any contract IBKR can't
+        # resolve (e.g. no security definition) rather than raising — the
+        # returned list may be shorter than `candidates`, which is fine,
+        # we only build OptionContracts for what actually qualified.
+        qualified: List[Option] = []
+        for chunk in _chunked(candidates, _CHAIN_BATCH_SIZE):
+            qualified.extend(await self.ib.qualifyContractsAsync(*chunk))
+
+        tickers = []
+        for chunk in _chunked(qualified, _CHAIN_BATCH_SIZE):
+            tickers.extend(await self.ib.reqTickersAsync(*chunk))
+
         calls: List[OptionContract] = []
         puts: List[OptionContract] = []
-
-        for option_type in ("C", "P"):
-            for strike in sorted(target_chain.strikes):
-                opt = Option(symbol, expiry_ib, strike, option_type, "SMART")
-                contracts = await self.ib.qualifyContractsAsync(opt)
-                if not contracts:
-                    continue
-
-                tickers = await self.ib.reqTickersAsync(*contracts)
-                for ticker in tickers:
-                    g = ticker.modelGreeks
-                    greeks = Greeks(
-                        delta=float(g.delta or 0) if g else 0.0,
-                        gamma=float(g.gamma or 0) if g else 0.0,
-                        theta=float(g.theta or 0) if g else 0.0,
-                        vega=float(g.vega or 0) if g else 0.0,
-                        implied_vol=float(g.impliedVol or 0) if g else 0.0,
-                    )
-                    contract = OptionContract(
-                        symbol=ticker.contract.localSymbol or ticker.contract.symbol,
-                        underlying=symbol,
-                        expiration=date.fromisoformat(expiry),
-                        strike=Decimal(str(strike)),
-                        option_type="call" if option_type == "C" else "put",
-                        bid=_safe_decimal(ticker.bid),
-                        ask=_safe_decimal(ticker.ask),
-                        last=_safe_decimal(ticker.last),
-                        volume=_safe_int(ticker.volume),
-                        open_interest=_safe_int(ticker.callOpenInterest) or _safe_int(ticker.putOpenInterest),
-                        greeks=greeks,
-                    )
-                    if option_type == "C":
-                        calls.append(contract)
-                    else:
-                        puts.append(contract)
+        for ticker in tickers:
+            c = ticker.contract
+            option_type = "call" if c.right == "C" else "put"
+            g = ticker.modelGreeks
+            greeks = Greeks(
+                delta=float(g.delta or 0) if g else 0.0,
+                gamma=float(g.gamma or 0) if g else 0.0,
+                theta=float(g.theta or 0) if g else 0.0,
+                vega=float(g.vega or 0) if g else 0.0,
+                implied_vol=float(g.impliedVol or 0) if g else 0.0,
+            )
+            contract = OptionContract(
+                symbol=c.localSymbol or c.symbol,
+                underlying=symbol,
+                expiration=date.fromisoformat(expiry),
+                strike=Decimal(str(c.strike)),
+                option_type=option_type,
+                bid=_safe_decimal(ticker.bid),
+                ask=_safe_decimal(ticker.ask),
+                last=_safe_decimal(ticker.last),
+                volume=_safe_int(ticker.volume),
+                open_interest=_safe_int(ticker.callOpenInterest) or _safe_int(ticker.putOpenInterest),
+                greeks=greeks,
+            )
+            (calls if option_type == "call" else puts).append(contract)
 
         # Underlying price
         under_ticker = await self.ib.reqTickersAsync(underlying)

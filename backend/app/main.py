@@ -343,18 +343,24 @@ async def _background_scheduler() -> None:
             _obs.incr("scanner.tick")
             _obs.gauge("scanner.last_tick_monotonic", now)
 
-            # Every 60s: ensure broker is still connected (auto-reconnect)
+            # Every 60s: ensure broker is still connected (auto-reconnect).
+            # Guarded by the coordinator's reconnect_lock so this can't
+            # overlap with another in-flight reconnect attempt triggered
+            # elsewhere (e.g. a request handler hitting a disconnect error)
+            # and spawn a duplicate connection.
             if now - last_reconnect >= reconnect_interval_s:
                 try:
                     from app.broker.broker_factory import get_broker
+                    from app.broker.ibkr_coordinator import ibkr_coordinator
                     _broker = get_broker()
-                    is_connected = getattr(_broker, "_connected", False)
-                    if hasattr(_broker, "ib"):
-                        is_connected = is_connected and _broker.ib.isConnected()
-                    if not is_connected and hasattr(_broker, "connect"):
-                        logger.warning("Broker disconnected — attempting reconnect")
-                        await asyncio.wait_for(_broker.connect(), timeout=30)
-                        logger.info("Broker reconnected successfully")
+                    async with ibkr_coordinator.reconnect_lock:
+                        is_connected = getattr(_broker, "_connected", False)
+                        if hasattr(_broker, "ib"):
+                            is_connected = is_connected and _broker.ib.isConnected()
+                        if not is_connected and hasattr(_broker, "connect"):
+                            logger.warning("Broker disconnected — attempting reconnect")
+                            await asyncio.wait_for(_broker.connect(), timeout=30)
+                            logger.info("Broker reconnected successfully")
                 except Exception as _rc_exc:
                     logger.warning("Broker reconnect failed: %s", _rc_exc)
                 last_reconnect = now
@@ -725,7 +731,11 @@ async def _run_equity_scan() -> None:
                     ind = compute_indicators(df)
                     if not ind:
                         return None
-                    orderflow = await get_orderflow_score(ticker, broker)
+                    from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+                    orderflow = await ibkr_coordinator.submit(
+                        Priority.P2, lambda t=ticker: get_orderflow_score(t, broker),
+                        timeout=30.0, req_type="QUOTE", symbol=ticker,
+                    )
                     action, confidence, reasons = score_equity_signal(ind, orderflow_score=orderflow)
 
                     # Test mode routes any BUY/SELL regardless of confidence so the
@@ -1578,7 +1588,11 @@ async def _run_options_scan_watchlist() -> None:
     async def _scan_one(symbol: str) -> Optional[dict]:
         async with semaphore:
             try:
-                return await _run_options_scan(symbol, execute=False)
+                from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+                return await ibkr_coordinator.submit(
+                    Priority.P2, lambda s=symbol: _run_options_scan(s, execute=False),
+                    timeout=60.0, req_type="OPTIONS_SCAN", symbol=symbol,
+                )
             except Exception as exc:
                 logger.warning("Options scan failed for %s: %s", symbol, exc)
                 return None
@@ -1939,9 +1953,18 @@ async def health_detail() -> dict:
     import time as _t
     from app.services.observability import observability
     from app.services.kill_switch import kill_switch_service as _ks
+    from app.broker.broker_factory import get_broker
+    from app.broker.ibkr_coordinator import ibkr_coordinator
+    from app.services import options_chain_cache
 
     age = (_t.monotonic() - _scheduler_last_tick) if _scheduler_last_tick else None
     scanner_ok = age is not None and age < 90
+
+    _broker = get_broker()
+    _ib_connected = bool(getattr(_broker, "_connected", False))
+    if hasattr(_broker, "ib"):
+        _ib_connected = _ib_connected and _broker.ib.isConnected()
+
     return {
         "status": "ok",
         "broker": settings.broker,
@@ -1952,6 +1975,11 @@ async def health_detail() -> dict:
         "kill_switch": {"engaged": _ks.is_engaged, "reason": _ks.status.get("reason")},
         "regime": getattr(getattr(_current_regime, "regime", None), "value", None),
         "observability": observability.snapshot(),
+        "ibkr": {
+            "connected": _ib_connected,
+            "coordinator": ibkr_coordinator.health_snapshot(),
+            "options_chain_cache": options_chain_cache.stats(),
+        },
     }
 
 
@@ -2103,7 +2131,10 @@ async def dashboard_summary():
         ib = getattr(broker, "ib", None)
         broker_ok = bool(getattr(broker, "_connected", False)) and bool(ib.isConnected()) if ib else False
         if broker_ok:
-            acct = await broker.get_account_summary()
+            from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+            acct = await ibkr_coordinator.submit(
+                Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+            )
             nl = float(acct.net_liquidation or 0)
             if nl > 0:
                 total_equity = nl

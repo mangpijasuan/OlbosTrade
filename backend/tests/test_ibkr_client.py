@@ -186,3 +186,85 @@ async def test_cancel_open_orders_continues_after_one_cancel_fails(client):
 
     assert count == 1  # only the second (successful) cancel counted
     assert client.ib.cancelOrder.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_options_chain_batches_and_maps_contracts_correctly(client):
+    """get_options_chain should qualify+fetch in batched calls (one call for
+    the whole chain, not one request per strike) and correctly map each
+    qualified contract back to calls/puts using the contract's own
+    right/strike fields (qualifyContractsAsync mutates in place and may
+    drop contracts IBKR can't resolve, so positional correspondence with
+    the original candidate list can't be assumed)."""
+    expiry = "2026-09-18"
+    expiry_ib = "20260918"
+
+    chain_param = MagicMock()
+    chain_param.expirations = [expiry_ib]
+    chain_param.strikes = [100.0, 105.0]
+
+    def _is_underlying(contracts) -> bool:
+        return len(contracts) == 1 and getattr(contracts[0], "secType", None) == "STK"
+
+    async def _qualify_side_effect(*contracts):
+        return list(contracts)  # pretend every contract qualifies, in place
+
+    def _make_option_ticker(contract):
+        t = MagicMock()
+        t.contract = contract
+        t.bid, t.ask, t.last = 1.0, 1.2, 1.1
+        t.volume, t.callOpenInterest, t.putOpenInterest = 10, 50, 0
+        g = MagicMock()
+        g.delta, g.gamma, g.theta, g.vega, g.impliedVol = 0.5, 0.02, -0.01, 0.1, 0.25
+        t.modelGreeks = g
+        return t
+
+    async def _tickers_side_effect(*contracts):
+        if _is_underlying(contracts):
+            underlying_ticker = MagicMock()
+            underlying_ticker.last = 250.0
+            return [underlying_ticker]
+        return [_make_option_ticker(c) for c in contracts]
+
+    with patch.object(client.ib, "qualifyContractsAsync", new_callable=AsyncMock,
+                      side_effect=_qualify_side_effect) as mock_qualify, \
+         patch.object(client.ib, "reqSecDefOptParamsAsync", new_callable=AsyncMock,
+                      return_value=[chain_param]), \
+         patch.object(client.ib, "reqTickersAsync", new_callable=AsyncMock,
+                      side_effect=_tickers_side_effect) as mock_tickers:
+        result = await client.get_options_chain("SPY", expiry)
+
+    assert len(result.calls) == 2
+    assert len(result.puts) == 2
+    assert {float(c.strike) for c in result.calls} == {100.0, 105.0}
+    assert {float(p.strike) for p in result.puts} == {100.0, 105.0}
+    assert result.calls[0].greeks.delta == 0.5
+    assert float(result.underlying_price) == 250.0
+
+    # One qualify + one tickers call for the underlying, and exactly one more
+    # of each for the whole options batch (4 contracts, under the 50-contract
+    # chunk size) — not one pair per strike as the old sequential loop did.
+    assert mock_qualify.call_count == 2
+    assert mock_tickers.call_count == 2
+
+
+def test_chunked_splits_into_bounded_groups():
+    from app.broker.ibkr_client import _chunked
+
+    assert _chunked([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
+    assert _chunked([], 2) == []
+    assert _chunked([1, 2], 10) == [[1, 2]]
+
+
+def test_safe_int_and_safe_decimal_handle_nan_and_none():
+    import math
+    from decimal import Decimal
+    from app.broker.ibkr_client import _safe_int, _safe_decimal
+
+    assert _safe_int(float("nan")) == 0
+    assert _safe_int(None) == 0
+    assert _safe_int(42) == 42
+    assert _safe_decimal(float("nan")) == Decimal("0")
+    assert _safe_decimal(None) == Decimal("0")
+    assert _safe_decimal(1.5) == Decimal("1.5")
+    assert not math.isnan(float(_safe_decimal(float("nan"))))

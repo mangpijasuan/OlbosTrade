@@ -5,7 +5,9 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.broker.broker_factory import get_broker
+from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
 from app.core.config import settings
+from app.services import options_chain_cache
 
 # yfinance is used for all price display (ticker strip, snapshots).
 # IBKR market data requires a paid subscription — we use IBKR only for
@@ -89,7 +91,17 @@ async def get_snapshot(symbol: str):
 
 @router.get("/options-chain/{symbol}")
 async def get_options_chain(symbol: str, expiry: str = ""):
-    """Fetch live options chain from IBKR for the given symbol and expiry."""
+    """Fetch live options chain from IBKR for the given symbol and expiry.
+
+    Routed through the IBKR request coordinator at interactive (P1)
+    priority — this used to queue for minutes behind background scan
+    traffic on the shared IBKR connection since nothing prioritized it.
+    Also routed through a short-lived cache (options_chain_cache.py) so
+    duplicate/rapid requests for the same chain don't each cost a fresh
+    IBKR round-trip. The response's data_status (LIVE/DEGRADED/STALE)
+    tells the caller exactly how fresh what they got is — never silently
+    presented as live when it isn't.
+    """
     if not expiry:
         # Default to nearest monthly expiry (~30 DTE)
         from datetime import date, timedelta
@@ -99,7 +111,8 @@ async def get_options_chain(symbol: str, expiry: str = ""):
         while d.weekday() != 4:  # Friday
             d += timedelta(days=1)
         expiry = d.strftime("%Y-%m-%d")
-    try:
+
+    async def _serialize() -> dict:
         broker = get_broker()
         chain  = await broker.get_options_chain(symbol, expiry)
         return {
@@ -140,6 +153,17 @@ async def get_options_chain(symbol: str, expiry: str = ""):
                 for p in chain.puts
             ],
         }
+
+    async def _fetch() -> dict:
+        return await ibkr_coordinator.submit(
+            Priority.P1, _serialize,
+            key=f"chain:{symbol.upper()}:{expiry}",
+            timeout=45.0, req_type="OPTION_CHAIN", symbol=symbol,
+        )
+
+    try:
+        chain_dict, data_status = await options_chain_cache.get_chain(symbol, expiry, _fetch)
+        return {**chain_dict, "data_status": data_status}
     except Exception as exc:
         return {"symbol": symbol, "expiry": expiry, "error": str(exc)}
 

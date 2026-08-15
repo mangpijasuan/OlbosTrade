@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from decimal import Decimal
 
 from app.api.deps import require_api_key
+from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.kill_switch import kill_switch_service
@@ -720,9 +721,13 @@ async def close_position(req: ClosePositionRequest):
     # behind it, able to fire unexpectedly against a later trade in the same ticker.
     cancelled = await broker.cancel_open_orders(ticker)
 
-    result = await broker.place_equity_order(
-        ticker=ticker, qty=qty, side=close_side,
-        order_type=req.order_type, limit_price=req.limit_price,
+    result = await ibkr_coordinator.submit(
+        Priority.P0,
+        lambda: broker.place_equity_order(
+            ticker=ticker, qty=qty, side=close_side,
+            order_type=req.order_type, limit_price=req.limit_price,
+        ),
+        req_type="PLACE_ORDER", symbol=ticker,
     )
 
     if result.status in ("cancelled", "rejected"):
@@ -965,7 +970,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         try:
             from app.services.margin_monitor import evaluate_margin
             from app.core.config import settings as _mg_cfg
-            _acct = await broker.get_account_summary()
+            _acct = await ibkr_coordinator.submit(
+                Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+            )
             if _acct.maintenance_margin is not None:
                 _m = evaluate_margin(
                     net_liquidation=float(_acct.net_liquidation or 0),
@@ -1013,14 +1020,18 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     ticker, _q_exc,
                 )
 
-            result = await broker.place_equity_order(
-                ticker=ticker,
-                qty=shares,
-                side=action,
-                order_type=signal.get("order_type", "limit"),
-                limit_price=entry_price,
-                stop=trade_plan.get("stop_price"),
-                take_profit=trade_plan.get("target_price"),
+            result = await ibkr_coordinator.submit(
+                Priority.P0,
+                lambda: broker.place_equity_order(
+                    ticker=ticker,
+                    qty=shares,
+                    side=action,
+                    order_type=signal.get("order_type", "limit"),
+                    limit_price=entry_price,
+                    stop=trade_plan.get("stop_price"),
+                    take_profit=trade_plan.get("target_price"),
+                ),
+                req_type="PLACE_ORDER", symbol=ticker,
             )
 
             # A terminated-unfilled order is NOT recorded — recording it would
@@ -1122,7 +1133,10 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 limit_price=limit_px,
                 time_in_force="DAY",
             )
-            result = await broker.place_order(order)
+            result = await ibkr_coordinator.submit(
+                Priority.P0, lambda: broker.place_order(order),
+                req_type="PLACE_ORDER", symbol=ticker,
+            )
 
             # A terminated-unfilled order is NOT recorded (no phantom position).
             if result.status in ("cancelled", "rejected"):

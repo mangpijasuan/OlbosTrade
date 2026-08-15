@@ -23,6 +23,18 @@ interface Observability {
   event_count?: number;
 }
 
+interface IbkrHealth {
+  connected: boolean;
+  coordinator: {
+    workers: number;
+    reserved_workers: number;
+    active_requests: number;
+    queue_depth: Record<string, number>;
+    in_flight_dedup_keys: number;
+  };
+  options_chain_cache: { hits: number; misses: number; hit_rate: number | null; entries: number };
+}
+
 interface Health {
   status?: string;
   broker?: string;
@@ -30,6 +42,7 @@ interface Health {
   kill_switch?: { engaged: boolean; reason: string | null };
   regime?: string | null;
   observability?: Observability;
+  ibkr?: IbkrHealth;
 }
 
 function Check({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
@@ -166,6 +179,23 @@ export default function DataQuality() {
             <Check ok={true} label="Uptime" detail={formatUptime(obs.uptime_seconds)} />
             {obs.counters && <CounterStrip counters={obs.counters} />}
           </div>
+
+          {h?.ibkr && (
+            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "6px 16px 4px" }}>
+              <div className="panel-title" style={{ padding: "8px 0 4px" }}>IBKR Connection</div>
+              <Check ok={h.ibkr.connected} label="Broker connection"
+                detail={h.ibkr.connected ? "connected" : "disconnected"} />
+              <Check ok={true} label="Active requests"
+                detail={`${h.ibkr.coordinator.active_requests} in flight · ${h.ibkr.coordinator.workers} workers (${h.ibkr.coordinator.reserved_workers} reserved for P0/P1)`} />
+              <Check ok={true} label="Options chain cache"
+                detail={h.ibkr.options_chain_cache.hit_rate != null
+                  ? `${Math.round(h.ibkr.options_chain_cache.hit_rate * 100)}% hit rate · ${h.ibkr.options_chain_cache.entries} cached`
+                  : "no requests yet"} />
+              <CounterStrip counters={Object.fromEntries(
+                Object.entries(h.ibkr.coordinator.queue_depth).map(([k, v]) => [`queue depth ${k.toLowerCase()}`, v])
+              )} />
+            </div>
+          )}
 
           <Panel
             padding={0}

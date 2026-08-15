@@ -53,8 +53,11 @@ async def get_portfolio_state():
     """
     try:
         from app.broker.broker_factory import get_broker
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         broker = get_broker()
-        acct   = await broker.get_account_summary()
+        acct   = await ibkr_coordinator.submit(
+            Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+        )
         acct_value    = float(acct.net_liquidation)
         buying_power  = float(acct.buying_power)
         cash          = float(acct.cash_balance)
@@ -390,7 +393,10 @@ async def get_var(confidence: float = 0.95, horizon_days: int = 1):
 
     try:
         from app.broker.broker_factory import get_broker
-        acct = await get_broker().get_account_summary()
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+        acct = await ibkr_coordinator.submit(
+            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY",
+        )
         pv = float(acct.net_liquidation)
     except Exception:
         pv = settings.starting_capital
@@ -411,7 +417,10 @@ async def get_margin():
 
     try:
         from app.broker.broker_factory import get_broker
-        acct = await get_broker().get_account_summary()
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+        acct = await ibkr_coordinator.submit(
+            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY",
+        )
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
 
