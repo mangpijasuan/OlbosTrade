@@ -190,14 +190,21 @@ export default function GlobalRiskStatus() {
     budgetChip = <Chip label="RISK BUDGET" value="UNAVAILABLE" tone="var(--amber)" order={5} />;
   } else {
     const s = riskAvail.value.state;
-    const dailyLoss = pct(s.daily_loss_pct);
+    // daily_loss_pct is a signed P&L ratio (positive on a gain day), not
+    // always a loss. The old code compared it to max_daily_loss_pct raw:
+    // a real loss (negative) almost never tripped the red alert since a
+    // negative number is rarely >= a positive max, while a big gain
+    // (positive, sometimes >= max) incorrectly could. Clamp to the
+    // negative portion only so "DAILY DD" always means actual drawdown.
+    const dailyLossUsed = Math.max(0, -(s.daily_loss_pct ?? 0));
+    const dailyLoss = pct(dailyLossUsed);
     const dailyLimit = pct(s.max_daily_loss_pct);
     drawdownChip =
       dailyLoss !== null ? (
         <Chip
           label="DAILY DD"
           value={dailyLimit ? `${dailyLoss} / ${dailyLimit}` : dailyLoss}
-          tone={s.daily_loss_pct && s.max_daily_loss_pct && s.daily_loss_pct >= s.max_daily_loss_pct ? "var(--red)" : "var(--ink)"}
+          tone={typeof s.max_daily_loss_pct === "number" && dailyLossUsed >= s.max_daily_loss_pct ? "var(--red)" : "var(--ink)"}
           order={4}
         />
       ) : (
@@ -205,7 +212,7 @@ export default function GlobalRiskStatus() {
       );
 
     if (typeof s.daily_loss_pct === "number" && typeof s.max_daily_loss_pct === "number") {
-      const remaining = Math.max(0, s.max_daily_loss_pct - s.daily_loss_pct);
+      const remaining = Math.max(0, s.max_daily_loss_pct - dailyLossUsed);
       budgetChip = (
         <Chip
           label="RISK BUDGET LEFT"

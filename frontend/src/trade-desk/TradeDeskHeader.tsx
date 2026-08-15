@@ -98,14 +98,21 @@ export default function TradeDeskHeader() {
           if (typeof s.daily_pnl === "number") {
             setDayPnl(`${s.daily_pnl >= 0 ? "+" : ""}$${s.daily_pnl.toFixed(0)}`);
           } else if (typeof s.daily_loss_pct === "number") {
-            setDayPnl(`${(s.daily_loss_pct * 100).toFixed(2)}% loss`);
+            // daily_loss_pct is a signed P&L ratio — don't hardcode "loss"
+            // on what could be a gain.
+            const v = s.daily_loss_pct * 100;
+            setDayPnl(`${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
           } else {
             setDayPnl("—");
           }
           if (typeof s.daily_loss_pct === "number" && typeof s.max_daily_loss_pct === "number") {
-            const rem = Math.max(0, s.max_daily_loss_pct - s.daily_loss_pct);
+            // Clamp to the negative portion only — a gain uses 0% of the
+            // loss budget, not its magnitude (see GlobalRiskStatus.tsx for
+            // the same fix and the reasoning behind it).
+            const lossUsed = Math.max(0, -s.daily_loss_pct);
+            const rem = Math.max(0, s.max_daily_loss_pct - lossUsed);
             setHeat(`${(rem * 100).toFixed(1)}% budget`);
-            setDrawdown(`${(s.daily_loss_pct * 100).toFixed(2)}% day`);
+            setDrawdown(`${(lossUsed * 100).toFixed(2)}% day`);
           } else {
             setHeat("—");
             setDrawdown("—");

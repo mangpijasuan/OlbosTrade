@@ -461,8 +461,11 @@ export default function Dashboard() {
             </div>
             <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
               {[
-                { label: "Daily Loss",    val: Math.abs(guardrailStatus?.daily_loss_pct || 0) * 100, max: 2,  unit: "%" },
-                { label: "Weekly Loss",   val: Math.abs(guardrailStatus?.weekly_loss_pct || 0) * 100, max: 5, unit: "%" },
+                // daily/weekly_loss_pct are signed P&L ratios (positive on a
+                // gain day) — clamp to the negative portion only, so a gain
+                // shows 0% of the loss budget used instead of its magnitude.
+                { label: "Daily Loss",    val: Math.max(0, -(guardrailStatus?.daily_loss_pct  || 0)) * 100, max: 2,  unit: "%" },
+                { label: "Weekly Loss",   val: Math.max(0, -(guardrailStatus?.weekly_loss_pct || 0)) * 100, max: 5, unit: "%" },
                 { label: "Trades Today",  val: guardrailStatus?.trades_today || 0, max: 3, unit: "" },
                 { label: "Consec. Loss",  val: guardrailStatus?.consecutive_losses || 0, max: 3, unit: "" },
               ].map(g => {

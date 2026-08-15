@@ -918,17 +918,27 @@ export default function ChartWorkstation({
 
           <InfoCard title="Operator Safety">
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {[
-                { label: "Kill Switch", value: killSwitch?.active ? "ACTIVE" : "ARMED", tone: killSwitch?.active ? "var(--red)" : "var(--green)" },
-                { label: "Daily Loss", value: fmtPct(guardrailStatus?.daily_loss_pct, 2), tone: "var(--red)" },
-                { label: "Open Positions", value: String(portfolio?.open_positions ?? positions.length ?? 0), tone: "var(--ink)" },
-                { label: "Win Rate", value: portfolio?.win_rate != null ? `${Math.round(portfolio.win_rate * 100)}%` : "—", tone: "var(--cyan)" },
-              ].map((row) => (
-                <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 16, borderBottom: "1px solid var(--line-dim)", paddingBottom: 8 }}>
-                  <span className="kicker">{row.label}</span>
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: row.tone }}>{row.value}</span>
-                </div>
-              ))}
+              {/* daily_loss_pct is a signed P&L ratio (fraction, e.g. 0.0015
+                  for 0.15%) that's positive on a gain day — clamp to the
+                  negative portion and scale to a percent before display, so
+                  a gain doesn't render as a small red "loss" (it also wasn't
+                  being multiplied by 100 here, unlike every other consumer
+                  of this field). */}
+              {(() => {
+                const raw = guardrailStatus?.daily_loss_pct;
+                const dailyLossPct = typeof raw === "number" ? Math.max(0, -raw) * 100 : null;
+                return [
+                  { label: "Kill Switch", value: killSwitch?.active ? "ACTIVE" : "ARMED", tone: killSwitch?.active ? "var(--red)" : "var(--green)" },
+                  { label: "Daily Loss", value: fmtPct(dailyLossPct, 2), tone: dailyLossPct ? "var(--red)" : "var(--green)" },
+                  { label: "Open Positions", value: String(portfolio?.open_positions ?? positions.length ?? 0), tone: "var(--ink)" },
+                  { label: "Win Rate", value: portfolio?.win_rate != null ? `${Math.round(portfolio.win_rate * 100)}%` : "—", tone: "var(--cyan)" },
+                ].map((row) => (
+                  <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 16, borderBottom: "1px solid var(--line-dim)", paddingBottom: 8 }}>
+                    <span className="kicker">{row.label}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: row.tone }}>{row.value}</span>
+                  </div>
+                ));
+              })()}
             </div>
           </InfoCard>
         </div>
