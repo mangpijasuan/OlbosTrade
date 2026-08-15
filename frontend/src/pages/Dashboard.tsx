@@ -18,6 +18,11 @@ import ErrorBoundary     from "../components/ErrorBoundary";
 import WelcomeBanner, { WELCOME_DISMISS_KEY } from "../components/WelcomeBanner";
 import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 import { useIsMobile }   from "../hooks/useIsMobile";
+import { StatTile, Badge, Button } from "../components/ui";
+
+function hintFor(label: string): React.ReactNode {
+  return resolveMetricHint(label) ? <MetricHint id={label} /> : label;
+}
 
 // ── Equity chart canvas ───────────────────────────────────────────────────────
 interface ChartPoint { date: string; value: number; }
@@ -136,20 +141,6 @@ function EquityChart({ points, loading }: { points: ChartPoint[]; loading: boole
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function StatCell({ label, value, sub, color }: {
-  label: string; value: string; sub?: string; color?: string;
-}) {
-  return (
-    <div style={{ padding: "14px 16px", borderRight: "1px solid var(--line-dim)" }}>
-      <div className="kicker" style={{ marginBottom: 6 }}>
-        {resolveMetricHint(label) ? <MetricHint id={label} /> : label}
-      </div>
-      <div className="data-val" style={{ color: color || "var(--ink)" }}>{value}</div>
-      {sub && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 3 }}>{sub}</div>}
-    </div>
-  );
-}
-
 function PositionRow({ pos }: { pos: any }) {
   const pnl = pos.unrealized_pnl ?? 0;
   // Untracked = a broker holding Olbos never opened (no DB record). Render
@@ -167,12 +158,13 @@ function PositionRow({ pos }: { pos: any }) {
         {pnlKnown ? `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—"}
       </td>
       <td>
-        <span style={{
-          fontFamily: "var(--mono)", fontSize: 10, padding: "2px 6px",
-          background: untracked ? "rgba(245,158,11,0.1)" : "rgba(34,197,94,0.1)",
-          color: untracked ? "var(--amber)" : "var(--green)",
-          letterSpacing: "0.08em",
-        }}>{untracked ? "UNTRACKED" : "OPEN"}</span>
+        <Badge
+          kind="tag"
+          tone={untracked ? "var(--amber)" : "var(--green)"}
+          bg={untracked ? "rgba(245,158,11,0.1)" : "rgba(34,197,94,0.1)"}
+        >
+          {untracked ? "UNTRACKED" : "OPEN"}
+        </Badge>
       </td>
     </tr>
   );
@@ -333,32 +325,40 @@ export default function Dashboard() {
 
       {/* Top stat bar */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
-        <StatCell
-          label="Portfolio Value"
+        <StatTile
+          variant="divider" size="default"
+          label="Portfolio Value" hint={hintFor("Portfolio Value")}
           value={`$${(pv / 1000).toFixed(2)}k`}
           sub={portfolio?.return_pct != null ? `${portfolio.return_pct >= 0 ? "+" : ""}${portfolio.return_pct.toFixed(2)}% all-time` : undefined}
         />
-        <StatCell
-          label="Day P&L"
+        <StatTile
+          variant="divider" size="default"
+          label="Day P&L" hint={hintFor("Day P&L")}
           value={`${daily >= 0 ? "+" : ""}$${Math.abs(daily).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
           sub={portfolio?.win_rate != null ? `Win rate: ${(portfolio.win_rate * 100).toFixed(1)}%` : undefined}
-          color={daily >= 0 ? "var(--green)" : "var(--red)"}
+          tone={daily >= 0 ? "var(--green)" : "var(--red)"}
         />
-        <StatCell
-          label="Week P&L"
+        <StatTile
+          variant="divider" size="default"
+          label="Week P&L" hint={hintFor("Week P&L")}
           value={`${weekly >= 0 ? "+" : ""}$${Math.abs(weekly).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
-          color={weekly >= 0 ? "var(--green)" : "var(--red)"}
+          tone={weekly >= 0 ? "var(--green)" : "var(--red)"}
         />
-        <StatCell
-          label="Month P&L"
+        <StatTile
+          variant="divider" size="default"
+          label="Month P&L" hint={hintFor("Month P&L")}
           value={`${monthly >= 0 ? "+" : ""}$${Math.abs(monthly).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
-          color={monthly >= 0 ? "var(--green)" : "var(--red)"}
+          tone={monthly >= 0 ? "var(--green)" : "var(--red)"}
         />
-        <StatCell label="Buying Power"     value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
-        <StatCell label="Net Delta"        value={(greeks?.net_delta || 0).toFixed(3)} />
-        <StatCell label="Net Theta (daily)"  value={(greeks?.net_theta || 0).toFixed(3)} color="var(--cyan)" />
-        <StatCell
-          label="Open Positions"
+        <StatTile variant="divider" size="default" label="Buying Power" hint={hintFor("Buying Power")}
+          value={portfolio?.buying_power != null ? `$${(portfolio.buying_power / 1000).toFixed(1)}k` : "—"} />
+        <StatTile variant="divider" size="default" label="Net Delta" hint={hintFor("Net Delta")}
+          value={(greeks?.net_delta || 0).toFixed(3)} />
+        <StatTile variant="divider" size="default" label="Net Theta (daily)" hint={hintFor("Net Theta (daily)")}
+          value={(greeks?.net_theta || 0).toFixed(3)} tone="var(--cyan)" />
+        <StatTile
+          variant="divider" size="default"
+          label="Open Positions" hint={hintFor("Open Positions")}
           value={String(portfolio?.open_positions ?? managedPositions.length)}
           sub={untrackedPositions.length > 0 ? `+${untrackedPositions.length} untracked` : undefined}
         />
@@ -375,16 +375,8 @@ export default function Dashboard() {
             <div className="panel-head">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span className="panel-title">Equity Curve</span>
-                {curveSource === "backtest" && (
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--amber)", padding: "1px 6px", border: "1px solid var(--amber)", opacity: 0.7 }}>
-                    BACKTEST
-                  </span>
-                )}
-                {curveSource === "trades" && (
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--green)", padding: "1px 6px", border: "1px solid var(--green)", opacity: 0.7 }}>
-                    LIVE
-                  </span>
-                )}
+                {curveSource === "backtest" && <Badge kind="tag" tone="var(--amber)">BACKTEST</Badge>}
+                {curveSource === "trades" && <Badge kind="tag" tone="var(--green)">LIVE</Badge>}
                 {visiblePoints.length >= 2 && (
                   <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: rangePnl >= 0 ? "var(--green)" : "var(--red)", marginLeft: 8 }}>
                     {rangePnl >= 0 ? "+" : ""}${rangePnl.toFixed(0)}
@@ -393,12 +385,7 @@ export default function Dashboard() {
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 {["1W","1M","3M","YTD","ALL"].map(t => (
-                  <button
-                    key={t}
-                    className={`btn-t ${t === range ? "active" : ""}`}
-                    style={{ padding: "2px 8px", fontSize: 10 }}
-                    onClick={() => setRange(t)}
-                  >{t}</button>
+                  <Button key={t} size="sm" active={t === range} onClick={() => setRange(t)}>{t}</Button>
                 ))}
               </div>
             </div>
@@ -475,7 +462,7 @@ export default function Dashboard() {
                   <div key={g.label}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                       <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                        {resolveMetricHint(g.label) ? <MetricHint id={g.label} /> : g.label}
+                        {hintFor(g.label)}
                       </span>
                       <span style={{ fontFamily: "var(--mono)", fontSize: 10, color }}>
                         {g.val.toFixed(1)}{g.unit} / {g.max}{g.unit}
