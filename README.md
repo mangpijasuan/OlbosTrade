@@ -58,7 +58,7 @@ olbostrade/
 
 ### Step 2 — Start OlbosTrade
 ```bash
-cd ~/Projects/olbosquant
+cd ~/Projects/olbostrade
 ./start.sh
 ```
 
@@ -160,16 +160,16 @@ To have the backend restart automatically if it crashes, or start on login:
 
 ```bash
 # Enable
-launchctl load ~/Library/LaunchAgents/com.olbosquant.backend.plist
+launchctl load ~/Library/LaunchAgents/com.olbostrade.backend.plist
 
 # Disable
-launchctl unload ~/Library/LaunchAgents/com.olbosquant.backend.plist
+launchctl unload ~/Library/LaunchAgents/com.olbostrade.backend.plist
 
 # Check status
-launchctl list | grep olbosquant
+launchctl list | grep olbostrade
 ```
 
-The plist file is at `~/Library/LaunchAgents/com.olbosquant.backend.plist` (created by `start.sh` on first run).
+The plist file is at `~/Library/LaunchAgents/com.olbostrade.backend.plist` (created by `start.sh` on first run).
 
 ---
 
@@ -258,7 +258,7 @@ The signal scorer is an **XGBoost regressor** that predicts **return-on-risk (Ro
 # GET /api/backtest/{id}/export  →  save as backtest_results.json
 
 # 3. Train the model
-cd olbosquant   # project root
+cd olbostrade   # project root
 python3 ml/train_signal_scorer.py backtest_results.json
 
 # Model saved to ml/model_registry/signal_scorer_v1.pkl

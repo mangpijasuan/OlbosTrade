@@ -1,4 +1,4 @@
-# OlbosQuant Phase 2 — Implementation Plan (Scope A)
+# OlbosTrade Phase 2 — Implementation Plan (Scope A)
 
 Research-driven quant platform. Built on the merged V2+V3 base. **Reuse-first**:
 every batch extends existing modules rather than rebuilding. Same bar as V3 —

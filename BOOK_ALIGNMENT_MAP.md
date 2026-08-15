@@ -1,4 +1,4 @@
-# Algorithmic Trading Book -> OlbosQuant Alignment Map
+# Algorithmic Trading Book -> OlbosTrade Alignment Map
 
 ## Source
 
@@ -8,26 +8,26 @@ Book reviewed:
 
 This document answers a narrow question:
 
-- how should this book influence `olbosquant`?
+- how should this book influence `olbostrade`?
 
 It is **not** a platform blueprint.
 It is a **strategy research and validation reference** that should feed selected parts of the product.
 
 ## Overall Fit
 
-The book aligns well with these parts of `olbosquant`:
+The book aligns well with these parts of `olbostrade`:
 
-- [backend/app/services/backtester.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/backtester.py)
-- [backend/app/services/strategy_optimizer.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/strategy_optimizer.py)
-- [backend/app/services/regime_classifier.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/regime_classifier.py)
-- [backend/app/services/signal_scorer.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/signal_scorer.py)
-- [backend/app/services/risk_manager.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/risk_manager.py)
-- [backend/app/services/unified_risk.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/unified_risk.py)
-- [frontend/src/pages/Backtest.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Backtest.tsx)
-- [frontend/src/pages/Research.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Research.tsx)
-- [frontend/src/pages/Strategy.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Strategy.tsx)
+- [backend/app/services/backtester.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/backtester.py)
+- [backend/app/services/strategy_optimizer.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/strategy_optimizer.py)
+- [backend/app/services/regime_classifier.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/regime_classifier.py)
+- [backend/app/services/signal_scorer.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/signal_scorer.py)
+- [backend/app/services/risk_manager.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/risk_manager.py)
+- [backend/app/services/unified_risk.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/unified_risk.py)
+- [frontend/src/pages/Backtest.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Backtest.tsx)
+- [frontend/src/pages/Research.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Research.tsx)
+- [frontend/src/pages/Strategy.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Strategy.tsx)
 
-The book does **not** directly solve these parts of `olbosquant`:
+The book does **not** directly solve these parts of `olbostrade`:
 
 - multi-broker execution architecture
 - canonical order/fill/position/account models
@@ -64,7 +64,7 @@ It directly supports:
 - implementation discipline
 - execution-aware strategy design
 
-### Import into OlbosQuant
+### Import into OlbosTrade
 
 Use this chapter to strengthen:
 
@@ -76,10 +76,10 @@ Use this chapter to strengthen:
 
 ### Map to current code
 
-- [backend/app/services/backtester.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/backtester.py)
-- [backend/app/services/execution_dispatcher.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/execution_dispatcher.py)
-- [backend/app/services/trade_recorder.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/trade_recorder.py)
-- [frontend/src/pages/Backtest.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Backtest.tsx)
+- [backend/app/services/backtester.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/backtester.py)
+- [backend/app/services/execution_dispatcher.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/execution_dispatcher.py)
+- [backend/app/services/trade_recorder.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/trade_recorder.py)
+- [frontend/src/pages/Backtest.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Backtest.tsx)
 
 ### Import now
 
@@ -91,7 +91,7 @@ Use this chapter to strengthen:
 ### Adapt carefully
 
 The book treats automated execution more generally than our current options-spread stack.
-For `olbosquant`, execution must stay tied to:
+For `olbostrade`, execution must stay tied to:
 
 - partial-fill handling
 - multi-leg atomicity
@@ -116,7 +116,7 @@ It is especially useful for:
 - regime-aware mean reversion scanners
 - cross-sectional signal ranking
 
-### Import into OlbosQuant
+### Import into OlbosTrade
 
 Use it as a research source for:
 
@@ -127,10 +127,10 @@ Use it as a research source for:
 
 ### Map to current code
 
-- [backend/app/services/regime_classifier.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/regime_classifier.py)
-- [backend/app/services/strategy_registry.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/strategy_registry.py)
-- [frontend/src/pages/Research.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Research.tsx)
-- [frontend/src/pages/Strategy.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Strategy.tsx)
+- [backend/app/services/regime_classifier.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/regime_classifier.py)
+- [backend/app/services/strategy_registry.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/strategy_registry.py)
+- [frontend/src/pages/Research.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Research.tsx)
+- [frontend/src/pages/Strategy.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Strategy.tsx)
 
 ### Import now
 
@@ -167,7 +167,7 @@ This fits the strategy design workflow, especially for:
 - parameter validation
 - signal explanation
 
-### Import into OlbosQuant
+### Import into OlbosTrade
 
 Use it to shape:
 
@@ -178,10 +178,10 @@ Use it to shape:
 
 ### Map to current code
 
-- [backend/app/services/strategy_engine.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/strategy_engine.py)
-- [backend/app/services/strategy_config_service.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/strategy_config_service.py)
-- [backend/app/services/strategy_optimizer.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/strategy_optimizer.py)
-- [frontend/src/pages/Strategy.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Strategy.tsx)
+- [backend/app/services/strategy_engine.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/strategy_engine.py)
+- [backend/app/services/strategy_config_service.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/strategy_config_service.py)
+- [backend/app/services/strategy_optimizer.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/strategy_optimizer.py)
+- [frontend/src/pages/Strategy.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Strategy.tsx)
 
 ### Import now
 
@@ -214,9 +214,9 @@ It fits:
 
 ### Map to current code
 
-- [frontend/src/pages/EquitySignals.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/EquitySignals.tsx)
-- [backend/app/services/equity_signal_engine.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/equity_signal_engine.py)
-- [backend/app/services/signal_scorer.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/signal_scorer.py)
+- [frontend/src/pages/EquitySignals.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/EquitySignals.tsx)
+- [backend/app/services/equity_signal_engine.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/equity_signal_engine.py)
+- [backend/app/services/signal_scorer.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/signal_scorer.py)
 
 ### Import now
 
@@ -248,13 +248,13 @@ Then route them into options structures where appropriate.
 
 ### Partial alignment
 
-This chapter is useful, but less central for the current product unless `olbosquant` expands into:
+This chapter is useful, but less central for the current product unless `olbostrade` expands into:
 
 - futures
 - FX
 - volatility products
 
-### Import into OlbosQuant
+### Import into OlbosTrade
 
 Use it as a deferred research lane, not a near-term build driver.
 
@@ -286,9 +286,9 @@ This chapter fits very well with:
 
 ### Map to current code
 
-- [backend/app/services/regime_classifier.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/regime_classifier.py)
-- [backend/app/services/signal_scorer.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/signal_scorer.py)
-- [frontend/src/pages/EquitySignals.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/EquitySignals.tsx)
+- [backend/app/services/regime_classifier.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/regime_classifier.py)
+- [backend/app/services/signal_scorer.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/signal_scorer.py)
+- [frontend/src/pages/EquitySignals.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/EquitySignals.tsx)
 
 ### Import now
 
@@ -331,7 +331,7 @@ Avoid using this chapter as justification for immediately building:
 - aggressive microstructure-sensitive intraday systems
 - latency-dependent execution promises
 
-`olbosquant` is not yet a low-latency intraday momentum engine.
+`olbostrade` is not yet a low-latency intraday momentum engine.
 Its current architecture is still being hardened around:
 
 - reconciliation
@@ -365,10 +365,10 @@ It aligns tightly with:
 
 ### Map to current code
 
-- [backend/app/services/risk_manager.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/risk_manager.py)
-- [backend/app/services/unified_risk.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/unified_risk.py)
-- [backend/app/services/position_reconciler.py](/Users/mangpijasuan/Projects/olbosquant/backend/app/services/position_reconciler.py)
-- [frontend/src/pages/Guardrails.tsx](/Users/mangpijasuan/Projects/olbosquant/frontend/src/pages/Guardrails.tsx)
+- [backend/app/services/risk_manager.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/risk_manager.py)
+- [backend/app/services/unified_risk.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/unified_risk.py)
+- [backend/app/services/position_reconciler.py](/Users/mangpijasuan/Projects/olbostrade/backend/app/services/position_reconciler.py)
+- [frontend/src/pages/Guardrails.tsx](/Users/mangpijasuan/Projects/olbostrade/frontend/src/pages/Guardrails.tsx)
 
 ### Import now
 
@@ -426,7 +426,7 @@ The worst use would be treating it as:
 
 ## Final Guidance
 
-This book **does align with OlbosQuant**, but mostly as a:
+This book **does align with OlbosTrade**, but mostly as a:
 
 - strategy playbook
 - validation discipline reference

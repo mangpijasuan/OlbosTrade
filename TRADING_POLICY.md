@@ -1,6 +1,6 @@
-# OlbosQuant — Trading Policy & Charter
+# OlbosTrade — Trading Policy & Charter
 
-OlbosQuant is an institutional-grade AI quantitative options trading system.
+OlbosTrade is an institutional-grade AI quantitative options trading system.
 
 **Objective:** maximize long-term *risk-adjusted* returns while minimizing
 drawdowns. **Not** to maximize the number of trades. **Capital preservation
@@ -114,7 +114,7 @@ multiplier, DTE time-stop live; ATR-trailing and news-exit are roadmap.
 Confidence 0–100 from trend, momentum, volatility, flow, liquidity, regime,
 risk/reward, POP, EV. **Trade only above a configurable threshold.**
 
-> **Charter default: 85%. Evaluation-phase override: lower.** OlbosQuant has no
+> **Charter default: 85%. Evaluation-phase override: lower.** OlbosTrade has no
 > validated track record yet — an 85% bar would prevent nearly all trades and
 > starve the system of the data needed to *prove* an edge. During the initial
 > paper-evaluation phase we run a **lower threshold to gather a track record**,

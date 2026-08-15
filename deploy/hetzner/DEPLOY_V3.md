@@ -1,4 +1,4 @@
-# OlbosQuant V3 — Hetzner Deploy Runbook
+# OlbosTrade V3 — Hetzner Deploy Runbook
 
 Single-command-per-line, copy-paste-safe for the Hetzner web console (which can't
 paste multiline blocks and mangles some characters). Run each line on its own.

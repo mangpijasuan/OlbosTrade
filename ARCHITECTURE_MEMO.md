@@ -1,8 +1,8 @@
-# OlbosQuant Approved Architecture Memo
+# OlbosTrade Approved Architecture Memo
 
 ## Purpose
 
-This memo reframes the earlier viability report into an engineering-aligned architecture note for the current `olbosquant` codebase. It keeps the strong parts of the original thesis, corrects a few mis-prioritized points, and defines the next system-level build order.
+This memo reframes the earlier viability report into an engineering-aligned architecture note for the current `olbostrade` codebase. It keeps the strong parts of the original thesis, corrects a few mis-prioritized points, and defines the next system-level build order.
 
 The intended product remains the same:
 
@@ -405,7 +405,7 @@ Defer:
 
 ## Final Recommendation
 
-The platform should continue building on `olbosquant`, not restart from scratch.
+The platform should continue building on `olbostrade`, not restart from scratch.
 
 Why:
 
@@ -416,6 +416,6 @@ Why:
 
 But the next bar for progress is clear:
 
-`olbosquant` should now behave less like a feature-rich trading app and more like a state-truth machine for orders, fills, risk, and broker reconciliation.
+`olbostrade` should now behave less like a feature-rich trading app and more like a state-truth machine for orders, fills, risk, and broker reconciliation.
 
 That is the shortest path to a real flagship institutional-grade retail platform.

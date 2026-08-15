@@ -20,10 +20,9 @@ Internet
 OlbosTrade joins the `olbos_default` Docker network so Caddy can reach it.
 Its database and Redis are isolated on `olbostrade_internal` — separate from olbos.
 
-NOTE: the Postgres database itself keeps its original name/user/data volume
-(`olbosquantdb` / `olbosquant` / `olbosquant_pgdata`) — only the Docker
-container, network, and directory names were rebranded. See the comment at
-the top of `docker-compose.hetzner.yml` for why.
+NOTE: older deployments may still have legacy Postgres role/database/volume
+names from before the rebrand. Docker container, network, and directory names
+were rebranded first; if your data is legacy, follow the migration section.
 
 ---
 
@@ -203,20 +202,20 @@ asyncio.run(t())
 
 ## Migration
 
-If you are migrating an existing deployment that used the old `olbosquant` role
-and `olbosquantdb` database, follow one of these approaches before switching
-the Compose file to reference `olbostrade` fully:
+If you are migrating an existing deployment that used old pre-rebrand role/
+database names, follow one of these approaches before switching the Compose
+file to reference `olbostrade` fully:
 
 - Dump and restore (recommended):
 
 ```bash
-# on the host, create a dump from the old DB
-docker exec -t olbostrade-db pg_dump -U olbosquant olbosquantdb > /tmp/olbosquantdb.sql
+# on the host, create a dump from the old DB (replace placeholders)
+docker exec -t olbostrade-db pg_dump -U <legacy_user> <legacy_db> > /tmp/legacy-db.sql
 # create target DB/role on the server (or use a temporary container)
 docker exec -it olbostrade-db psql -U postgres -c "CREATE ROLE olbostrade WITH LOGIN PASSWORD 'secret';"
 docker exec -it olbostrade-db psql -U postgres -c "CREATE DATABASE olbostrade OWNER olbostrade;"
 # restore
-cat /tmp/olbosquantdb.sql | docker exec -i olbostrade-db psql -U olbostrade -d olbostrade
+cat /tmp/legacy-db.sql | docker exec -i olbostrade-db psql -U olbostrade -d olbostrade
 ```
 
 - In-cluster migration: create the new role/db and copy data using SQL tools
