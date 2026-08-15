@@ -8,7 +8,9 @@ import { Button } from "../../components/ui";
 
 interface Contract {
   strike: number; bid: number; ask: number; last: number;
-  volume: number; open_interest: number; delta: number | null; iv: number | null;
+  volume: number; open_interest: number;
+  delta: number | null; gamma: number | null; theta: number | null; vega: number | null;
+  iv: number | null;
 }
 interface ChainResponse {
   symbol: string; expiry: string; underlying_price?: number;
@@ -25,6 +27,9 @@ function ContractRow({ c, atm }: { c: Contract; atm: boolean }) {
       <td className="mono" style={{ color: "var(--ink-dim)" }}>{c.volume.toLocaleString("en-US")}</td>
       <td className="mono" style={{ color: "var(--ink-dim)" }}>{c.open_interest.toLocaleString("en-US")}</td>
       <td className="mono" style={{ color: "var(--cyan)" }}>{c.delta != null ? c.delta.toFixed(2) : "—"}</td>
+      <td className="mono" style={{ color: "var(--ink-dim)" }}>{c.gamma != null ? c.gamma.toFixed(3) : "—"}</td>
+      <td className="mono" style={{ color: c.theta != null && c.theta < 0 ? "var(--red)" : "var(--ink-dim)" }}>{c.theta != null ? c.theta.toFixed(3) : "—"}</td>
+      <td className="mono" style={{ color: "var(--ink-dim)" }}>{c.vega != null ? c.vega.toFixed(3) : "—"}</td>
       <td className="mono" style={{ color: "var(--ink-dim)" }}>{c.iv != null ? `${(c.iv * 100).toFixed(0)}%` : "—"}</td>
     </tr>
   );
@@ -75,7 +80,7 @@ export default function OptionsChain({
   const atmCallStrike = nearestStrike(data?.calls);
   const atmPutStrike  = nearestStrike(data?.puts);
 
-  const cols = ["Strike", "Bid", "Ask", "Last", "Vol", "OI", "Delta", "IV"];
+  const cols = ["Strike", "Bid", "Ask", "Last", "Vol", "OI", "Delta", "Gamma", "Theta", "Vega", "IV"];
 
   return (
     <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>

@@ -116,6 +116,9 @@ async def get_options_chain(symbol: str, expiry: str = ""):
                     "volume":        c.volume,
                     "open_interest": c.open_interest,
                     "delta":         c.greeks.delta if c.greeks else None,
+                    "gamma":         c.greeks.gamma if c.greeks else None,
+                    "theta":         c.greeks.theta if c.greeks else None,
+                    "vega":          c.greeks.vega if c.greeks else None,
                     "iv":            c.greeks.implied_vol if c.greeks else None,
                 }
                 for c in chain.calls
@@ -129,6 +132,9 @@ async def get_options_chain(symbol: str, expiry: str = ""):
                     "volume":        p.volume,
                     "open_interest": p.open_interest,
                     "delta":         p.greeks.delta if p.greeks else None,
+                    "gamma":         p.greeks.gamma if p.greeks else None,
+                    "theta":         p.greeks.theta if p.greeks else None,
+                    "vega":          p.greeks.vega if p.greeks else None,
                     "iv":            p.greeks.implied_vol if p.greeks else None,
                 }
                 for p in chain.puts
