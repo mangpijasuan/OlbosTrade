@@ -8,6 +8,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Panel, Button } from "./ui";
 
 interface Bias {
   symbol: string; price: number | null; bias: "bullish" | "neutral" | "bearish";
@@ -105,12 +106,12 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
   }, [symbol]);
 
   return (
-    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)" }}>
-      <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-dim)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span className="panel-title">Market Bias · {symbol}</span>
-        {bias && <span style={{ fontSize: 11, color: "var(--ink-faint)" }}>~{Math.round(bias.data_freshness_s / 60)}m old</span>}
-      </div>
-      <div style={{ padding: 12 }}>
+    <Panel
+      sectionStyle={{ borderRadius: 6 }}
+      padding={12}
+      title={`Market Bias · ${symbol}`}
+      action={bias && <span style={{ fontSize: 11, color: "var(--ink-faint)" }}>~{Math.round(bias.data_freshness_s / 60)}m old</span>}
+    >
         {loading && !bias ? (
           <div style={{ fontSize: 12, color: "var(--ink-dim)" }}>Loading…</div>
         ) : error ? (
@@ -121,14 +122,14 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
           <>
             <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
               {(["beginner", "intermediate", "advanced"] as const).map((item) => (
-                <button
+                <Button
                   key={item}
-                  className={`btn-t ${view === item ? "active" : ""}`}
+                  active={view === item}
                   style={{ fontSize: 11, textTransform: "capitalize" }}
                   onClick={() => setView(item)}
                 >
                   {item}
-                </button>
+                </Button>
               ))}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
@@ -188,9 +189,9 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
 
             {align && view === "advanced" && (
               <>
-                <button className="btn-t" style={{ fontSize: 11 }} onClick={() => setOpen(o => !o)}>
+                <Button style={{ fontSize: 11 }} onClick={() => setOpen(o => !o)}>
                   {open ? "Hide" : "Show"} timeframes
-                </button>
+                </Button>
                 {open && (
                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
                     {align.per_timeframe.map(tf => (
@@ -210,8 +211,7 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Panel>
   );
 }
 

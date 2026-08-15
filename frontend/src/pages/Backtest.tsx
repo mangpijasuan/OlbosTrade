@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useBacktest } from "../hooks/useBacktest";
+import { Panel, Button } from "../components/ui";
 
 export default function Backtest() {
   const { results, loading, error, runBacktest } = useBacktest();
@@ -13,15 +14,6 @@ export default function Backtest() {
   const status: string | undefined = results?.status;
   const pct = (v: any) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—");
   const num = (v: any, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
-
-  const Panel = ({ title, children }: any) => (
-    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-      <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", gap: 8 }}>
-        <span className="panel-title">{title}</span>
-      </div>
-      <div style={{ padding: 16 }}>{children}</div>
-    </div>
-  );
 
   const Field = ({ label, children }: any) => (
     <div style={{ marginBottom: 14 }}>
@@ -78,10 +70,10 @@ export default function Backtest() {
           <input type="date" style={inputStyle} value={form.end_date}
             onChange={e => setForm({ ...form, end_date: e.target.value })} />
         </Field>
-        <button className="btn-t" onClick={() => runBacktest(form)}
+        <Button onClick={() => runBacktest(form)}
           style={{ width: "100%", marginTop: 8, padding: "10px", justifyContent: "center", display: "flex" }}>
           {loading ? "Running…" : "Run backtest ↗"}
-        </button>
+        </Button>
       </div>
 
       {/* Right: results */}
@@ -105,7 +97,7 @@ export default function Backtest() {
         </div>
 
         {/* Status / equity curve placeholder */}
-        <Panel title="Equity Curve">
+        <Panel title="Equity Curve" padding={16}>
           <div style={{
             height: 200, background: "var(--bg-3)",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -135,7 +127,7 @@ export default function Backtest() {
 
         {/* Trade log */}
         {done && results?.trades?.length > 0 && (
-          <Panel title="Trade Log">
+          <Panel title="Trade Log" padding={16}>
             <table className="t-table">
               <thead><tr>
                 {["Entry","Exit","Strategy","Credit","P&L","Exit Reason"].map(h => <th key={h}>{h}</th>)}
