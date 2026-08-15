@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
+import { Badge } from "../../components/ui";
 import {
   type DeskLifecycle,
   lifecycleColor,
@@ -13,23 +14,6 @@ import {
 } from "../executionStatus";
 
 type Filter = "all" | DeskLifecycle;
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
-}
 
 export default function ExecutionMonitor() {
   const [log, setLog] = useState<any[]>([]);
@@ -210,8 +194,8 @@ export default function ExecutionMonitor() {
                       <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                         {e.ticker || "—"}
                       </span>
-                      <Badge text={lifecycleLabel(life)} color={lifecycleColor(life)} />
-                      <Badge text={(e.asset_type || "eq").toUpperCase()} color="var(--ink-dim)" />
+                      <Badge kind="tag" tone={lifecycleColor(life)}>{lifecycleLabel(life)}</Badge>
+                      <Badge kind="tag" tone="var(--ink-dim)">{(e.asset_type || "eq").toUpperCase()}</Badge>
                       <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
                         {e.action || e.strategy || "—"}
                       </span>

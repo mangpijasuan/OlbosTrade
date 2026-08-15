@@ -9,28 +9,12 @@ import { api } from "../../api/client";
 import SignalAttribution from "../../components/SignalAttribution";
 import type { SignalAttributionData } from "../../types/signal";
 import MetricHint from "../../components/MetricHint";
+import { Badge } from "../../components/ui";
 import {
   lifecycleColor,
   lifecycleFromExecution,
   lifecycleLabel,
 } from "../executionStatus";
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
-}
 
 export default function CopilotQueue() {
   const [pending, setPending] = useState<any[]>([]);
@@ -93,9 +77,9 @@ export default function CopilotQueue() {
         }}
       >
         <span className="panel-title">COPILOT QUEUE</span>
-        <Badge text={`MODE ${mode}`} color="var(--amber)" />
+        <Badge kind="tag" tone="var(--amber)">{`MODE ${mode}`}</Badge>
         {pending.length > 0 && (
-          <Badge text={`${pending.length} PENDING`} color="var(--orange)" />
+          <Badge kind="tag" tone="var(--orange)">{`${pending.length} PENDING`}</Badge>
         )}
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
           Approve routes through existing OMS. Size edits require a new signal (no modify → re-eval yet).
@@ -165,7 +149,7 @@ export default function CopilotQueue() {
                   <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                     {s.ticker}
                   </span>
-                  <Badge text={s.asset_type?.toUpperCase() || "EQUITY"} color="var(--ink-dim)" />
+                  <Badge kind="tag" tone="var(--ink-dim)">{s.asset_type?.toUpperCase() || "EQUITY"}</Badge>
                   <SignalAttribution
                     data={
                       {
@@ -179,7 +163,7 @@ export default function CopilotQueue() {
                     }
                     size="sm"
                   />
-                  <Badge text={s.regime?.toUpperCase() || "—"} color="var(--amber)" />
+                  <Badge kind="tag" tone="var(--amber)">{s.regime?.toUpperCase() || "—"}</Badge>
                 </div>
                 {s.spread && (
                   <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
@@ -296,7 +280,7 @@ export default function CopilotQueue() {
                       {e.ticker || "—"}
                     </td>
                     <td>
-                      <Badge text={e.asset_type?.toUpperCase() || "EQ"} color="var(--ink-dim)" />
+                      <Badge kind="tag" tone="var(--ink-dim)">{e.asset_type?.toUpperCase() || "EQ"}</Badge>
                     </td>
                     <td className="mono" style={{ fontSize: 10 }}>
                       {e.action || e.strategy || "—"}
@@ -305,7 +289,7 @@ export default function CopilotQueue() {
                       {e.executed_by || e.approved_by || e.rejected_by || "—"}
                     </td>
                     <td>
-                      <Badge text={lifecycleLabel(life)} color={lifecycleColor(life)} />
+                      <Badge kind="tag" tone={lifecycleColor(life)}>{lifecycleLabel(life)}</Badge>
                     </td>
                     <td className="mono" style={{ fontSize: 10, color: "var(--ink-dim)", maxWidth: 220 }}>
                       {e.reason || "—"}

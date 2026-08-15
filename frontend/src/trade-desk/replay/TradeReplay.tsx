@@ -6,6 +6,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
+import { Badge } from "../../components/ui";
 
 type StatusFilter = "all" | "open" | "closed";
 
@@ -30,23 +31,6 @@ interface ReplayTrade {
   trading_mode?: string | null;
   approved_by?: string | null;
   source?: string | null;
-}
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
 }
 
 function fmtPnl(n: number | null | undefined) {
@@ -145,10 +129,9 @@ export default function TradeReplay() {
         }}
       >
         <span className="panel-title">TRADE REPLAY</span>
-        <Badge
-          text={accountEnv === "Live" ? "ACCOUNT LIVE" : accountEnv === "Paper" ? "ACCOUNT PAPER" : "ACCOUNT ?"}
-          color={accountEnv === "Live" ? "var(--red)" : "var(--cyan)"}
-        />
+        <Badge kind="tag" tone={accountEnv === "Live" ? "var(--red)" : "var(--cyan)"}>
+          {accountEnv === "Live" ? "ACCOUNT LIVE" : accountEnv === "Paper" ? "ACCOUNT PAPER" : "ACCOUNT ?"}
+        </Badge>
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
           Read-only tape from trade history. Journal editing stays under Research → Journal.
         </span>
@@ -239,10 +222,9 @@ export default function TradeReplay() {
                         {(t.strategy || "—").replace(/_/g, " ").toUpperCase()}
                       </td>
                       <td>
-                        <Badge
-                          text={(t.status || "—").toUpperCase()}
-                          color={t.status === "open" ? "var(--cyan)" : "var(--ink-dim)"}
-                        />
+                        <Badge kind="tag" tone={t.status === "open" ? "var(--cyan)" : "var(--ink-dim)"}>
+                          {(t.status || "—").toUpperCase()}
+                        </Badge>
                       </td>
                       <td
                         className="mono"
@@ -278,8 +260,8 @@ export default function TradeReplay() {
                 <span style={{ fontFamily: "var(--mono)", fontSize: 18, fontWeight: 700, color: "var(--cyan)" }}>
                   {selected.underlying}
                 </span>
-                {env && <Badge text={env.text} color={env.color} />}
-                <Badge text={(selected.status || "—").toUpperCase()} color="var(--ink-dim)" />
+                {env && <Badge kind="tag" tone={env.color}>{env.text}</Badge>}
+                <Badge kind="tag" tone="var(--ink-dim)">{(selected.status || "—").toUpperCase()}</Badge>
               </div>
 
               <div>

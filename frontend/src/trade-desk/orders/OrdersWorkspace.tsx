@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
+import { Badge } from "../../components/ui";
 import {
   type DeskLifecycle,
   lifecycleColor,
@@ -24,23 +25,6 @@ interface OrderRow {
   by: string;
   reason: string;
   source: "queue" | "execution";
-}
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
 }
 
 export default function OrdersWorkspace() {
@@ -195,13 +179,13 @@ export default function OrdersWorkspace() {
                     {r.ticker}
                   </td>
                   <td>
-                    <Badge text={r.asset} color="var(--ink-dim)" />
+                    <Badge kind="tag" tone="var(--ink-dim)">{r.asset}</Badge>
                   </td>
                   <td className="mono" style={{ fontSize: 10 }}>
                     {r.action}
                   </td>
                   <td>
-                    <Badge text={lifecycleLabel(r.lifecycle)} color={lifecycleColor(r.lifecycle)} />
+                    <Badge kind="tag" tone={lifecycleColor(r.lifecycle)}>{lifecycleLabel(r.lifecycle)}</Badge>
                   </td>
                   <td className="mono" style={{ fontSize: 10, color: "var(--amber)" }}>
                     {r.by}

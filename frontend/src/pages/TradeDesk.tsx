@@ -15,6 +15,7 @@ import ExecutionMonitor from "../trade-desk/execution/ExecutionMonitor";
 import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
 import { useTerminalNav } from "../components/TerminalNavContext";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
+import { Button } from "../components/ui";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -76,9 +77,9 @@ function ExecModeBar() {
     }}>
       <span className="kicker" style={{ marginRight: 4 }}>Execution</span>
       {modes.map(m => (
-        <button
+        <Button
           key={m.key}
-          className={`btn-t ${mode === m.key ? "active" : ""}`}
+          active={mode === m.key}
           style={{
             fontSize: 12,
             ...(mode === m.key ? { borderColor: m.color, color: m.color, background: `${m.color}15` } : {}),
@@ -89,7 +90,7 @@ function ExecModeBar() {
         >
           {m.label}
           {mode === m.key && <span style={{ marginLeft: 4, opacity: 0.6 }}>●</span>}
-        </button>
+        </Button>
       ))}
       {mode === "autopilot" && (
         <span style={{
@@ -259,22 +260,21 @@ function ApprovalsQueue() {
                 )}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  className="btn-t"
+                <Button
                   disabled={acting === s.id}
                   onClick={() => act(s.id, "approve")}
                   style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
                 >
                   APPROVE
-                </button>
-                <button
-                  className="btn-t danger"
+                </Button>
+                <Button
+                  danger
                   disabled={acting === s.id}
                   onClick={() => act(s.id, "reject")}
                   style={{ fontSize: 11 }}
                 >
                   REJECT
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -384,10 +384,10 @@ function PnLBreakdown() {
 
       <div style={{ display: "flex", gap: 1, marginBottom: 12 }}>
         {(["date","pnl","commission"] as const).map(s => (
-          <button key={s} className={`btn-t ${sort === s ? "active" : ""}`}
+          <Button key={s} active={sort === s}
             style={{ borderRadius: 0, fontSize: 10 }} onClick={() => setSort(s)}>
             SORT: {s === "commission" ? "COMMISSION" : s.toUpperCase()}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -516,16 +516,16 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
       }}>
         <div style={{ display: "flex", gap: 4 }}>
           {tabs.map(t => (
-            <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`}
+            <Button key={t.key} active={tab === t.key}
               onClick={() => setTab(t.key)}>
               {t.label}
-            </button>
+            </Button>
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn-t active" onClick={runCycle}>
+        <Button active onClick={runCycle}>
           {loading ? "Running…" : "▶ Run signal cycle"}
-        </button>
+        </Button>
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
