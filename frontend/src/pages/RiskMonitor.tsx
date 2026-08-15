@@ -104,8 +104,13 @@ export default function RiskMonitor() {
     </div>
   );
 
-  const daily_loss  = Math.abs(guardrailStatus?.daily_loss_pct  || 0) * 100;
-  const weekly_loss = Math.abs(guardrailStatus?.weekly_loss_pct || 0) * 100;
+  // daily/weekly/monthly_loss_pct are signed P&L ratios (positive on a gain
+  // day). These meters represent "how much of the loss budget is used", so a
+  // gain must clamp to 0 — Math.abs() would otherwise fill the bar on a
+  // profitable day as if it were eating into the loss limit.
+  const daily_loss  = Math.max(0, -(guardrailStatus?.daily_loss_pct  || 0)) * 100;
+  const weekly_loss = Math.max(0, -(guardrailStatus?.weekly_loss_pct || 0)) * 100;
+  const monthly_loss = Math.max(0, -(guardrailStatus?.monthly_loss_pct || 0)) * 100;
   // riskState comes from /api/risk/portfolio-state → response.state (IBKR account + DB P&L windows)
   const pv          = riskState?.state?.account_value ?? riskState?.portfolio_value ?? 25000;
   const daily_pnl   = riskState?.state?.daily_pnl ?? 0;
@@ -130,7 +135,7 @@ export default function RiskMonitor() {
           <Section title="Loss Limits">
             <Meter label="Daily Loss" val={daily_loss} max={2} unit="%" />
             <Meter label="Weekly Loss" val={weekly_loss} max={5} unit="%" />
-            <Meter label="Monthly Loss" val={Math.abs(guardrailStatus?.monthly_loss_pct||0)*100} max={10} unit="%" />
+            <Meter label="Monthly Loss" val={monthly_loss} max={10} unit="%" />
           </Section>
           <Section title="Position Limits">
             <Meter label="Trades Today" val={guardrailStatus?.trades_today||0} max={3} unit="" warn={0.5} crit={0.85} />
