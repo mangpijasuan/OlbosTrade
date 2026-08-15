@@ -90,6 +90,7 @@ from app.api.routes import chart
 from app.api.routes import alerts
 from app.api.routes import ibkr_live
 from app.api.routes import forecasts
+from app.api.routes import signal_research
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -177,6 +178,7 @@ app.include_router(alerts.router,      prefix="/api/alerts",       tags=["Smart 
 app.include_router(alerts.notif_router,prefix="/api/notifications",tags=["Notifications"])
 app.include_router(ibkr_live.router,   prefix="/api/ibkr",         tags=["IBKR Live Data"])
 app.include_router(forecasts.router,   prefix="/api/forecasts",    tags=["Probabilistic Intelligence"])
+app.include_router(signal_research.router, prefix="/api/signal-research", tags=["Signal Research"])
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────
@@ -313,6 +315,9 @@ async def _background_scheduler() -> None:
     regime_interval_s  = 30 * 60   # 30 minutes
     greeks_interval_s  = 60        # 1 minute
     fills_interval_s   = 30        # 30 seconds
+    # Daily bars only update once/trading day — checking more often than a
+    # few times a day just burns yfinance calls without new information.
+    signal_outcomes_interval_s = 6 * 60 * 60   # 6 hours
 
     import time as _time
     _now = _time.monotonic()
@@ -323,6 +328,7 @@ async def _background_scheduler() -> None:
     last_regime  = _now
     last_greeks  = 0.0   # Greeks update on first tick is fine (lightweight)
     last_fills   = 0.0
+    last_signal_outcomes = _now
 
     import time
 
@@ -400,6 +406,13 @@ async def _background_scheduler() -> None:
             if now - last_greeks >= greeks_interval_s:
                 await _guarded(_update_portfolio_greeks(), "greeks", 30)
                 last_greeks = now
+
+            # Every 6 hours: resolve pending signal outcomes against fresh
+            # daily bars (hit target, hit stop, or expire past the hold
+            # window). See signal_outcome_tracker.py.
+            if now - last_signal_outcomes >= signal_outcomes_interval_s:
+                await _guarded(_check_signal_outcomes(), "signal_outcomes", 120)
+                last_signal_outcomes = now
 
         except Exception as exc:
             logger.error("Background scheduler error: %s", exc)
@@ -760,6 +773,13 @@ async def _run_equity_scan() -> None:
                         },
                     }
                     logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
+                    if routable_signal:
+                        # Track every routable signal's forward outcome, not
+                        # just the handful that become actual trades — trades
+                        # alone are too few and selection-biased toward
+                        # whatever already passed the confidence filter.
+                        from app.services.signal_outcome_tracker import record_signal
+                        await record_signal(signal)
                     return signal
                 except Exception as exc:
                     logger.warning("Equity scan failed for %s: %s", ticker, exc)
@@ -1888,6 +1908,18 @@ async def _update_portfolio_greeks() -> None:
         )
     except Exception as exc:
         logger.warning("Greeks update failed: %s", exc)
+
+
+async def _check_signal_outcomes() -> None:
+    """Resolve pending signal outcomes against fresh daily bars."""
+    from app.services.signal_outcome_tracker import check_pending_outcomes
+    summary = await check_pending_outcomes()
+    if summary["checked"] > 0:
+        logger.info(
+            "Signal outcomes: checked=%d target_hit=%d stop_hit=%d expired=%d still_pending=%d",
+            summary["checked"], summary["target_hit"], summary["stop_hit"],
+            summary["expired"], summary["still_pending"],
+        )
 
 
 # ── Health check ────────────────────────────────────────────────────────────
