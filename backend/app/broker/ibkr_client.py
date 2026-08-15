@@ -46,6 +46,15 @@ def _safe_int(value, default: int = 0) -> int:
     return int(value)
 
 
+def _safe_decimal(value, default: float = 0) -> Decimal:
+    """Decimal(str(value or default)), but NaN-safe — IBKR returns NaN (not
+    None) for bid/ask/last on untraded contracts. Decimal('nan') doesn't
+    raise, but OptionContract (a Pydantic model) rejects non-finite Decimals."""
+    if value is None or (isinstance(value, float) and _math.isnan(value)):
+        return Decimal(str(default))
+    return Decimal(str(value))
+
+
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
 FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
@@ -208,9 +217,9 @@ class IBKRClient(BrokerInterface):
                         expiration=date.fromisoformat(expiry),
                         strike=Decimal(str(strike)),
                         option_type="call" if option_type == "C" else "put",
-                        bid=Decimal(str(ticker.bid or 0)),
-                        ask=Decimal(str(ticker.ask or 0)),
-                        last=Decimal(str(ticker.last or 0)),
+                        bid=_safe_decimal(ticker.bid),
+                        ask=_safe_decimal(ticker.ask),
+                        last=_safe_decimal(ticker.last),
                         volume=_safe_int(ticker.volume),
                         open_interest=_safe_int(ticker.callOpenInterest) or _safe_int(ticker.putOpenInterest),
                         greeks=greeks,
@@ -222,7 +231,7 @@ class IBKRClient(BrokerInterface):
 
         # Underlying price
         under_ticker = await self.ib.reqTickersAsync(underlying)
-        underlying_price = Decimal(str(under_ticker[0].last or 0)) if under_ticker else Decimal("0")
+        underlying_price = _safe_decimal(under_ticker[0].last) if under_ticker else Decimal("0")
 
         return OptionsChain(
             underlying=symbol,
