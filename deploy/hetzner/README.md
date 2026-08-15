@@ -20,9 +20,9 @@ Internet
 OlbosTrade joins the `olbos_default` Docker network so Caddy can reach it.
 Its database and Redis are isolated on `olbostrade_internal` — separate from olbos.
 
-NOTE: older deployments may still have legacy Postgres role/database/volume
-names from before the rebrand. Docker container, network, and directory names
-were rebranded first; if your data is legacy, follow the migration section.
+NOTE: the Postgres database is `olbostrade`; the role stays `olbosquant`
+deliberately (see the Migration section below for why). Docker container,
+network, and directory names are fully rebranded.
 
 ---
 
@@ -53,11 +53,9 @@ Fill in these required values:
 | `OLBOS_API_KEY` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 
 `OLBOSTRADE_DB_PASSWORD` is the database password variable referenced by
-`docker-compose.hetzner.yml`. IMPORTANT: changing the Compose DB role/DB
-name on a running system does not migrate existing data. The production
-Postgres data volume created by the previous deploy is still pinned by name
-— you must perform a dump+restore or in-database migration to move data to
-the new role/db names. See the "Migration" section below before switching.
+`docker-compose.hetzner.yml` — it authenticates as the `olbosquant` role
+(kept deliberately; see "Migration" below) against the `olbostrade`
+database. The password value itself is unchanged from before the rename.
 
 Leave `DATABASE_URL` and `REDIS_URL` blank — docker-compose fills them in.
 
@@ -142,8 +140,8 @@ docker exec -it olbostrade-backend bash
 # Run a migration manually
 docker exec olbostrade-backend python3 -m alembic upgrade head
 
-# Check database (use new names after migration)
-docker exec -it olbostrade-db psql -U olbostrade -d olbostrade
+# Check database (role stays olbosquant deliberately — see Migration section)
+docker exec -it olbostrade-db psql -U olbosquant -d olbostrade
 ```
 
 ---
@@ -199,32 +197,36 @@ async def t():
     ib.disconnect()
 asyncio.run(t())
 "
+```
 
 ## Migration
 
-If you are migrating an existing deployment that used old pre-rebrand role/
-database names, follow one of these approaches before switching the Compose
-file to reference `olbostrade` fully:
+The production database was renamed live via `ALTER DATABASE olbosquantdb
+RENAME TO olbostrade` (instant — no dump/restore needed, no data touched).
 
-- Dump and restore (recommended):
+The Postgres **role** deliberately stays `olbosquant`. Renaming a role
+requires connecting as a *different* superuser (Postgres refuses to let a
+session rename its own login role), which means creating a temporary
+superuser on production — real privilege escalation for a value that's
+never visible outside this repo's own config (not in the UI, not in any
+API response). Not worth it for a cosmetic-only rename. `docker-compose.hetzner.yml`
+reflects this: `POSTGRES_USER`/`DATABASE_URL` use `olbosquant`, `POSTGRES_DB`
+uses `olbostrade`.
+
+If a fresh deployment ever needs the role renamed too (no existing data at
+risk), it's the same trick as the database — just needs a second superuser
+to issue the command:
 
 ```bash
-# on the host, create a dump from the old DB (replace placeholders)
-docker exec -t olbostrade-db pg_dump -U <legacy_user> <legacy_db> > /tmp/legacy-db.sql
-# create target DB/role on the server (or use a temporary container)
-docker exec -it olbostrade-db psql -U postgres -c "CREATE ROLE olbostrade WITH LOGIN PASSWORD 'secret';"
-docker exec -it olbostrade-db psql -U postgres -c "CREATE DATABASE olbostrade OWNER olbostrade;"
-# restore
-cat /tmp/legacy-db.sql | docker exec -i olbostrade-db psql -U olbostrade -d olbostrade
+docker exec -it olbostrade-db psql -U olbosquant -d postgres \
+  -c "CREATE ROLE rename_helper WITH LOGIN SUPERUSER PASSWORD 'temp';"
+docker exec -it olbostrade-db psql -U olbosquant -d postgres \
+  -c "ALTER ROLE olbosquant RENAME TO olbostrade;"
+docker exec -it olbostrade-db psql -U olbostrade -d postgres \
+  -c "DROP ROLE rename_helper;"
 ```
-
-- In-cluster migration: create the new role/db and copy data using SQL tools
-  (for advanced users only). Ensure you have backups before attempting.
-
-After migration, update `backend/.env.prod` to set `OLBOSTRADE_DB_PASSWORD` and
-bring the stack up. If you prefer to keep the old DB names in Compose and
-avoid migrating, you can do so — but update env var names accordingly.
-```
+Then update `DATABASE_URL`/`POSTGRES_USER`/the healthcheck in
+`docker-compose.hetzner.yml` to `olbostrade` and redeploy.
 
 ---
 

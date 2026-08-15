@@ -25,12 +25,12 @@ if [[ -f backend/.env.prod ]]; then
   set -a; source backend/.env.prod; set +a
 fi
 
-# NOTE: this repository now references the `olbostrade` role/database by
-# default. If your running deployment still uses old pre-rebrand names,
-# set `POSTGRES_USER`/`POSTGRES_DB` in backend/.env.prod accordingly or follow
-# the migration steps in deploy/hetzner/README.md before switching.
+# NOTE: the database was renamed to `olbostrade`; the Postgres ROLE stays
+# `olbosquant` deliberately (see the NOTE in docker-compose.hetzner.yml —
+# renaming it needs a temporary superuser, not worth it for a value that's
+# never user-visible). If your deployment differs, override via env.
 DB_CONTAINER="${DB_CONTAINER:-olbostrade-db}"
-DB_USER="${POSTGRES_USER:-olbostrade}"
+DB_USER="${POSTGRES_USER:-olbosquant}"
 DB_NAME="${POSTGRES_DB:-olbostrade}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/olbostrade-backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
@@ -75,8 +75,8 @@ echo "  ✅ Backup complete: $OUT"
 # legacy app path, update it after the directory rename — cron does not
 # follow renames.
 #
-# Restore a dump into the running DB container (adjust user/db if you kept
-# the old names):
+# Restore a dump into the running DB container (role stays `olbosquant`,
+# database is `olbostrade` — see the NOTE above):
 #   gunzip -c /opt/olbostrade-backups/olbostrade-YYYYMMDD-HHMMSS.sql.gz \
-#     | docker exec -i olbostrade-db psql -U olbostrade -d olbostrade
+#     | docker exec -i olbostrade-db psql -U olbosquant -d olbostrade
 # ───────────────────────────────────────────────────────────────────────────────

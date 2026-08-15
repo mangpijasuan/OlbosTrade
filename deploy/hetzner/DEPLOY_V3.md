@@ -112,7 +112,7 @@ docker exec olbostrade-backend python3 -m alembic current
 You should see `0006 (head)`. Verify the table exists:
 
 ```
-docker exec olbostrade-db psql -U olbostrade -d olbostrade -c "\dt research_experiments"
+docker exec olbostrade-db psql -U olbosquant -d olbostrade -c "\dt research_experiments"
 ```
 
 ---
