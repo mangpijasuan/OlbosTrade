@@ -94,15 +94,45 @@ class IBKRRequestCoordinator:
         # spawn duplicate connection attempts.
         self.reconnect_lock = asyncio.Lock()
         self._workers: Optional[list["asyncio.Task"]] = None
+        self._loop: Optional["asyncio.AbstractEventLoop"] = None
         self._active_count = 0
         self._active_lock = asyncio.Lock()
 
     def start(self) -> None:
-        """Spawn the worker pool. Idempotent — safe to call from every
-        submit() (e.g. if the app is restarted mid-request-cycle) without
-        spawning a second set of workers."""
-        if self._workers is not None:
+        """Spawn the worker pool for the currently running event loop.
+
+        Idempotent for repeated calls *on the same loop* — safe to call
+        from every submit(). But a worker `Task` is permanently bound to
+        the loop it was created on; if this is ever called from a
+        *different* running loop than last time (the FastAPI app only has
+        one for its whole process lifetime, so this shouldn't happen there,
+        but it's exactly what a test suite's per-test event loop does, and
+        it's cheap to make actually safe rather than silently hang), the
+        old workers can never service new requests again. Detect that and
+        respawn fresh workers/queues bound to the current loop instead of
+        leaving callers waiting on a queue nothing will ever drain.
+        """
+        current_loop = asyncio.get_event_loop()
+        if self._workers is not None and self._loop is current_loop:
             return
+        if self._workers is not None:
+            # Task.cancel() schedules the cancellation via call_soon() on
+            # the task's OWN loop — if that loop is already closed (the
+            # common case here: a previous test's per-test loop), that
+            # call_soon() raises RuntimeError synchronously instead of
+            # just being a no-op. A closed loop will never run those tasks
+            # again regardless, so there's nothing to actually cancel.
+            if self._loop is not None and not self._loop.is_closed():
+                for w in self._workers:
+                    w.cancel()
+            self._queues = {p: asyncio.Queue() for p in Priority}
+            self._in_flight.clear()
+            self._in_flight_lock = asyncio.Lock()
+            self.reconnect_lock = asyncio.Lock()
+            self._active_lock = asyncio.Lock()
+            self._active_count = 0
+
+        self._loop = current_loop
         self._workers = [
             asyncio.create_task(self._worker_loop(reserved=(i < self._num_reserved)))
             for i in range(self._num_workers)

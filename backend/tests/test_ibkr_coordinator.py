@@ -192,3 +192,44 @@ async def test_health_snapshot_reports_worker_and_queue_shape(make_coordinator):
     assert set(snap["queue_depth"].keys()) == {"P0", "P1", "P2"}
     assert snap["active_requests"] == 0
     assert snap["in_flight_dedup_keys"] == 0
+
+
+def test_start_recovers_when_reused_across_event_loops():
+    """Regression test for a real bug this suite caught in CI: a worker
+    Task is permanently bound to the event loop it was created on. The
+    process-wide coordinator singleton only ever sees one loop in the
+    real FastAPI app (one process, one loop, for the app's whole
+    lifetime) — but reusing the *same* coordinator instance across
+    separate event loops (exactly what pytest-asyncio's default per-test
+    event loop does, which is how this was first caught: every test in
+    test_account_guard.py after the first one hung indefinitely) used to
+    leave later callers waiting on workers stuck on an already-closed
+    loop that could never service them. start() must detect the loop
+    change and respawn fresh workers instead.
+
+    Deliberately not using the make_coordinator fixture — this test
+    manages raw event loops itself to reproduce the exact failure mode.
+    """
+    coordinator = IBKRRequestCoordinator(num_workers=2, num_reserved=1)
+
+    async def fn():
+        return "ok"
+
+    for _ in range(3):
+        loop = asyncio.new_event_loop()
+        try:
+            # Each iteration's own asyncio.wait_for bounds it to a few
+            # seconds — if the fix regresses, this fails fast with
+            # TimeoutError instead of hanging the whole test run again.
+            result = loop.run_until_complete(
+                asyncio.wait_for(coordinator.submit(Priority.P0, fn, timeout=2), timeout=3)
+            )
+            assert result == "ok"
+        finally:
+            if coordinator._workers:
+                for w in coordinator._workers:
+                    w.cancel()
+                loop.run_until_complete(
+                    asyncio.gather(*coordinator._workers, return_exceptions=True)
+                )
+            loop.close()
