@@ -437,13 +437,14 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   box-shadow: 0 8px 26px rgba(0,0,0,0.35);
   transform: translateY(-1px);
 }
-/* subtle gold accent tab, top-left */
+/* subtle accent tab, top-left — color follows --tab-color when a card sets
+   it (e.g. Kpi's per-card badge color), falls back to cyan otherwise. */
 .exec-card::after {
   content: "";
   position: absolute;
   left: 0; top: 0;
   height: 2px; width: 40px;
-  background: var(--cyan);
+  background: var(--tab-color, var(--cyan));
   opacity: 0.5;
 }
 

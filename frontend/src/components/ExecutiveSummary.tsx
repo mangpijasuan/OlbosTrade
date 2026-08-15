@@ -93,13 +93,32 @@ const STRAT_STATUS: Record<string, { color: string; tint: string; icon: string; 
 };
 
 // ── KPI card ────────────────────────────────────────────────────────────────
+// Existing rgba tint literals already used elsewhere in this app for the
+// same 3 colors (.mode-badge.conservative / .signal-badge.bullish / .mode-badge.balanced)
+// — reused here rather than introducing color-mix() or new tokens.
+const BADGE_TINT: Record<string, string> = {
+  "var(--green)":  "rgba(34,197,94,0.15)",
+  "var(--red)":    "rgba(239,68,68,0.15)",
+  "var(--accent)": "var(--cyan-dim)",
+};
+
 function Kpi({ label, value, sub, color, icon }:
   { label: string; value: string; sub?: string; color?: string; icon: string }) {
+  const badgeColor = color || "var(--accent)";
   return (
-    <div className="exec-card" style={{ flex: 1, minWidth: 210, padding: "16px 18px" }}>
+    <div
+      className="exec-card"
+      style={{ flex: 1, minWidth: 210, padding: "16px 18px", ["--tab-color" as any]: badgeColor }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <span className="kicker">{label}</span>
-        <span style={{ color: "var(--cyan)", opacity: 0.7 }}><Icon name={icon} size={15} /></span>
+        <span style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+          background: BADGE_TINT[badgeColor] ?? BADGE_TINT["var(--accent)"],
+        }}>
+          <Icon name={icon} size={15} color={badgeColor} />
+        </span>
       </div>
       <div className="mono" style={{ fontSize: 27, fontWeight: 700, color: color || "var(--ink)", lineHeight: 1, letterSpacing: "-0.02em" }}>
         {value}
