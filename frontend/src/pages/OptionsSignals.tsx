@@ -28,6 +28,11 @@ interface OptionsIntelligence {
   reward_risk?: number;
 }
 
+interface SignalEvidence {
+  top_positive_factors: { feature: string; value: number; impact: number }[];
+  top_negative_factors: { feature: string; value: number; impact: number }[];
+}
+
 interface OptionsSignal {
   id: string;
   ticker: string;
@@ -46,6 +51,10 @@ interface OptionsSignal {
   intelligence?: OptionsIntelligence | null;
   // Only set on HOLD entries — a scanned-but-not-qualified ticker, with why.
   reason?: string;
+  // SHAP attribution from the AI scorer — present on both approved and
+  // AI-scorer-rejected entries, absent on entries rejected for other
+  // reasons (insufficient history, zero-sized position, etc.).
+  evidence?: SignalEvidence | null;
 }
 
 function ConfidenceBar({ value }: { value: number }) {
@@ -117,6 +126,8 @@ function toAttribution(sig: OptionsSignal): SignalAttributionData {
     confidence: sig.confidence,
     updatedAt: sig.generated_at,
     authority: "unknown",
+    topPositiveFactors: sig.evidence?.top_positive_factors,
+    topNegativeFactors: sig.evidence?.top_negative_factors,
   };
 }
 

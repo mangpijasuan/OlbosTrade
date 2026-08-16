@@ -674,7 +674,9 @@ def _equity_confluence_reason(
     return None
 
 
-def _record_options_rejection(symbol: str, reason: str, strategy_name: Optional[str] = None) -> None:
+def _record_options_rejection(
+    symbol: str, reason: str, strategy_name: Optional[str] = None, evidence: Optional[dict] = None,
+) -> None:
     """
     Record a scanned-but-not-qualified options attempt into the same store
     the Options Signals UI reads (_recent_options_signals) — mirrors how
@@ -687,6 +689,11 @@ def _record_options_rejection(symbol: str, reason: str, strategy_name: Optional[
     scanner was broken or genuinely found nothing, and why. This makes
     those same reasons visible on the page itself instead of requiring a
     server-log lookup.
+
+    evidence: SHAP top_positive_factors/top_negative_factors from
+    SignalScorer.explain() — only the AI-scorer rejection path has this;
+    every other rejection reason (insufficient history, zero-sized
+    position, etc.) has nothing to attach, so this stays None for them.
     """
     import uuid
     from datetime import datetime, timezone
@@ -702,6 +709,7 @@ def _record_options_rejection(symbol: str, reason: str, strategy_name: Optional[
         "confidence":   0.0,
         "reason":       reason,
         "strategy":     strategy_name,
+        "evidence":     evidence,
     })
     del _recent_options_signals[200:]
 
@@ -1398,6 +1406,11 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         )
         score_result = await _signal_scorer.score_async(features)
         signal_score = float(score_result.score)
+        # SHAP feature attribution — cheap (feature_impacts is already computed
+        # as part of score_async() above, this just formats it), attached to
+        # both the reject and approve paths below so a user can see *why* a
+        # signal scored the way it did, not just the numeric score.
+        evidence = _signal_scorer.explain(score_result)
         if not score_result.approved and not settings.execution_test_mode:
             logger.info(
                 "Options signal rejected by AI scorer: %s %s score=%.3f — %s",
@@ -1407,6 +1420,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 symbol,
                 f"AI scorer: {score_result.rejection_reason or f'score {signal_score:.3f}'}",
                 strategy_name,
+                evidence=evidence,
             )
             return None
         if not score_result.approved:
@@ -1544,6 +1558,10 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
             "quantity":     int(quantity),
             "iv_rank":      round(iv_rank, 2),
             "regime":       _current_regime.regime.value,
+            "evidence": {
+                "top_positive_factors": evidence["top_positive_factors"],
+                "top_negative_factors": evidence["top_negative_factors"],
+            },
             "spread": {
                 "option_type":   opt_type,
                 "short_strike":  short_strike,

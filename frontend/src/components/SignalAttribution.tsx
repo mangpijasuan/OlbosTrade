@@ -57,6 +57,38 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
+/** "credit_to_width_ratio" -> "credit to width ratio". No friendly-name
+ * dictionary — this codebase doesn't have one, and inventing labels for
+ * internal feature names risks misrepresenting what they actually measure. */
+function formatFeatureName(feature: string): string {
+  return feature.replace(/_/g, " ");
+}
+
+function FactorList({
+  label,
+  factors,
+  tone,
+}: {
+  label: string;
+  factors: { feature: string; value: number; impact: number }[];
+  tone: string;
+}) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ color: "var(--ink-faint)", fontSize: 11, marginBottom: 2 }}>{label}</div>
+      {factors.map((f, i) => (
+        <div
+          key={`${f.feature}-${i}`}
+          style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0" }}
+        >
+          <span style={{ color: "var(--ink)", fontSize: 11 }}>{formatFeatureName(f.feature)}</span>
+          <span style={{ color: tone, fontSize: 11 }}>{f.impact >= 0 ? "+" : ""}{f.impact.toFixed(3)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SignalAttribution({
   data,
   loading = false,
@@ -166,6 +198,12 @@ export default function SignalAttribution({
         <DetailRow label="Updated" value={data.updatedAt ? `${age ?? data.updatedAt}` : "Timestamp unavailable"} />
         <DetailRow label="Freshness" value={data.updatedAt ? (stale ? "Stale" : "Fresh") : "Unknown"} />
         <DetailRow label="Authority" value={authorityLabel(data.authority)} />
+        {!!data.topPositiveFactors?.length && (
+          <FactorList label="Supporting factors" factors={data.topPositiveFactors} tone="var(--green)" />
+        )}
+        {!!data.topNegativeFactors?.length && (
+          <FactorList label="Deteriorating factors" factors={data.topNegativeFactors} tone="var(--red)" />
+        )}
       </div>
     </details>
   );

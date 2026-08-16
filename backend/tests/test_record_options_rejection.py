@@ -48,3 +48,19 @@ def test_store_capped_at_200_entries():
     assert len(_recent_options_signals) == 200
     # Newest (most recently inserted) entries survive the trim.
     assert _recent_options_signals[0]["ticker"] == "T209"
+
+
+def test_evidence_is_recorded_when_provided():
+    _clear()
+    evidence = {
+        "top_positive_factors": [{"feature": "iv_rank", "value": 45.2, "impact": 0.12}],
+        "top_negative_factors": [{"feature": "days_to_expiry", "value": 3.0, "impact": -0.08}],
+    }
+    _record_options_rejection("AAPL", "AI scorer: score 0.05", "bull_put_spread", evidence=evidence)
+    assert _recent_options_signals[0]["evidence"] == evidence
+
+
+def test_evidence_defaults_to_none_when_omitted():
+    _clear()
+    _record_options_rejection("MSFT", "insufficient price history")
+    assert _recent_options_signals[0]["evidence"] is None
