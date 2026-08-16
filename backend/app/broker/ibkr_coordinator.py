@@ -35,6 +35,7 @@ from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from app.services.observability import observability
 from app.utils.logger import get_logger
+from app.utils.request_context import request_id_var
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,10 @@ class _Job:
     queued_at: float
     req_type: str
     symbol: Optional[str]
+    # Captured from the submitting caller's contextvar at enqueue time — the
+    # long-lived worker Task's own context won't see it otherwise, since
+    # contextvars only propagate at Task *creation*, not at each queue pull.
+    request_id: str = "-"
 
 
 class IBKRRequestCoordinator:
@@ -169,7 +174,7 @@ class IBKRRequestCoordinator:
 
         job = _Job(
             priority=priority, fn=fn, future=future, queued_at=time.monotonic(),
-            req_type=req_type, symbol=symbol,
+            req_type=req_type, symbol=symbol, request_id=request_id_var.get(),
         )
         observability.incr(f"ibkr.request.{priority.name.lower()}.submitted")
         await self._queues[priority].put(job)
@@ -225,6 +230,9 @@ class IBKRRequestCoordinator:
             self._active_count += 1
             observability.gauge("ibkr.active_requests", self._active_count)
 
+        # Apply the submitting caller's request ID for the duration of this
+        # job so its log line (and anything job.fn() itself logs) carries it.
+        token = request_id_var.set(job.request_id)
         status = "success"
         try:
             result = await job.fn()
@@ -235,6 +243,7 @@ class IBKRRequestCoordinator:
             if not job.future.done():
                 job.future.set_exception(exc)
         finally:
+            request_id_var.reset(token)
             async with self._active_lock:
                 self._active_count -= 1
                 observability.gauge("ibkr.active_requests", self._active_count)

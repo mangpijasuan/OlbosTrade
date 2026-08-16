@@ -18,6 +18,7 @@ import time
 import pytest
 
 from app.broker.ibkr_coordinator import IBKRRequestCoordinator, Priority, _Job
+from app.utils.request_context import request_id_var
 
 
 @pytest.fixture
@@ -233,3 +234,34 @@ def test_start_recovers_when_reused_across_event_loops():
                     asyncio.gather(*coordinator._workers, return_exceptions=True)
                 )
             loop.close()
+
+
+@pytest.mark.asyncio
+async def test_submit_propagates_caller_request_id_into_job(make_coordinator):
+    """submit() runs on the caller's own task/context, so it can read
+    request_id_var directly — but the worker pool's tasks are long-lived and
+    were created before this request existed, so nothing propagates there
+    automatically. The coordinator must capture the caller's request ID at
+    submit() time and apply it for the duration of _run_job so job.fn() (and
+    the coordinator's own "IBKR REQUEST" log line) see the right ID."""
+    coordinator = make_coordinator(num_workers=1, num_reserved=1)
+
+    seen_id = None
+
+    async def fn():
+        nonlocal seen_id
+        seen_id = request_id_var.get()
+        return "ok"
+
+    token = request_id_var.set("req-abc123")
+    try:
+        result = await coordinator.submit(Priority.P0, fn)
+    finally:
+        request_id_var.reset(token)
+
+    assert result == "ok"
+    assert seen_id == "req-abc123"
+    # The worker's own context must not leak the job's ID into whatever it
+    # picks up next — confirmed by checking the caller's context is restored
+    # after submit() returns (unaffected either way, but worth pinning).
+    assert request_id_var.get() == "-"

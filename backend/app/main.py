@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from decimal import Decimal
 from datetime import datetime
 from typing import Optional
 
 from app.utils.logger import get_logger
+from app.utils.request_context import request_id_var
 
 
 async def _yf_bars(ticker: str, limit: int = 60) -> list:
@@ -62,7 +64,7 @@ async def _yf_bars(ticker: str, limit: int = 60) -> list:
 
     return await loop.run_in_executor(None, _fetch)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
@@ -115,6 +117,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """
+    Threads one ID through every log line a request touches (route handler,
+    IBKR coordinator jobs it submits, DB calls) so a single request can be
+    traced across the app from logs alone. Echoes a client-supplied
+    X-Request-ID when present so an upstream proxy's ID survives.
+    """
+    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    token = request_id_var.set(req_id)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers["X-Request-ID"] = req_id
+    return response
 
 # ── Global singletons (populated at startup) ───────────────────────────────
 _current_regime: Optional[object] = None   # RegimeState
@@ -294,6 +314,7 @@ async def _guarded(coro, name: str, timeout: float) -> None:
     """
     global _scheduler_last_tick
     import time as _t
+    token = request_id_var.set(f"sched-{name}-{uuid.uuid4().hex[:8]}")
     try:
         await asyncio.wait_for(coro, timeout=timeout)
     except asyncio.TimeoutError:
@@ -304,6 +325,7 @@ async def _guarded(coro, name: str, timeout: float) -> None:
         # Refresh the heartbeat after each sub-task so a legitimately slow scan
         # can't make the agent look stalled.
         _scheduler_last_tick = _t.monotonic()
+        request_id_var.reset(token)
 
 
 async def _background_scheduler() -> None:
