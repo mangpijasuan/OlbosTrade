@@ -12,12 +12,57 @@ function pnlPct(value: number | null | undefined): { text: string; color: string
   return { text: `${sign}${v.toFixed(2)}%`, color: v >= 0 ? "var(--green)" : "var(--red)" };
 }
 
+interface GuardrailEvent {
+  id: string;
+  timestamp: string | null;
+  event_type: string;
+  trigger_value: number | null;
+  limit_value: number | null;
+  trading_suspended_until: string | null;
+  portfolio_value: number | null;
+  notes: string | null;
+}
+
+// Matches the exact flag strings GuardrailEngine.check_all() appends to
+// GuardrailStatus.flags (backend/app/services/guardrails.py), plus the two
+// kill-switch event types kill_switch.py already writes into this same table.
+const EVENT_TYPE_LABEL: Record<string, string> = {
+  normal: "Recovered — normal",
+  daily_loss_limit: "Daily loss limit",
+  weekly_loss_limit: "Weekly loss limit",
+  monthly_loss_limit: "Monthly loss limit",
+  consecutive_loss_limit: "Consecutive losses",
+  cooling_off_active: "Cooling off",
+  capital_preservation_mode: "Capital preservation",
+  daily_trade_cap: "Daily trade cap",
+  kill_switch: "Kill switch engaged",
+  kill_switch_reset: "Kill switch reset",
+};
+
+// Loss/capital events are fractional ratios (0.023 = 2.3%); trade-count
+// events (daily_trade_cap, consecutive_loss_limit) are plain integers.
+const COUNT_EVENT_TYPES = ["daily_trade_cap", "consecutive_loss_limit"];
+
+function formatMetric(value: number | null, eventType: string): string {
+  if (value == null) return "—";
+  return COUNT_EVENT_TYPES.includes(eventType) ? String(value) : `${(value * 100).toFixed(2)}%`;
+}
+
 export default function Guardrails() {
   const { guardrailStatus, reconciliation, refresh } = useRisk();
   const [tab, setTab] = useState<"status"|"history">("status");
   const [activeMode, setActiveMode] = useState<any>(null);
   const [reconRunning, setReconRunning] = useState(false);
   const [reconMessage, setReconMessage] = useState<string | null>(null);
+  const [history, setHistory] = useState<GuardrailEvent[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "history" || history !== null) return;
+    (api.getGuardrailHistory() as Promise<{ events: GuardrailEvent[] }>)
+      .then(d => setHistory(d.events || []))
+      .catch(e => setHistoryError(e?.message || "Failed to load guardrail history"));
+  }, [tab, history]);
 
   // Poll the active trading mode independently — it lives in a different endpoint
   useEffect(() => {
@@ -109,7 +154,7 @@ export default function Guardrails() {
     {
       label: "Capital Threshold",
       val: `${(activeLimits.capitalThreshold * 100).toFixed(0)}%`,
-      status: true,
+      status: (guardrailStatus?.capital_pct_remaining ?? 1) > activeLimits.capitalThreshold,
     },
     { label: "Kill Switch",         val: "OFF",   status: !guardrailStatus?.kill_switch_engaged },
   ];
@@ -312,11 +357,46 @@ export default function Guardrails() {
                 {["Timestamp","Event","Rule","Value","Action"].map(h => <th key={h}>{h}</th>)}
               </tr></thead>
               <tbody>
-                <tr>
-                  <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
-                    NO GUARDRAIL EVENTS — SYSTEM OPERATING WITHIN LIMITS
-                  </td>
-                </tr>
+                {historyError ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--red)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      {historyError}
+                    </td>
+                  </tr>
+                ) : history === null ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      LOADING…
+                    </td>
+                  </tr>
+                ) : history.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      NO GUARDRAIL EVENTS RECORDED YET
+                    </td>
+                  </tr>
+                ) : history.map(e => (
+                  <tr key={e.id}>
+                    <td className="mono" style={{ color: "var(--ink-dim)" }}>
+                      {e.timestamp ? new Date(e.timestamp).toLocaleString() : "—"}
+                    </td>
+                    <td className="mono" style={{
+                      color: e.event_type === "normal" || e.event_type === "kill_switch_reset" ? "var(--green)" : "var(--red)",
+                    }}>
+                      {EVENT_TYPE_LABEL[e.event_type] || e.event_type}
+                    </td>
+                    <td className="mono" style={{ color: "var(--ink-dim)" }}>
+                      {formatMetric(e.limit_value, e.event_type)}
+                    </td>
+                    <td className="mono">{formatMetric(e.trigger_value, e.event_type)}</td>
+                    <td className="mono" style={{ color: "var(--ink-dim)" }}>
+                      {e.notes ||
+                        (e.trading_suspended_until
+                          ? `Suspended until ${new Date(e.trading_suspended_until).toLocaleString()}`
+                          : "—")}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </Panel>

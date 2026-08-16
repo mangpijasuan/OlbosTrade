@@ -2106,9 +2106,95 @@ async def health_detail() -> dict:
 
 
 # ── Guardrail endpoints ─────────────────────────────────────────────────────
-from app.services.guardrails import GuardrailEngine, PortfolioState
+from app.services.guardrails import GuardrailEngine, GuardrailStatus, PortfolioState
 
 _guardrail_engine = GuardrailEngine()
+# In-memory dedup signature for guardrail event logging — None means "not yet
+# seeded from DB this process", so a restart doesn't re-log the unchanged
+# current state as if it were a fresh transition. See _maybe_log_guardrail_event.
+_last_guardrail_signature: tuple | None = None
+
+
+async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: PortfolioState) -> None:
+    """
+    Persist a GuardrailEvent row only when the guardrail state actually
+    transitions (entering or recovering from a restricted mode) — not on
+    every 15s poll of /api/guardrails/status. Logs both directions so
+    history reads as a timeline, not a one-way ratchet. Never raises: a
+    persistence hiccup must not break the status response trading
+    decisions depend on.
+    """
+    global _last_guardrail_signature
+    from app.core.database import AsyncSessionLocal
+    from app.models.risk_state import GuardrailEvent
+    from sqlalchemy import select
+
+    signature = (status.trading_mode, status.flags[0] if status.flags else None)
+    # Reverse map from a persisted event_type back to the (trading_mode, flag)
+    # signature it represents — needed to seed the in-memory cache from DB
+    # history in the SAME shape `signature` above uses, not just the raw
+    # event_type string (those aren't the same string space: trading_mode is
+    # "normal"/"capital_preservation"/"suspended", event_type is the specific
+    # rule/flag name). kill_switch/kill_switch_reset aren't part of
+    # check_all()'s vocabulary at all — a kill-switch event as the most
+    # recent row doesn't tell us anything about the last known guardrail
+    # signature, so it's skipped when seeding.
+    _SUSPEND_EVENT_TYPES = {
+        "cooling_off_active", "daily_loss_limit", "weekly_loss_limit",
+        "monthly_loss_limit", "consecutive_loss_limit",
+    }
+    try:
+        async with AsyncSessionLocal() as session:
+            if _last_guardrail_signature is None:
+                last = (await session.execute(
+                    select(GuardrailEvent)
+                    .where(GuardrailEvent.event_type.notin_(("kill_switch", "kill_switch_reset")))
+                    .order_by(GuardrailEvent.timestamp.desc()).limit(1)
+                )).scalars().first()
+                if last is None or last.event_type == "normal":
+                    _last_guardrail_signature = ("normal", None)
+                elif last.event_type == "capital_preservation_mode":
+                    _last_guardrail_signature = ("capital_preservation", last.event_type)
+                elif last.event_type in _SUSPEND_EVENT_TYPES:
+                    _last_guardrail_signature = ("suspended", last.event_type)
+                else:
+                    _last_guardrail_signature = ("normal", last.event_type)
+            if signature == _last_guardrail_signature:
+                return
+            event_type = signature[1] or "normal"
+            # The trigger/limit pair genuinely relevant to *this* rule — not a
+            # single field reused for every event type regardless of which
+            # rule actually fired.
+            trigger_by_type = {
+                "daily_loss_limit":          status.daily_loss_pct,
+                "weekly_loss_limit":         status.weekly_loss_pct,
+                "monthly_loss_limit":        status.monthly_loss_pct,
+                "consecutive_loss_limit":    status.consecutive_losses,
+                "daily_trade_cap":           status.trades_today,
+                "capital_preservation_mode": status.capital_pct_remaining,
+            }
+            limit_by_type = {
+                "daily_loss_limit":          -_guardrail_engine.max_daily_loss_pct,
+                "weekly_loss_limit":         -_guardrail_engine.max_weekly_loss_pct,
+                "monthly_loss_limit":        -_guardrail_engine.max_monthly_loss_pct,
+                "consecutive_loss_limit":    _guardrail_engine.max_consecutive_losses,
+                "daily_trade_cap":           _guardrail_engine.max_trades_per_day,
+                "capital_preservation_mode": _guardrail_engine.preservation_threshold,
+            }
+            trigger = trigger_by_type.get(event_type, status.capital_pct_remaining)
+            limit = limit_by_type.get(event_type)
+            session.add(GuardrailEvent(
+                event_type=event_type,
+                trigger_value=Decimal(str(trigger)),
+                limit_value=Decimal(str(limit)) if limit is not None else None,
+                trading_suspended_until=status.suspended_until,
+                portfolio_value=Decimal(str(portfolio.current_value)),
+                notes=status.reason or f"trading_mode → {status.trading_mode}",
+            ))
+            await session.commit()
+            _last_guardrail_signature = signature
+    except Exception as exc:
+        logger.error("Failed to persist guardrail event: %s", exc)
 
 
 @app.get("/api/guardrails/status", tags=["Guardrails"])
@@ -2168,6 +2254,7 @@ async def guardrail_status():
         trades_today=trades_today,
     )
     status = _guardrail_engine.check_all(portfolio)
+    await _maybe_log_guardrail_event(status, portfolio)
 
     return {
         "trading_allowed":       status.trading_allowed,
@@ -2196,8 +2283,30 @@ async def guardrail_status():
 
 
 @app.get("/api/guardrails/history", tags=["Guardrails"])
-async def guardrail_history():
-    return {"events": []}
+async def guardrail_history(limit: int = 50):
+    from app.core.database import AsyncSessionLocal
+    from app.models.risk_state import GuardrailEvent
+    from sqlalchemy import select
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(GuardrailEvent).order_by(GuardrailEvent.timestamp.desc()).limit(limit)
+            )).scalars().all()
+    except Exception:
+        return {"events": []}
+    return {"events": [
+        {
+            "id": str(r.id),
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "event_type": r.event_type,
+            "trigger_value": float(r.trigger_value) if r.trigger_value is not None else None,
+            "limit_value": float(r.limit_value) if r.limit_value is not None else None,
+            "trading_suspended_until": r.trading_suspended_until.isoformat() if r.trading_suspended_until else None,
+            "portfolio_value": float(r.portfolio_value) if r.portfolio_value is not None else None,
+            "notes": r.notes,
+        }
+        for r in rows
+    ]}
 
 
 @app.get("/api/guardrails/trading-mode", tags=["Guardrails"])
