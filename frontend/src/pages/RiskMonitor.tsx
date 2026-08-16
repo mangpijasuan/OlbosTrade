@@ -30,7 +30,7 @@ interface HeatInfo {
 const HEAT_COLOR = { ok: "var(--green)", elevated: "var(--amber)", high: "var(--red)" } as const;
 
 export default function RiskMonitor() {
-  const { guardrailStatus, riskState } = useRisk();
+  const { guardrailStatus, riskState, portfolioStateError } = useRisk();
 
   const [margin, setMargin] = useState<MarginInfo | null>(null);
   const [recon, setRecon] = useState<any>(null);
@@ -128,8 +128,12 @@ export default function RiskMonitor() {
   const daily_loss  = Math.max(0, -(guardrailStatus?.daily_loss_pct  || 0)) * 100;
   const weekly_loss = Math.max(0, -(guardrailStatus?.weekly_loss_pct || 0)) * 100;
   const monthly_loss = Math.max(0, -(guardrailStatus?.monthly_loss_pct || 0)) * 100;
-  // riskState comes from /api/risk/portfolio-state → response.state (IBKR account + DB P&L windows)
-  const pv          = riskState?.state?.account_value ?? riskState?.portfolio_value ?? 25000;
+  // riskState comes from /api/risk/portfolio-state → response.state (IBKR account + DB P&L windows).
+  // Never fall back to a fabricated value — see Dashboard.tsx's pvDisplay
+  // for the same principle applied to the same underlying data.
+  const pvAvailable = riskState?.state?.account_value != null || riskState?.portfolio_value != null;
+  const pv          = riskState?.state?.account_value ?? riskState?.portfolio_value ?? 0;
+  const pvDisplay   = pvAvailable ? `$${(pv/1000).toFixed(2)}k` : (portfolioStateError ? "UNAVAILABLE" : "—");
   const daily_pnl   = riskState?.state?.daily_pnl ?? 0;
 
   return (
@@ -137,7 +141,7 @@ export default function RiskMonitor() {
 
       {/* Header stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16, background: "var(--bg-2)", border: "1px solid var(--line-dim)" }}>
-        <Stat label="Portfolio Value" value={`$${(pv/1000).toFixed(2)}k`} color="var(--cyan)" />
+        <Stat label="Portfolio Value" value={pvDisplay} color="var(--cyan)" />
         <Stat label="Daily P&L"
           value={`${daily_pnl >= 0 ? "+" : ""}$${Math.abs(daily_pnl).toFixed(0)}`}
           color={daily_pnl >= 0 ? "var(--green)" : "var(--red)"} />

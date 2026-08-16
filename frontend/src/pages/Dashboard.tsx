@@ -210,7 +210,7 @@ function filterByRange(points: ChartPoint[], range: string): ChartPoint[] {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const isMobile = useIsMobile();
-  const { positions, portfolio, greeks } = usePaperTrade();
+  const { positions, portfolio, portfolioError, greeks } = usePaperTrade();
   const { guardrailStatus, portfolioState } = useRisk();
   const nav = useTerminalNav();
 
@@ -219,7 +219,14 @@ export default function Dashboard() {
   const managedPositions   = positions.filter((p: any) => p.tracked !== false);
   const untrackedPositions = positions.filter((p: any) => p.tracked === false);
 
-  const pv      = portfolio?.account_value ?? portfolio?.net_liquidation ?? 25000;
+  // Never fall back to a fabricated portfolio value — a fake number here
+  // is indistinguishable from a real one and directly contradicts this
+  // app's own "never show a default that looks safe" principle. "—" means
+  // no data yet (still loading); "UNAVAILABLE" means the fetch actually
+  // failed and there's still no real value to show.
+  const pvAvailable = portfolio?.account_value != null || portfolio?.net_liquidation != null;
+  const pv = portfolio?.account_value ?? portfolio?.net_liquidation ?? 0;
+  const pvDisplay = pvAvailable ? `$${(pv / 1000).toFixed(2)}k` : (portfolioError ? "UNAVAILABLE" : "—");
   const daily   = guardrailStatus?.daily_pnl   ?? portfolioState?.state?.daily_pnl   ?? portfolio?.total_pnl ?? 0;
   const weekly  = guardrailStatus?.weekly_pnl  ?? 0;
   const monthly = guardrailStatus?.monthly_pnl ?? 0;
@@ -244,9 +251,13 @@ export default function Dashboard() {
       const tradeData: any = await api
         .getTradeHistory({ limit: 500, status: "closed" })
         .catch(() => null);
-      if (tradeData) {
+      // Building the curve requires a real starting capital — seeding it
+      // with a fabricated default would silently offset every point on
+      // the equity curve by a wrong baseline. Falls through to the
+      // backtest/empty-state branches below when unavailable.
+      if (tradeData && portfolio?.starting_capital != null) {
         const trades = tradeData.trades ?? [];
-        const curve = buildCurveFromTrades(trades, portfolio?.starting_capital ?? 25000);
+        const curve = buildCurveFromTrades(trades, portfolio.starting_capital);
         if (curve.length >= 2) {
           setAllPoints(curve);
           setCurveSource("trades");
@@ -352,7 +363,7 @@ export default function Dashboard() {
         <StatTile
           variant="divider" size="default"
           label="Portfolio Value" hint={hintFor("Portfolio Value")}
-          value={`$${(pv / 1000).toFixed(2)}k`}
+          value={pvDisplay}
           sub={portfolio?.return_pct != null ? `${portfolio.return_pct >= 0 ? "+" : ""}${portfolio.return_pct.toFixed(2)}% all-time` : undefined}
         />
         <StatTile

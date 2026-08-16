@@ -318,6 +318,7 @@ async def _background_scheduler() -> None:
     # Daily bars only update once/trading day — checking more often than a
     # few times a day just burns yfinance calls without new information.
     signal_outcomes_interval_s = 6 * 60 * 60   # 6 hours
+    reconciliation_interval_s  = 5 * 60        # 5 minutes
 
     import time as _time
     _now = _time.monotonic()
@@ -329,6 +330,7 @@ async def _background_scheduler() -> None:
     last_greeks  = 0.0   # Greeks update on first tick is fine (lightweight)
     last_fills   = 0.0
     last_signal_outcomes = _now
+    last_reconciliation  = 0.0   # cheap local-cache read — fine to run on first tick
 
     import time
 
@@ -412,6 +414,13 @@ async def _background_scheduler() -> None:
             if now - last_greeks >= greeks_interval_s:
                 await _guarded(_update_portfolio_greeks(), "greeks", 30)
                 last_greeks = now
+
+            # Every 5 min: broker/DB position reconciliation (alert-only —
+            # see _reconcile_positions docstring for why this doesn't
+            # auto-engage the kill switch)
+            if now - last_reconciliation >= reconciliation_interval_s:
+                await _guarded(_reconcile_positions(), "reconciliation", 30)
+                last_reconciliation = now
 
             # Every 6 hours: resolve pending signal outcomes against fresh
             # daily bars (hit target, hit stop, or expire past the hold
@@ -1933,6 +1942,38 @@ async def _check_signal_outcomes() -> None:
             "Signal outcomes: checked=%d target_hit=%d stop_hit=%d expired=%d still_pending=%d",
             summary["checked"], summary["target_hit"], summary["stop_hit"],
             summary["expired"], summary["still_pending"],
+        )
+
+
+async def _reconcile_positions() -> None:
+    """Periodic broker/DB reconciliation — position_reconciler.py's own
+    docstring describes it as running "on every startup and before every
+    signal cycle," but nothing previously called it automatically; it was
+    only reachable via an on-demand API route. Alert-only: logs critically
+    and records an observability event/counter on a real mismatch (visible
+    in /api/health/detail) rather than auto-engaging the kill switch — no
+    existing code in this app auto-halts trading from a background check,
+    and a false positive during a normal fill-timing window would halt
+    trading for no real reason. check() only reads get_positions(), which
+    is a local ib_insync cache read (see ibkr_client.py), so this is cheap
+    enough to run every cycle without IBKR request-coordinator involvement.
+    """
+    from app.broker.broker_factory import get_broker
+    from app.services.observability import observability
+    from app.services.position_reconciler import PositionReconciler
+
+    result = await PositionReconciler(get_broker()).check()
+    if not result.clean:
+        logger.critical(
+            "Position reconciliation mismatch: untracked_at_broker=%s phantom_in_db=%s warnings=%s",
+            result.untracked_at_broker, result.phantom_in_db, result.warnings,
+        )
+        observability.incr("reconciliation.mismatch")
+        observability.event(
+            "reconciliation_mismatch",
+            untracked_at_broker=result.untracked_at_broker,
+            phantom_in_db=result.phantom_in_db,
+            warnings=result.warnings,
         )
 
 
