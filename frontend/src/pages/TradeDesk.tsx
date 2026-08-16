@@ -16,6 +16,7 @@ import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
 import { useTerminalNav } from "../components/TerminalNavContext";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
 import { Button } from "../components/ui";
+import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -25,7 +26,7 @@ function HintedTh({ label }: { label: string }) {
   );
 }
 type ExecMode = "manual" | "copilot" | "autopilot";
-type Tab = "overview" | "signals" | "positions" | "approvals" | "execution" | "pnl" | "mode";
+type Tab = "overview" | "signals" | "positions" | "approvals" | "execution" | "pnl" | "mode" | "manual";
 
 const Badge = ({ text, color }: { text: string; color: string }) => (
   <span style={{
@@ -500,6 +501,7 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
     { key: "execution", label: "Execution Monitor" },
     { key: "pnl",       label: "P&L breakdown" },
     { key: "mode",      label: "Trading style" },
+    { key: "manual",    label: "Manual Trade" },
   ];
 
   return (
@@ -687,6 +689,9 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
             <TradingModeSelector />
           </div>
         )}
+
+        {/* MANUAL TRADE */}
+        {tab === "manual" && <ManualTradePanel />}
       </div>
     </div>
   );
