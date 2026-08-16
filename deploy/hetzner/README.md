@@ -108,6 +108,17 @@ curl -s https://trading.yourdomain.com/api/guardrails/status
 
 Open **https://trading.yourdomain.com** in your browser.
 
+### 8. Set up automated backups
+
+`backup_db.sh` dumps the database daily but does nothing until its cron
+entry is actually installed — run this once:
+```bash
+bash deploy/hetzner/install_backup_cron.sh
+```
+Configure an off-site target too (`BACKUP_RCLONE_REMOTE` or
+`BACKUP_SCP_TARGET` in `backend/.env.prod`) — local-only backups don't
+survive a disk failure.
+
 ---
 
 ## Updating after a code change

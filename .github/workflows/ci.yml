@@ -69,6 +69,11 @@ jobs:
           --cov-report=term-missing --cov-fail-under=95
       - name: Whole-app coverage (ratchet floor; target 95%)
         run: pytest --cov=app --cov-report=term-missing
+      - name: Dependency vulnerability scan (informational)
+        # Non-blocking: CVE disclosures land on a schedule unrelated to any
+        # commit here, so failing the build on one would block unrelated
+        # pushes. Surface it in the log instead of gating on it.
+        run: pip install pip-audit && pip-audit -r requirements.txt || true
 
   frontend-tests:
     runs-on: ubuntu-latest
@@ -88,3 +93,5 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npx vitest run
+      - name: Dependency vulnerability scan (informational)
+        run: npm audit --audit-level=high || true
