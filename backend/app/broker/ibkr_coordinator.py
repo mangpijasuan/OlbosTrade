@@ -243,7 +243,10 @@ class IBKRRequestCoordinator:
             if not job.future.done():
                 job.future.set_exception(exc)
         finally:
-            request_id_var.reset(token)
+            # Reset AFTER the log line below, not before — the whole point of
+            # applying job.request_id was so this line's own log record
+            # carries it. Resetting first would put the ID back to "-"
+            # before logger.info ever reads the contextvar.
             async with self._active_lock:
                 self._active_count -= 1
                 observability.gauge("ibkr.active_requests", self._active_count)
@@ -256,6 +259,7 @@ class IBKRRequestCoordinator:
                 "IBKR REQUEST symbol=%s type=%s priority=%s queue_wait=%dms execution=%dms status=%s",
                 job.symbol, job.req_type, job.priority.name, queue_wait_ms, exec_ms, status,
             )
+            request_id_var.reset(token)
 
     def health_snapshot(self) -> dict:
         """Point-in-time coordinator state for GET /api/health/detail."""

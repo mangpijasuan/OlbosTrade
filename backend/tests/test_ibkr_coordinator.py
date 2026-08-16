@@ -265,3 +265,41 @@ async def test_submit_propagates_caller_request_id_into_job(make_coordinator):
     # picks up next — confirmed by checking the caller's context is restored
     # after submit() returns (unaffected either way, but worth pinning).
     assert request_id_var.get() == "-"
+
+
+@pytest.mark.asyncio
+async def test_run_job_log_line_itself_carries_the_request_id(make_coordinator, caplog):
+    """Regression test for a real bug: an earlier version reset the
+    contextvar in _run_job's `finally` block BEFORE the "IBKR REQUEST ..."
+    logger.info call instead of after, so job.fn() saw the right ID but the
+    coordinator's own log line — the whole point of this feature — always
+    logged "-". job.fn() alone reading the right value (the earlier test in
+    this file) does NOT catch that ordering bug; only inspecting the emitted
+    LogRecord does.
+
+    Calls _run_job directly (not through submit()/the worker pool) so the
+    ambient request_id_var this test's own task starts with is exactly what
+    _run_job sees BEFORE it applies job.request_id — no risk of a lazily-
+    created worker task accidentally inheriting the same test value as its
+    own baseline and masking a reset-ordering bug (a real trap: an earlier
+    version of this test did exactly that by starting the worker pool AFTER
+    the test's own request_id_var.set(), and passed against buggy code)."""
+    coordinator = make_coordinator(num_workers=1, num_reserved=1)
+    assert request_id_var.get() == "-"  # this task's own ambient baseline
+
+    async def fn():
+        return "ok"
+
+    job = _Job(
+        priority=Priority.P0, fn=fn, future=asyncio.get_event_loop().create_future(),
+        queued_at=time.monotonic(), req_type="TEST", symbol="ZZZ",
+        request_id="log-line-check-42",
+    )
+    with caplog.at_level("INFO", logger="app.broker.ibkr_coordinator"):
+        await coordinator._run_job(job)
+
+    ibkr_records = [r for r in caplog.records if "IBKR REQUEST" in r.getMessage()]
+    assert len(ibkr_records) == 1
+    assert ibkr_records[0].request_id == "log-line-check-42"
+    # And the ordering fix must not leak the job's ID past _run_job either.
+    assert request_id_var.get() == "-"
