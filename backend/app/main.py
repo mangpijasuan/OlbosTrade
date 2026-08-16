@@ -770,6 +770,29 @@ async def _run_equity_scan() -> None:
                     ind = compute_indicators(df)
                     if not ind:
                         return None
+
+                    # Wire the alert rule-evaluation engine using only metrics
+                    # already computed in this loop for free. iv_rank/
+                    # iv_percentile/vix need options/vol-surface data this scan
+                    # doesn't fetch and stay unwired — separate, larger,
+                    # explicitly deferred scope.
+                    try:
+                        prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else 0.0
+                        change_pct = (
+                            (float(df["close"].iloc[-1]) - prev_close) / prev_close * 100
+                            if prev_close else 0.0
+                        )
+                        alert_snapshot = {
+                            "price":      ind["close"],                  # ind's key is "close" — map explicitly
+                            "rsi_14":     ind["rsi"],                    # ind's key is "rsi" — map explicitly
+                            "change_pct": change_pct,                    # not in compute_indicators; computed here
+                            "volume":     float(df["volume"].iloc[-1]),  # raw latest volume, NOT volume_ratio
+                        }
+                        from app.services.alerts.service import evaluate_symbol
+                        await evaluate_symbol(ticker, alert_snapshot)
+                    except Exception as exc:
+                        logger.warning("Alert evaluation failed for %s: %s", ticker, exc)
+
                     from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
                     orderflow = await ibkr_coordinator.submit(
                         Priority.P2, lambda t=ticker: get_orderflow_score(t, broker),
