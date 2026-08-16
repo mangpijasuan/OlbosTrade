@@ -536,6 +536,8 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         >
           <button
             onClick={onHeaderClick}
+            aria-label={g.label}
+            aria-current={isActive ? "page" : undefined}
             style={{
               width: "100%", height: 38, display: "flex", alignItems: "center",
               justifyContent: showLabels ? "flex-start" : "center",
@@ -586,6 +588,8 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
               onClick={() => onNav(c.key)}
               onMouseEnter={() => setHovered(c.key)}
               onMouseLeave={() => setHovered(null)}
+              aria-label={c.label}
+              aria-current={subActive ? "page" : undefined}
               style={{
                 width: "100%", height: 32, display: "flex", alignItems: "center",
                 paddingLeft: 40, gap: 0,

@@ -1988,8 +1988,9 @@ async def health_check() -> dict[str, str]:
 async def health_detail() -> dict:
     """
     Lightweight operational snapshot: scanner heartbeat, kill-switch state, the
-    current regime, and the in-process observability counters / recent events.
-    No external dependencies — safe to poll.
+    current regime, database connectivity, and the in-process observability
+    counters / recent events. The database check runs a trivial SELECT 1 and
+    never raises — an outage is reported in the response, not a 500.
     """
     import time as _t
     from app.services.observability import observability
@@ -2006,6 +2007,15 @@ async def health_detail() -> dict:
     if hasattr(_broker, "ib"):
         _ib_connected = _ib_connected and _broker.ib.isConnected()
 
+    _db_connected = True
+    try:
+        from app.core.database import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as _s:
+            await _s.execute(text("SELECT 1"))
+    except Exception:
+        _db_connected = False
+
     return {
         "status": "ok",
         "broker": settings.broker,
@@ -2015,6 +2025,7 @@ async def health_detail() -> dict:
         },
         "kill_switch": {"engaged": _ks.is_engaged, "reason": _ks.status.get("reason")},
         "regime": getattr(getattr(_current_regime, "regime", None), "value", None),
+        "database": {"connected": _db_connected},
         "observability": observability.snapshot(),
         "ibkr": {
             "connected": _ib_connected,

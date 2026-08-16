@@ -945,7 +945,11 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             logger.info("Skipping %s — open/pending trade already exists in DB", ticker)
             return _skipped("already_open")
     except Exception as _dup_exc:
-        logger.warning("Duplicate check failed for %s: %s", ticker, _dup_exc)
+        # Fail closed, matching Stage 2's guardrail gate (_fetch_portfolio_state)
+        # a few lines above — a DB blip here must not silently let a possible
+        # duplicate order through the one check meant to catch it.
+        logger.error("Duplicate check failed for %s (fail closed): %s", ticker, _dup_exc)
+        return _blocked(f"duplicate_check_error: {_dup_exc}")
 
     # ── Stages 4+5: Broker submission + fill recording ─────────────────────────
     action = signal.get("action", "")
