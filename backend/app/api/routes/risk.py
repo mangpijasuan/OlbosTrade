@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, and_, case
 
 from app.api.deps import require_api_key_configured
+from app.api.rate_limit import rate_limit
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.reconciliation_snapshot import ReconciliationSnapshot
@@ -258,7 +259,7 @@ async def get_kill_switch_status():
     return kill_switch_service.status
 
 
-@router.post("/kill-switch/trigger", dependencies=[Depends(require_api_key_configured)])
+@router.post("/kill-switch/trigger", dependencies=[Depends(require_api_key_configured), Depends(rate_limit)])
 async def trigger_kill_switch(
     reason: str = "manual",
 ):

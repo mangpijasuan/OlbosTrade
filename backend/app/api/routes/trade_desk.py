@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from decimal import Decimal
 
 from app.api.deps import require_api_key
+from app.api.rate_limit import rate_limit
 from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.guardrails import GuardrailEngine, PortfolioState
@@ -299,7 +300,7 @@ async def get_execution_mode():
     return execution_mode_manager.summary()
 
 
-@router.post("/execution-mode", dependencies=[Depends(require_api_key)])
+@router.post("/execution-mode", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def set_execution_mode(body: SetExecutionModeRequest):
     try:
         mode = ExecutionMode(body.mode)
@@ -597,7 +598,7 @@ async def evaluate_options(req: OptionsEvaluateRequest):
     }
 
 
-@router.post("/approve/{signal_id}", dependencies=[Depends(require_api_key)])
+@router.post("/approve/{signal_id}", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def approve_signal(signal_id: str):
     """User approves a pending signal → executes order."""
     signal = await _resolve_pending_approval(signal_id, "approved")
@@ -609,7 +610,7 @@ async def approve_signal(signal_id: str):
     return result
 
 
-@router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key)])
+@router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def reject_signal(signal_id: str):
     """User rejects a pending signal — no order sent."""
     signal = await _resolve_pending_approval(signal_id, "rejected")
@@ -631,7 +632,7 @@ async def reject_signal(signal_id: str):
 
 # ── Manual trade ──────────────────────────────────────────────────────────────
 
-@router.post("/manual-trade", dependencies=[Depends(require_api_key)])
+@router.post("/manual-trade", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def manual_trade(req: ManualTradeRequest):
     """
     Force a manual equity order — bypasses signal scoring and IV filters
@@ -664,7 +665,7 @@ class ClosePositionRequest(BaseModel):
     limit_price: Optional[float] = None
 
 
-@router.post("/close-position", dependencies=[Depends(require_api_key)])
+@router.post("/close-position", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def close_position(req: ClosePositionRequest):
     """
     Manually close an open position — the operator's own "I want out now"
@@ -1261,7 +1262,7 @@ class ScanSignalRequest(BaseModel):
     asset_type: str = "equity"
 
 
-@router.post("/signal", dependencies=[Depends(require_api_key)])
+@router.post("/signal", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def submit_scan_signal(req: ScanSignalRequest):
     """
     Submit a signal from scan panel / Equity Desk for execution routing.
