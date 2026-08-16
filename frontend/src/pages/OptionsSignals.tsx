@@ -8,7 +8,7 @@ import { api } from "../api/client";
 import SignalAttribution from "../components/SignalAttribution";
 import type { SignalAttributionData } from "../types/signal";
 
-interface Spread {
+export interface Spread {
   option_type?: string;
   short_strike?: number;
   long_strike?: number;
@@ -28,7 +28,7 @@ interface OptionsIntelligence {
   reward_risk?: number;
 }
 
-interface SignalEvidence {
+export interface SignalEvidence {
   top_positive_factors: { feature: string; value: number; impact: number }[];
   top_negative_factors: { feature: string; value: number; impact: number }[];
 }

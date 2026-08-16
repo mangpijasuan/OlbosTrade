@@ -1593,6 +1593,13 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         _recent_options_signals.insert(0, signal)
         del _recent_options_signals[200:]
 
+        # Also persist to the DB so this signal survives a backend restart —
+        # the in-memory store above doesn't. Mirrors equity's record_signal()
+        # (called unconditionally of execute, same as the in-memory insert
+        # above already is).
+        from app.services.options_signal_history import record_options_signal
+        await record_options_signal(signal)
+
         if execute:
             from app.api.routes.trade_desk import handle_signal
             await handle_signal(signal)

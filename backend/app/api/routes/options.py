@@ -1,7 +1,9 @@
 """Options analytics routes — on-demand spread intelligence for the UI."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Optional
+
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -70,6 +72,74 @@ async def trigger_options_signal_scan():
         "signals": _recent_options_signals[:150],
         "total": len(_recent_options_signals),
     }
+
+
+def _history_row_to_dict(r) -> dict:
+    return {
+        "id":             str(r.id),
+        "ticker":         r.ticker,
+        "strategy":       r.strategy,
+        "action":         r.action,
+        "confidence":     float(r.confidence),
+        "pop":            float(r.pop) if r.pop is not None else None,
+        "kelly_fraction": float(r.kelly_fraction) if r.kelly_fraction is not None else None,
+        "signal_score":   float(r.signal_score),
+        "quantity":       r.quantity,
+        "iv_rank":        float(r.iv_rank),
+        "regime":         r.regime,
+        "spread": {
+            "option_type":  r.option_type,
+            "short_strike": float(r.short_strike),
+            "long_strike":  float(r.long_strike),
+            "expiration":   r.expiration.isoformat(),
+            "dte":          r.dte,
+            "net_credit":   float(r.net_credit),
+            "max_loss":     float(r.max_loss),
+            "breakeven":    float(r.breakeven),
+        },
+        "sigma":         float(r.sigma),
+        "vix_used":      float(r.vix_used),
+        "credit_source": r.credit_source,
+        "evidence":      r.evidence,
+        "intelligence":  r.intelligence,
+        "generated_at":  r.generated_at.isoformat() if r.generated_at else None,
+    }
+
+
+@router.get("/signals/history")
+async def get_options_signal_history(
+    limit: int = Query(200, le=1000),
+    strategy: Optional[str] = Query(None),
+    ticker: Optional[str] = Query(None),
+):
+    """
+    Persisted options signal log, most recent first — survives a backend
+    restart, unlike GET /signals (the in-memory feed). No status/outcome
+    fields: options spreads have no forward-resolution logic yet, this is
+    a signal log, not a win-rate study (see /api/signal-research for that
+    model, equity-only today).
+    """
+    from sqlalchemy import func, select
+    from app.core.database import AsyncSessionLocal
+    from app.models.options_signal_history import OptionsSignalHistory
+
+    filters = []
+    if strategy:
+        filters.append(OptionsSignalHistory.strategy == strategy)
+    if ticker:
+        filters.append(OptionsSignalHistory.ticker == ticker.upper())
+
+    stmt = select(OptionsSignalHistory).order_by(OptionsSignalHistory.generated_at.desc()).limit(limit)
+    count_stmt = select(func.count()).select_from(OptionsSignalHistory)
+    for f in filters:
+        stmt = stmt.where(f)
+        count_stmt = count_stmt.where(f)
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(stmt)).scalars().all()
+        total = (await session.execute(count_stmt)).scalar_one()
+
+    return {"signals": [_history_row_to_dict(r) for r in rows], "total": total}
 
 
 @router.post("/analyze")

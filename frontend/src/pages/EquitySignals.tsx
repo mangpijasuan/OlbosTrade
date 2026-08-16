@@ -11,7 +11,7 @@ import SignalAttribution from "../components/SignalAttribution";
 import type { SignalAttributionData } from "../types/signal";
 import OptionsSignals from "./OptionsSignals";
 
-type AssetTab = "equities" | "options";
+export type AssetTab = "equities" | "options";
 
 interface TradePlan {
   entry_price?: number;
@@ -273,7 +273,7 @@ function PriceCell({ label, value, color, suffix }: { label: string; value?: num
   );
 }
 
-function AssetToggle({ tab, onChange }: { tab: AssetTab; onChange: (t: AssetTab) => void }) {
+export function AssetToggle({ tab, onChange }: { tab: AssetTab; onChange: (t: AssetTab) => void }) {
   const btn = (id: AssetTab, label: string) => {
     const active = tab === id;
     return (
