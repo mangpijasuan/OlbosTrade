@@ -42,7 +42,7 @@ def _session(rows, total):
 @pytest.mark.asyncio
 async def test_history_route_empty_store():
     with patch("app.core.database.AsyncSessionLocal", return_value=_session([], 0)):
-        result = await options_routes.get_options_signal_history()
+        result = await options_routes.get_options_signal_history(limit=200, strategy=None, ticker=None)
     assert result == {"signals": [], "total": 0}
 
 
@@ -50,7 +50,7 @@ async def test_history_route_empty_store():
 async def test_history_route_returns_rows_with_nested_spread():
     row = _row()
     with patch("app.core.database.AsyncSessionLocal", return_value=_session([row], 1)):
-        result = await options_routes.get_options_signal_history()
+        result = await options_routes.get_options_signal_history(limit=200, strategy=None, ticker=None)
 
     assert result["total"] == 1
     sig = result["signals"][0]
@@ -68,7 +68,7 @@ async def test_history_route_returns_rows_with_nested_spread():
 async def test_history_route_nulls_pop_and_kelly_when_absent():
     row = _row(pop=None, kelly_fraction=None, intelligence=None)
     with patch("app.core.database.AsyncSessionLocal", return_value=_session([row], 1)):
-        result = await options_routes.get_options_signal_history()
+        result = await options_routes.get_options_signal_history(limit=200, strategy=None, ticker=None)
     sig = result["signals"][0]
     assert sig["pop"] is None
     assert sig["kelly_fraction"] is None
@@ -81,6 +81,19 @@ async def test_history_route_total_reflects_filtered_count_not_page_length():
     limit=1 request against 9 matching rows should still report total=9."""
     row = _row()
     with patch("app.core.database.AsyncSessionLocal", return_value=_session([row], 9)):
-        result = await options_routes.get_options_signal_history(limit=1)
+        result = await options_routes.get_options_signal_history(limit=1, strategy=None, ticker=None)
     assert len(result["signals"]) == 1
     assert result["total"] == 9
+
+
+@pytest.mark.asyncio
+async def test_history_route_applies_strategy_and_ticker_filters():
+    """Exercises the strategy/ticker filter branches (ticker uppercased to
+    match the stored convention) — doesn't assert on the generated SQL
+    itself, just that both filtered code paths run without error."""
+    row = _row()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session([row], 1)):
+        result = await options_routes.get_options_signal_history(
+            limit=200, strategy="bull_put_spread", ticker="spy",
+        )
+    assert result["total"] == 1

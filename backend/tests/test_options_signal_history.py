@@ -99,3 +99,30 @@ async def test_record_options_signal_returns_none_on_db_failure():
     with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("db down")):
         result = await record_options_signal(_signal())
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_record_options_signal_falls_back_to_now_on_bad_generated_at():
+    session = _session()
+    signal = _signal(generated_at="not-a-real-timestamp")
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        result = await record_options_signal(signal)
+
+    assert result is not None
+    inserted = session.add.call_args.args[0]
+    assert inserted.generated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_record_options_signal_nulls_unparseable_pop():
+    """_dec_or_none must swallow a value it can't coerce to Decimal rather
+    than raising, matching the equity precedent (record_signal's own
+    _dec_or_none helper)."""
+    session = _session()
+    signal = _signal(pop="not-a-number")
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        result = await record_options_signal(signal)
+
+    assert result is not None
+    inserted = session.add.call_args.args[0]
+    assert inserted.pop is None
