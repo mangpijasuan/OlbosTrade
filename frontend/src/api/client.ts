@@ -181,6 +181,8 @@ export const api = {
   getComparison: () => request("/api/research/comparison"),
   runComparison: (body: object) => request("/api/research/run-comparison", { method: "POST", body: JSON.stringify(body) }),
   getModelPerformance: () => request("/api/research/model-performance"),
+  transitionExperiment: (expId: string, body: object) =>
+    request(`/api/research/lab/experiments/${expId}/transition`, { method: "POST", body: JSON.stringify(body) }),
   getForecast: <T = unknown>(symbol: string, horizon: number) =>
     request<T>(`/api/forecasts/symbols/${encodeURIComponent(symbol)}?horizon=${horizon}`),
 
