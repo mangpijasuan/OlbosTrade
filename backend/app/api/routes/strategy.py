@@ -1,7 +1,7 @@
 """Strategy config and signal routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
@@ -160,6 +160,69 @@ async def _evaluate_health(min_sample: int):
         )
     return evaluate_all(by_strategy, settings.starting_capital,
                         overrides=overrides, min_sample=min_sample)
+
+
+async def _load_registry_cards(min_sample: int = 20) -> list[dict]:
+    """
+    Merge seeded StrategyProfile rows (static eligibility/lifecycle
+    metadata — see migration 0022) with live health from the same
+    _evaluate_health() the /health route already uses. health_score/
+    health_status/sample_size are None/0 for a strategy with no closed
+    trades yet — never fabricated as a real score.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.strategy_profile import StrategyProfile
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        profiles = (await session.execute(select(StrategyProfile))).scalars().all()
+
+    try:
+        health = await _evaluate_health(min_sample)
+    except Exception:
+        health = []
+    health_by_strategy = {h.strategy: h for h in health}
+
+    cards = []
+    for p in profiles:
+        h = health_by_strategy.get(p.strategy_id)
+        cards.append({
+            "strategy_id": p.strategy_id,
+            "name": p.name,
+            "version": p.version,
+            "asset_class": p.asset_class,
+            "supported_symbols": p.supported_symbols,
+            "supported_regimes": p.supported_regimes,
+            "supported_volatility_regimes": p.supported_volatility_regimes,
+            "risk_profile_compatibility": p.risk_profile_compatibility,
+            "manual_eligible": p.manual_eligible,
+            "copilot_eligible": p.copilot_eligible,
+            "autopilot_supported": p.autopilot_supported,
+            "lifecycle_status": p.lifecycle_status,
+            "enabled": p.enabled,
+            "allocation_limit_pct": float(p.allocation_limit_pct) if p.allocation_limit_pct is not None else None,
+            "main_risk_warning": p.main_risk_warning,
+            "health_score": h.score if h else None,
+            "health_status": h.status if h else None,
+            "sample_size": h.sample_size if h else 0,
+        })
+    return cards
+
+
+@router.get("/registry")
+async def get_strategy_registry(min_sample: int = 20):
+    """Strategy Cards data: seeded profile metadata merged with live health."""
+    cards = await _load_registry_cards(min_sample)
+    return {"strategies": cards, "total": len(cards)}
+
+
+@router.get("/registry/{strategy_id}")
+async def get_strategy_registry_one(strategy_id: str, min_sample: int = 20):
+    cards = await _load_registry_cards(min_sample)
+    for card in cards:
+        if card["strategy_id"] == strategy_id:
+            return card
+    raise HTTPException(404, f"Unknown strategy_id: {strategy_id}")
 
 
 @router.get("/health")

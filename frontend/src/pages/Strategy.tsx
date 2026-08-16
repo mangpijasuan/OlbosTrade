@@ -1,15 +1,89 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
 
-const STRATEGIES = [
-  { key: "bull_put_spread",       label: "Bull Put Spread",     type: "CREDIT", bias: "BULLISH", max_profit: "Net credit",   max_loss: "Width − credit",  legs: 2 },
-  { key: "bear_call_spread",      label: "Bear Call Spread",    type: "CREDIT", bias: "BEARISH", max_profit: "Net credit",   max_loss: "Width − credit",  legs: 2 },
-  { key: "iron_condor",           label: "Iron Condor",         type: "CREDIT", bias: "NEUTRAL", max_profit: "Net credit",   max_loss: "Width − credit",  legs: 4 },
-  { key: "bull_call_debit_spread",label: "Bull Call Debit",     type: "DEBIT",  bias: "BULLISH", max_profit: "Width − debit",max_loss: "Net debit",       legs: 2 },
-];
+// Payoff shape is a property of the strategy TYPE itself, not live system
+// state — kept as a small static lookup rather than round-tripped through
+// the backend. Everything else (eligibility, lifecycle, live health) comes
+// from GET /api/strategy/registry (backend/app/api/routes/strategy.py).
+const PAYOFF_SHAPE: Record<string, { type: string; bias: string; max_profit: string; max_loss: string; legs: number }> = {
+  bull_put_spread:        { type: "CREDIT", bias: "BULLISH", max_profit: "Net credit",    max_loss: "Width − credit", legs: 2 },
+  bear_call_spread:       { type: "CREDIT", bias: "BEARISH", max_profit: "Net credit",    max_loss: "Width − credit", legs: 2 },
+  iron_condor:            { type: "CREDIT", bias: "NEUTRAL", max_profit: "Net credit",    max_loss: "Width − credit", legs: 4 },
+  bull_call_debit_spread: { type: "DEBIT",  bias: "BULLISH", max_profit: "Width − debit", max_loss: "Net debit",      legs: 2 },
+};
+
+interface StrategyCard {
+  strategy_id: string;
+  name: string;
+  lifecycle_status: string;
+  enabled: boolean;
+  manual_eligible: boolean;
+  copilot_eligible: boolean;
+  autopilot_supported: boolean;
+  allocation_limit_pct: number | null;
+  main_risk_warning: string | null;
+  health_score: number | null;
+  health_status: string | null;
+  sample_size: number;
+}
+
+const HEALTH_COLOR: Record<string, string> = {
+  healthy: "var(--green)",
+  watch: "var(--amber)",
+  degraded: "var(--red)",
+  insufficient_data: "var(--ink-faint)",
+};
+
+function EligibilityBadge({ label, eligible }: { label: string; eligible: boolean }) {
+  return (
+    <span style={{
+      fontFamily: "var(--mono)", fontSize: 9, padding: "2px 7px",
+      color: eligible ? "var(--green)" : "var(--ink-faint)",
+      border: `1px solid ${eligible ? "rgba(34,197,94,0.4)" : "var(--line-dim)"}`,
+    }}>
+      {eligible ? "✓" : "✕"} {label}
+    </span>
+  );
+}
 
 export default function Strategy() {
-  const [selected, setSelected] = useState("bull_put_spread");
-  const strat = STRATEGIES.find(s => s.key === selected)!;
+  const [cards, setCards] = useState<StrategyCard[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.getStrategyRegistry()
+      .then((res: any) => {
+        if (!alive) return;
+        const list: StrategyCard[] = res?.strategies || [];
+        setCards(list);
+        setSelected(list[0]?.strategy_id ?? null);
+      })
+      .catch((e: any) => {
+        if (alive) setError(e?.message || "Failed to load strategy registry");
+      });
+    return () => { alive = false; };
+  }, []);
+
+  if (error) {
+    return (
+      <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)" }}>
+        {error}
+      </div>
+    );
+  }
+
+  if (!cards) {
+    return (
+      <div style={{ padding: 40, textAlign: "center", fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-faint)" }}>
+        Loading strategies…
+      </div>
+    );
+  }
+
+  const strat = cards.find(c => c.strategy_id === selected);
+  const shape = strat ? PAYOFF_SHAPE[strat.strategy_id] : null;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", height: "100%", overflow: "hidden" }}>
@@ -18,74 +92,121 @@ export default function Strategy() {
         <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
           <span className="panel-title">Strategies</span>
         </div>
-        {STRATEGIES.map(s => (
-          <button key={s.key} onClick={() => setSelected(s.key)}
-            style={{
-              width: "100%", padding: "13px 16px", textAlign: "left",
-              background: selected === s.key ? "var(--cyan-dim)" : "transparent",
-              border: "none", borderLeft: selected === s.key ? "2px solid var(--cyan)" : "2px solid transparent",
-              borderBottom: "1px solid var(--line-dim)", cursor: "pointer",
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-            }}>
-            <div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: selected === s.key ? "var(--cyan)" : "var(--ink)" }}>
-                {s.label}
+        {cards.map(c => {
+          const s = PAYOFF_SHAPE[c.strategy_id];
+          return (
+            <button key={c.strategy_id} onClick={() => setSelected(c.strategy_id)}
+              style={{
+                width: "100%", padding: "13px 16px", textAlign: "left",
+                background: selected === c.strategy_id ? "var(--cyan-dim)" : "transparent",
+                border: "none", borderLeft: selected === c.strategy_id ? "2px solid var(--cyan)" : "2px solid transparent",
+                borderBottom: "1px solid var(--line-dim)", cursor: "pointer",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+              }}>
+              <div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: selected === c.strategy_id ? "var(--cyan)" : "var(--ink)" }}>
+                  {c.name}
+                </div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
+                  {s ? `${s.legs} LEGS` : "—"}
+                </div>
               </div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
-                {s.legs} LEGS
-              </div>
-            </div>
-            <span style={{
-              fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
-              background: s.type === "CREDIT" ? "rgba(212,175,55,0.1)" : "rgba(59,130,246,0.1)",
-              color: s.type === "CREDIT" ? "var(--cyan)" : "var(--blue)",
-              border: `1px solid ${s.type === "CREDIT" ? "rgba(212,175,55,0.3)" : "rgba(59,130,246,0.3)"}`,
-            }}>{s.type}</span>
-          </button>
-        ))}
+              <span style={{
+                fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
+                background: s?.type === "CREDIT" ? "rgba(212,175,55,0.1)" : "rgba(59,130,246,0.1)",
+                color: s?.type === "CREDIT" ? "var(--cyan)" : "var(--blue)",
+                border: `1px solid ${s?.type === "CREDIT" ? "rgba(212,175,55,0.3)" : "rgba(59,130,246,0.3)"}`,
+              }}>{s?.type || "—"}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Detail — Strategy Details promoted to the top; fills the freed space */}
-      <div style={{ overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Detail */}
+      {strat && shape && (
+        <div style={{ overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 20 }}>
 
-        {/* Strategy Details (now the primary block at the top) */}
-        <div>
-          <div className="kicker" style={{ marginBottom: 8 }}>Strategy Details</div>
-          <h2 style={{ fontFamily: "var(--mono)", fontSize: 24, fontWeight: 600, color: "var(--cyan)", marginBottom: 6 }}>
-            {strat.label}
-          </h2>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {[strat.type, strat.bias, `${strat.legs} LEGS`].map(tag => (
-              <span key={tag} style={{
-                fontFamily: "var(--mono)", fontSize: 10, padding: "2px 8px",
-                border: "1px solid var(--line-dim)", color: "var(--ink-dim)",
-              }}>{tag}</span>
+          <div>
+            <div className="kicker" style={{ marginBottom: 8 }}>Strategy Details</div>
+            <h2 style={{ fontFamily: "var(--mono)", fontSize: 24, fontWeight: 600, color: "var(--cyan)", marginBottom: 6 }}>
+              {strat.name}
+            </h2>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {[shape.type, shape.bias, `${shape.legs} LEGS`, strat.lifecycle_status.toUpperCase()].map(tag => (
+                <span key={tag} style={{
+                  fontFamily: "var(--mono)", fontSize: 10, padding: "2px 8px",
+                  border: "1px solid var(--line-dim)", color: "var(--ink-dim)",
+                }}>{tag}</span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 1, border: "1px solid var(--line-dim)" }}>
+            {[
+              { label: "Max Profit", val: shape.max_profit, color: "var(--green)" },
+              { label: "Max Loss",   val: shape.max_loss,   color: "var(--red)" },
+              { label: "Bias",       val: shape.bias,        color: "var(--amber)" },
+            ].map(m => (
+              <div key={m.label} style={{ padding: "18px 20px", background: "var(--bg-2)" }}>
+                <div className="kicker" style={{ marginBottom: 6 }}>{m.label}</div>
+                <div className="data-val sm" style={{ color: m.color }}>{m.val}</div>
+              </div>
             ))}
           </div>
-        </div>
 
-        {/* Key metrics — responsive grid (wraps cleanly, no fixed columns) */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 1, border: "1px solid var(--line-dim)" }}>
-          {[
-            { label: "Max Profit", val: strat.max_profit, color: "var(--green)" },
-            { label: "Max Loss",   val: strat.max_loss,   color: "var(--red)" },
-            { label: "Bias",       val: strat.bias,        color: "var(--amber)" },
-          ].map(m => (
-            <div key={m.label} style={{ padding: "18px 20px", background: "var(--bg-2)" }}>
-              <div className="kicker" style={{ marginBottom: 6 }}>{m.label}</div>
-              <div className="data-val sm" style={{ color: m.color }}>{m.val}</div>
+          {/* Live health — never fabricated. Explicit insufficient-data state
+              rather than showing a 0/blank score as if it meant something. */}
+          <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16 }}>
+            <div className="panel-title" style={{ marginBottom: 12 }}>Live Health</div>
+            {strat.health_status && strat.health_status !== "insufficient_data" ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <div>
+                  <div className="kicker" style={{ marginBottom: 4 }}>Score</div>
+                  <div className="data-val sm" style={{ color: HEALTH_COLOR[strat.health_status] || "var(--ink)" }}>
+                    {strat.health_score != null ? strat.health_score.toFixed(1) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="kicker" style={{ marginBottom: 4 }}>Status</div>
+                  <div className="data-val sm" style={{ color: HEALTH_COLOR[strat.health_status] || "var(--ink)" }}>
+                    {strat.health_status.toUpperCase()}
+                  </div>
+                </div>
+                <div>
+                  <div className="kicker" style={{ marginBottom: 4 }}>Sample</div>
+                  <div className="data-val sm">{strat.sample_size} trades</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+                Insufficient closed-trade history to grade this strategy yet
+                {strat.sample_size > 0 ? ` (${strat.sample_size} trades so far)` : ""}.
+              </div>
+            )}
+          </div>
+
+          <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16 }}>
+            <div className="panel-title" style={{ marginBottom: 12 }}>Eligibility</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <EligibilityBadge label="Manual" eligible={strat.manual_eligible} />
+              <EligibilityBadge label="Copilot" eligible={strat.copilot_eligible} />
+              <EligibilityBadge label="Autopilot" eligible={strat.autopilot_supported} />
             </div>
-          ))}
-        </div>
+            {strat.main_risk_warning && (
+              <div style={{ marginTop: 12, fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)", lineHeight: 1.6 }}>
+                {strat.main_risk_warning}
+              </div>
+            )}
+          </div>
 
-        {/* Current Signals — grows to fill the reclaimed vertical space */}
-        <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16, flex: 1, display: "flex", flexDirection: "column", minHeight: 200 }}>
-          <div className="panel-title" style={{ marginBottom: 12 }}>Current Signals</div>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-            NO SIGNALS — WAITING FOR 09:35 ET
+          <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16, flex: 1, display: "flex", flexDirection: "column", minHeight: 160 }}>
+            <div className="panel-title" style={{ marginBottom: 12 }}>Current Signals</div>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              NO SIGNALS — WAITING FOR 09:35 ET
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
