@@ -142,6 +142,8 @@ export const api = {
   // ── Strategy & Signals ────────────────────────────────────────────────────
   getStrategyRegistry: () => request("/api/strategy/registry"),
   getStrategyProfile: (strategyId: string) => request(`/api/strategy/registry/${strategyId}`),
+  getStrategyHealth: (minSample?: number) =>
+    request(`/api/strategy/health${minSample != null ? `?min_sample=${minSample}` : ""}`),
   getStrategyPresets: (strategyId?: string) =>
     request(`/api/strategy${strategyId ? `/${strategyId}/presets` : "/presets"}`),
   getStrategySnapshots: (strategyId: string) => request(`/api/strategy/${strategyId}/snapshots`),

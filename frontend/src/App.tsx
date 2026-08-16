@@ -80,6 +80,7 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
   settings:  SystemCenter,
 
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
+  "strat:health":    () => <SignalsCenter initialTab="health" />,
   "strat:builder":   StrategyBuilder,
   "strat:alerts":    Alerts,
   "options:signals": OptionsSignals,

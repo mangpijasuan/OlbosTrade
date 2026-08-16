@@ -1,7 +1,8 @@
 /**
  * SignalsCenter — single "Signals" nav entry combining the live Equity Signals
  * feed with the Strategy reference page (its "current signals" overlapped Equity
- * Signals), plus a History tab surfacing each asset class's persisted signal log.
+ * Signals), a History tab surfacing each asset class's persisted signal log,
+ * and a Health tab surfacing the full per-strategy diagnosis.
  */
 import React, { useState } from "react";
 import TabBar from "../components/TabBar";
@@ -10,11 +11,13 @@ import EquitySignals, { AssetToggle, type AssetTab } from "./EquitySignals";
 import Strategy from "./Strategy";
 import SignalResearch from "./SignalResearch";
 import OptionsSignalHistory from "./OptionsSignalHistory";
+import StrategyHealthPanel from "./StrategyHealthPanel";
 
 const TABS = [
   { key: "signals", label: "Live Signals" },
   { key: "history", label: "History" },
   { key: "strategies", label: "Strategy Library" },
+  { key: "health", label: "Health" },
 ];
 
 function SignalsHistory() {
@@ -37,7 +40,10 @@ export default function SignalsCenter({ initialTab = "signals" }: { initialTab?:
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} label="Signal views" />
       <ErrorBoundary label="Signals">
-        {tab === "signals" ? <EquitySignals /> : tab === "history" ? <SignalsHistory /> : <Strategy />}
+        {tab === "signals" ? <EquitySignals />
+          : tab === "history" ? <SignalsHistory />
+          : tab === "health" ? <StrategyHealthPanel />
+          : <Strategy />}
       </ErrorBoundary>
     </div>
   );
