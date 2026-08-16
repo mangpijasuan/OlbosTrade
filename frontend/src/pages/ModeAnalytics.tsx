@@ -126,18 +126,31 @@ export default function ModeAnalytics() {
   const [data, setData]     = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [scoreData, setScore] = useState<any>(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     Promise.all([
       (api as any).getModeAnalytics(),
       (api as any).getSignalScoreImpact(),
-    ]).then(([a, s]: any) => { setData(a); setScore(s); }).finally(() => setLoading(false));
+    ]).then(([a, s]: any) => { setData(a); setScore(s); })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
       fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
       LOADING ANALYTICS...
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
+      flexDirection: "column", gap: 12 }}>
+      <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>FAILED TO LOAD ANALYTICS</span>
+      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
+        Could not reach the analytics API. Try reloading.
+      </span>
     </div>
   );
 

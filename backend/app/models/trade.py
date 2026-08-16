@@ -37,8 +37,8 @@ class Trade(Base):
     long_strike_2: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
 
     expiration: Mapped[date] = mapped_column(Date, nullable=False)
-    entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    exit_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    exit_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     # P&L
     credit_received: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
@@ -66,7 +66,7 @@ class Trade(Base):
 
     # Status
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="open",
+        String(20), nullable=False, default="open", index=True,
         comment="open | closed | expired"
     )
     exit_reason: Mapped[Optional[str]] = mapped_column(

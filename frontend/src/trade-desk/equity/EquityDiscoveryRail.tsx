@@ -20,6 +20,8 @@ export default function EquityDiscoveryRail({
   const [snaps, setSnaps] = useState<Record<string, { last_close: number | null; change_pct: number | null }>>({});
   const [signals, setSignals] = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
+  const [signalsError, setSignalsError] = useState(false);
+  const [positionsError, setPositionsError] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -38,15 +40,15 @@ export default function EquityDiscoveryRail({
       setSnaps(Object.fromEntries(entries));
       try {
         const sig: any = await api.getEquitySignals(30);
-        if (alive) setSignals(sig.signals || []);
+        if (alive) { setSignals(sig.signals || []); setSignalsError(false); }
       } catch {
-        if (alive) setSignals([]);
+        if (alive) { setSignals([]); setSignalsError(true); }
       }
       try {
         const pos: any = await api.getPositions();
-        if (alive) setPositions(pos.positions || (Array.isArray(pos) ? pos : []));
+        if (alive) { setPositions(pos.positions || (Array.isArray(pos) ? pos : [])); setPositionsError(false); }
       } catch {
-        if (alive) setPositions([]);
+        if (alive) { setPositions([]); setPositionsError(true); }
       }
     };
     load();
@@ -127,8 +129,8 @@ export default function EquityDiscoveryRail({
 
         {tab === "signals" &&
           (signals.length === 0 ? (
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)", padding: 8 }}>
-              No equity signals yet.
+            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: signalsError ? "var(--red)" : "var(--ink-faint)", padding: 8 }}>
+              {signalsError ? "Failed to load signals." : "No equity signals yet."}
             </div>
           ) : (
             signals
@@ -167,8 +169,8 @@ export default function EquityDiscoveryRail({
 
         {tab === "positions" &&
           (positions.length === 0 ? (
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)", padding: 8 }}>
-              No open positions.
+            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: positionsError ? "var(--red)" : "var(--ink-faint)", padding: 8 }}>
+              {positionsError ? "Failed to load positions." : "No open positions."}
             </div>
           ) : (
             positions.map((p: any) => (

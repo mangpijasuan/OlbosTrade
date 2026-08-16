@@ -42,17 +42,25 @@ export default function RiskMonitor() {
   const [ksError, setKsError] = useState<string | null>(null);
   const [resetCode, setResetCode] = useState("");
   const [operatorKey, setOperatorKey] = useState(() => getOperatorApiKey());
+  const [sectionsError, setSectionsError] = useState(false);
 
   const loadKs = () =>
     api.getKillSwitchStatus().then(setKs).catch(() => {});
 
   useEffect(() => {
     const load = () => {
-      fetch("/api/risk/margin").then(r => r.json()).then(setMargin).catch(() => {});
-      fetch("/api/risk/reconciliation").then(r => r.json()).then(setRecon).catch(() => {});
-      fetch("/api/risk/scenarios").then(r => r.json()).then(setScen).catch(() => {});
-      fetch("/api/risk/var").then(r => r.json()).then(setVarRep).catch(() => {});
-      fetch("/api/portfolio/heat").then(r => r.json()).then(setHeat).catch(() => {});
+      // Fetch failure must not render identically to "still loading" — a
+      // panel stuck on "Loading…" forever after a broker/DB outage looks
+      // like a hung page, not a real signal something is wrong.
+      Promise.allSettled([
+        fetch("/api/risk/margin").then(r => r.json()).then(setMargin),
+        fetch("/api/risk/reconciliation").then(r => r.json()).then(setRecon),
+        fetch("/api/risk/scenarios").then(r => r.json()).then(setScen),
+        fetch("/api/risk/var").then(r => r.json()).then(setVarRep),
+        fetch("/api/portfolio/heat").then(r => r.json()).then(setHeat),
+      ]).then(results => {
+        setSectionsError(results.some(r => r.status === "rejected"));
+      });
       loadKs();
     };
     load();
@@ -186,8 +194,8 @@ export default function RiskMonitor() {
                 </div>
               </>
             ) : (
-              <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-                Margin figures unavailable {margin ? "(broker not reporting)" : "…"}
+              <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError && !margin ? "var(--red)" : "var(--ink-faint)" }}>
+                Margin figures unavailable {margin ? "(broker not reporting)" : sectionsError ? "(fetch failed)" : "…"}
               </div>
             )}
           </Section>
@@ -240,8 +248,8 @@ export default function RiskMonitor() {
                 ))}
               </div>
             ) : (
-              <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-                Loading…
+              <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError ? "var(--red)" : "var(--ink-faint)" }}>
+                {sectionsError ? "Failed to load reconciliation status." : "Loading…"}
               </div>
             )}
           </Section>
@@ -350,8 +358,8 @@ export default function RiskMonitor() {
               </div>
             ))
           ) : (
-            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-              {scen ? "No open positions to stress." : "Loading…"}
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError && !scen ? "var(--red)" : "var(--ink-faint)" }}>
+              {scen ? "No open positions to stress." : sectionsError ? "Failed to load stress scenarios." : "Loading…"}
             </div>
           )}
         </Section>
@@ -385,7 +393,9 @@ export default function RiskMonitor() {
               )}
             </div>
           ) : (
-            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>Loading…</div>
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError ? "var(--red)" : "var(--ink-faint)" }}>
+              {sectionsError ? "Failed to load portfolio exposure." : "Loading…"}
+            </div>
           )}
         </Section>
       </div>
