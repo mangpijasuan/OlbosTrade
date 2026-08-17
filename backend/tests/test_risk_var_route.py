@@ -17,6 +17,14 @@ def _reset_spot_cache():
     spot_price_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_main_globals():
+    import app.main as m
+    prev_tracker, prev_regime = m._greeks_tracker, m._current_regime
+    yield
+    m._greeks_tracker, m._current_regime = prev_tracker, prev_regime
+
+
 @pytest.mark.asyncio
 async def test_resolved_spot_returns_real_var_and_provenance():
     from app.api.routes import risk as risk_mod
