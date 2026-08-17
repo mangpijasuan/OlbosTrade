@@ -109,8 +109,11 @@ export default function EquityOrderComposer({
           entry_price: entryN,
           stop_price: stopN,
           target_price: Number.isFinite(targetN) ? targetN : entryN,
-          kelly_fraction: 0.1,
-          confidence: 0.5,
+          // No AI signal generated this order — a human chose every field.
+          // Omitting confidence/kelly_fraction (not defaulting to a fake
+          // number) is what lets the backend correctly exempt this order
+          // from the AI-signal confidence gate instead of being silently
+          // blocked by it (see trade_desk.py's equity_desk_composer check).
           source: "equity_desk_composer",
         }),
       });

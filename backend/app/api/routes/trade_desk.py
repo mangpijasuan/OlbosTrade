@@ -859,10 +859,16 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # ── Stage 1c: Trade Frequency Controller (before the risk engine) ───────────
     # Profitability before activity: per-mode daily cap, min confidence, max risk
     # score, and a positive-EV quality filter. Reuses the portfolio-state read.
-    # Manual trades bypass it — the user is overriding signal generation on purpose
-    # (they still face the kill switch, market hours, guardrails, and sizing).
+    # Manual trades bypass it — the user is overriding signal generation on
+    # purpose (they still face the kill switch, market hours, guardrails, and
+    # sizing). Equity Desk composer orders are the same category — a human
+    # chose ticker/side/entry/stop/target directly, there's no AI signal
+    # behind it for a confidence/EV/risk-score gate to meaningfully apply
+    # to — but unlike /manual-trade it still queues through Copilot approval,
+    # so it's exempted here by source rather than by skipping that queue.
     from app.core.config import settings as _tm_cfg
-    if approved_by != "manual" and not getattr(_tm_cfg, "execution_test_mode", False):
+    is_manual_source = approved_by == "manual" or signal.get("source") == "equity_desk_composer"
+    if not is_manual_source and not getattr(_tm_cfg, "execution_test_mode", False):
         from app.services.trade_frequency_controller import trade_frequency_controller
         freq = trade_frequency_controller.evaluate(
             signal, trades_today=portfolio_state.trades_today,
@@ -1256,10 +1262,13 @@ class ScanSignalRequest(BaseModel):
     stop_price: float
     target_price: float
     entry_ladder: list = []
-    kelly_fraction: float = 0.1
+    # None (not 0.0/0.1) for a human-composed order with no AI signal behind
+    # it — see the equity_desk_composer carve-out in _execute_signal's
+    # Stage 1c gate below. Real scan-sourced signals always supply these.
+    kelly_fraction: Optional[float] = None
     expected_value: float = 0.0
     pop: float = 0.0
-    confidence: float = 0.0
+    confidence: Optional[float] = None
     source: str = "scan_engine"  # "options_scan_engine" or "equity_scan_engine"
     # Equity size — composer sends this; scan panel defaults to 1 if omitted.
     shares: int = 1

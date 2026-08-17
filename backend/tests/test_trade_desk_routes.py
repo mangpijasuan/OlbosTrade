@@ -429,3 +429,49 @@ async def test_duplicate_open_trade_skipped():
          patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
         res = await _execute_signal(_options_signal(), approved_by="manual")
     assert res["result"] == "skipped" and "already_open" in res["reason"]
+
+
+# ── Stage 1c: Equity Desk composer confidence-gate carve-out ──────────────────────
+def _equity_signal(**overrides):
+    sig = {
+        "id": "e1", "ticker": "AAPL", "action": "BUY", "asset_type": "equity",
+        "trade_plan": {"shares": 10, "entry_price": 150.0, "stop_price": 147.0,
+                        "target_price": 156.0},
+        "source": "scan_engine", "confidence": 0.1, "kelly_fraction": 0.1,
+    }
+    sig.update(overrides)
+    return sig
+
+
+@pytest.mark.asyncio
+async def test_equity_desk_composer_order_bypasses_confidence_gate():
+    """Regression: a human-composed Equity Desk order (no AI signal behind
+    it) must not be silently blocked by the AI-signal confidence gate —
+    every mode's min_confidence exceeds a fabricated 0.5, so this order
+    would previously be blocked unconditionally."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-1", status="submitted"))
+    sig = _equity_signal(source="equity_desk_composer", confidence=None, kelly_fraction=None)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-e1")):
+        res = await _execute_signal(sig, approved_by="user")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scan_signal_low_confidence_still_blocked_when_approved_by_user():
+    """The carve-out must be scoped to equity_desk_composer only — a real
+    AI scan signal with genuinely low confidence, approved by a human,
+    must still be caught by the frequency controller."""
+    sig = _equity_signal(source="scan_engine", confidence=0.1)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False):
+        res = await _execute_signal(sig, approved_by="user")
+    assert res["result"] == "blocked"
+    assert "below_min_confidence" in res["reason"]
