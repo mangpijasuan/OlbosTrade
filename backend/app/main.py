@@ -2113,6 +2113,45 @@ _guardrail_engine = GuardrailEngine()
 # seeded from DB this process", so a restart doesn't re-log the unchanged
 # current state as if it were a fresh transition. See _maybe_log_guardrail_event.
 _last_guardrail_signature: tuple | None = None
+# In-memory cache of the persisted portfolio peak value — None means "not yet
+# seeded from DB this process". See _get_or_update_peak_value.
+_peak_value_cache: float | None = None
+
+
+async def _get_or_update_peak_value(current_value: float, starting_capital: float) -> float:
+    """
+    Returns the persisted all-time portfolio peak (risk_peak_state, row
+    id=1) for the Drawdown Control guardrail, updating it in place if
+    current_value is a new high. Seeds once per process from DB — first
+    ever call initializes the row to max(current_value, starting_capital).
+    Never raises: a persistence hiccup must not break the status response
+    trading decisions depend on (same contract as _maybe_log_guardrail_event).
+    """
+    global _peak_value_cache
+    from app.core.database import AsyncSessionLocal
+    from app.models.risk_state import RiskPeakState
+
+    try:
+        async with AsyncSessionLocal() as session:
+            row = None
+            if _peak_value_cache is None:
+                row = await session.get(RiskPeakState, 1)
+                if row is None:
+                    row = RiskPeakState(id=1, peak_value=Decimal(str(max(current_value, starting_capital))))
+                    session.add(row)
+                    await session.commit()
+                _peak_value_cache = float(row.peak_value)
+            if current_value > _peak_value_cache:
+                if row is None:
+                    row = await session.get(RiskPeakState, 1)
+                row.peak_value = Decimal(str(current_value))
+                await session.commit()
+                _peak_value_cache = current_value
+    except Exception as exc:
+        logger.error("Failed to update peak value: %s", exc)
+        if _peak_value_cache is None:
+            _peak_value_cache = max(current_value, starting_capital)
+    return _peak_value_cache
 
 
 async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: PortfolioState) -> None:
@@ -2141,7 +2180,7 @@ async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: Portfol
     # signature, so it's skipped when seeding.
     _SUSPEND_EVENT_TYPES = {
         "cooling_off_active", "daily_loss_limit", "weekly_loss_limit",
-        "monthly_loss_limit", "consecutive_loss_limit",
+        "monthly_loss_limit", "max_drawdown_limit", "consecutive_loss_limit",
     }
     try:
         async with AsyncSessionLocal() as session:
@@ -2169,6 +2208,7 @@ async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: Portfol
                 "daily_loss_limit":          status.daily_loss_pct,
                 "weekly_loss_limit":         status.weekly_loss_pct,
                 "monthly_loss_limit":        status.monthly_loss_pct,
+                "max_drawdown_limit":        status.drawdown_pct,
                 "consecutive_loss_limit":    status.consecutive_losses,
                 "daily_trade_cap":           status.trades_today,
                 "capital_preservation_mode": status.capital_pct_remaining,
@@ -2177,6 +2217,7 @@ async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: Portfol
                 "daily_loss_limit":          -_guardrail_engine.max_daily_loss_pct,
                 "weekly_loss_limit":         -_guardrail_engine.max_weekly_loss_pct,
                 "monthly_loss_limit":        -_guardrail_engine.max_monthly_loss_pct,
+                "max_drawdown_limit":        _guardrail_engine.max_drawdown_pct,
                 "consecutive_loss_limit":    _guardrail_engine.max_consecutive_losses,
                 "daily_trade_cap":           _guardrail_engine.max_trades_per_day,
                 "capital_preservation_mode": _guardrail_engine.preservation_threshold,
@@ -2244,6 +2285,8 @@ async def guardrail_status():
     except Exception:
         current_value = settings.starting_capital
 
+    peak_value = await _get_or_update_peak_value(current_value, settings.starting_capital)
+
     portfolio = PortfolioState(
         current_value=current_value,
         starting_capital=settings.starting_capital,
@@ -2252,6 +2295,7 @@ async def guardrail_status():
         monthly_pnl=monthly_pnl,
         consecutive_losses=consecutive_losses,
         trades_today=trades_today,
+        peak_value=peak_value,
     )
     status = _guardrail_engine.check_all(portfolio)
     await _maybe_log_guardrail_event(status, portfolio)
@@ -2269,12 +2313,14 @@ async def guardrail_status():
         "daily_loss_pct":        status.daily_loss_pct,
         "weekly_loss_pct":       status.weekly_loss_pct,
         "monthly_loss_pct":      status.monthly_loss_pct,
+        "drawdown_pct":          status.drawdown_pct,
         "consecutive_losses":    consecutive_losses,
         "trades_today":          trades_today,
         "capital_pct_remaining": status.capital_pct_remaining,
         "max_daily_loss_pct":    _guardrail_engine.max_daily_loss_pct,
         "max_weekly_loss_pct":   _guardrail_engine.max_weekly_loss_pct,
         "max_monthly_loss_pct":  _guardrail_engine.max_monthly_loss_pct,
+        "max_drawdown_pct":      _guardrail_engine.max_drawdown_pct,
         "max_trades_per_day":    _guardrail_engine.max_trades_per_day,
         "max_consecutive_losses": _guardrail_engine.max_consecutive_losses,
         "capital_preservation_threshold": _guardrail_engine.preservation_threshold,

@@ -31,6 +31,7 @@ const EVENT_TYPE_LABEL: Record<string, string> = {
   daily_loss_limit: "Daily loss limit",
   weekly_loss_limit: "Weekly loss limit",
   monthly_loss_limit: "Monthly loss limit",
+  max_drawdown_limit: "Max drawdown",
   consecutive_loss_limit: "Consecutive losses",
   cooling_off_active: "Cooling off",
   capital_preservation_mode: "Capital preservation",
@@ -85,6 +86,7 @@ export default function Guardrails() {
     dailyLoss: guardrailStatus?.max_daily_loss_pct ?? 0.02,
     weeklyLoss: guardrailStatus?.max_weekly_loss_pct ?? 0.05,
     monthlyLoss: guardrailStatus?.max_monthly_loss_pct ?? 0.10,
+    drawdown: guardrailStatus?.max_drawdown_pct ?? 0.15,
     tradesPerDay: guardrailStatus?.max_trades_per_day ?? 3,
     consecutiveLosses: guardrailStatus?.max_consecutive_losses ?? 3,
     capitalThreshold: guardrailStatus?.capital_preservation_threshold ?? 0.85,
@@ -140,6 +142,11 @@ export default function Guardrails() {
       label: "Max Monthly Loss",
       val: `${(activeLimits.monthlyLoss * 100).toFixed(1)}%`,
       status: Math.abs(guardrailStatus?.monthly_loss_pct || 0) < activeLimits.monthlyLoss,
+    },
+    {
+      label: "Max Drawdown",
+      val: `${(activeLimits.drawdown * 100).toFixed(1)}%`,
+      status: (guardrailStatus?.drawdown_pct || 0) < activeLimits.drawdown,
     },
     {
       label: "Max Trades Per Day",

@@ -30,6 +30,7 @@ def _status(**overrides) -> GuardrailStatus:
         trading_allowed=True, trading_mode="normal", reason=None,
         cooling_off_until=None, suspended_until=None,
         daily_loss_pct=0.0, weekly_loss_pct=0.0, monthly_loss_pct=0.0,
+        drawdown_pct=0.0,
         consecutive_losses=0, trades_today=0, capital_pct_remaining=1.0,
         flags=[],
     )
@@ -149,6 +150,30 @@ async def test_signature_change_inserts_with_correct_rule_specific_values():
     assert float(inserted.limit_value) == -main_mod._guardrail_engine.max_weekly_loss_pct
     assert inserted.portfolio_value == Decimal("94000.0")
     assert inserted.notes == "Weekly loss limit hit"
+
+
+@pytest.mark.asyncio
+async def test_drawdown_event_logs_with_correct_trigger_and_limit():
+    """Regression for Drawdown Control: max_drawdown_limit must be
+    recognized as a suspend-family event on seed AND persist drawdown_pct
+    as its trigger_value (positive, e.g. 0.18 for an 18% decline — not the
+    negated sign convention the loss-limit events use)."""
+    import app.main as main_mod
+
+    session = _session_for_seed(None)
+    status = _status(
+        trading_mode="suspended", flags=["max_drawdown_limit"],
+        drawdown_pct=0.18, reason="Max drawdown limit hit",
+        suspended_until=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        await main_mod._maybe_log_guardrail_event(status, _portfolio(current_value=82_000.0))
+
+    inserted = session.add.call_args.args[0]
+    assert inserted.event_type == "max_drawdown_limit"
+    assert float(inserted.trigger_value) == 0.18
+    assert float(inserted.limit_value) == main_mod._guardrail_engine.max_drawdown_pct
+    assert inserted.portfolio_value == Decimal("82000.0")
 
 
 @pytest.mark.asyncio

@@ -300,6 +300,7 @@ export default function RiskMonitor() {
             <Meter label="Daily Loss" val={daily_loss} max={2} unit="%" />
             <Meter label="Weekly Loss" val={weekly_loss} max={5} unit="%" />
             <Meter label="Monthly Loss" val={monthly_loss} max={10} unit="%" />
+            <Meter label="Drawdown" val={Math.max(0, (guardrailStatus?.drawdown_pct || 0)) * 100} max={15} unit="%" />
           </Section>
           <Section title="Position Limits">
             <Meter label="Trades Today" val={guardrailStatus?.trades_today||0} max={3} unit="" warn={0.5} crit={0.85} />

@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     max_daily_loss_pct: float = Field(default=0.02)
     max_weekly_loss_pct: float = Field(default=0.05)
     max_monthly_loss_pct: float = Field(default=0.10)
+    max_drawdown_pct: float = Field(default=0.15)
     max_concurrent_positions: int = Field(default=5)
     max_trades_per_day: int = Field(default=6)
     max_consecutive_losses: int = Field(default=3)
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     paper_visibility_max_daily_loss_pct: float = Field(default=0.08)
     paper_visibility_max_weekly_loss_pct: float = Field(default=0.15)
     paper_visibility_max_monthly_loss_pct: float = Field(default=0.25)
+    paper_visibility_max_drawdown_pct: float = Field(default=0.30)
     paper_visibility_max_trades_per_day: int = Field(default=20)
     paper_visibility_max_consecutive_losses: int = Field(default=8)
     paper_visibility_cooling_off_hours: int = Field(default=1)
@@ -238,6 +240,12 @@ class Settings(BaseSettings):
         if self.paper_visibility_active:
             return self.paper_visibility_max_monthly_loss_pct
         return self.max_monthly_loss_pct
+
+    @property
+    def effective_max_drawdown_pct(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_drawdown_pct
+        return self.max_drawdown_pct
 
     @property
     def effective_max_trades_per_day(self) -> int:
