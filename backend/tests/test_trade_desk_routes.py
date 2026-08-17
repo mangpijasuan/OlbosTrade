@@ -450,7 +450,8 @@ async def test_equity_desk_composer_order_bypasses_confidence_gate():
     every mode's min_confidence exceeds a fabricated 0.5, so this order
     would previously be blocked unconditionally."""
     broker = MagicMock()
-    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-1", status="submitted"))
+    broker.get_latest_quote = AsyncMock(return_value=MagicMock(ask_price=150.5, bid_price=150.0))
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(order_id="ORD-1", status="filled"))
     sig = _equity_signal(source="equity_desk_composer", confidence=None, kelly_fraction=None)
     with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
          patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
@@ -461,7 +462,7 @@ async def test_equity_desk_composer_order_bypasses_confidence_gate():
                new=AsyncMock(return_value="trade-e1")):
         res = await _execute_signal(sig, approved_by="user")
     assert res["result"] == "submitted"
-    broker.place_order.assert_awaited_once()
+    broker.place_equity_order.assert_awaited_once()
 
 
 @pytest.mark.asyncio
