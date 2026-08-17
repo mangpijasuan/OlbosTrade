@@ -89,6 +89,18 @@ async def get_snapshot(symbol: str):
         return {"symbol": symbol, "error": str(exc)}
 
 
+@router.get("/sector-rotation")
+async def get_sector_rotation():
+    """11 GICS sector ETFs ranked by trailing return (1D/1W/1M/3M), with a
+    rank-change indicator derived from the same bars fetch — see
+    sector_rotation_engine.py for the ranking design."""
+    from app.services import sector_rotation_engine
+    try:
+        return await sector_rotation_engine.get_sector_rotation()
+    except Exception as exc:
+        return {"error": str(exc), "sectors": [], "excluded": []}
+
+
 @router.get("/options-chain/{symbol}")
 async def get_options_chain(symbol: str, expiry: str = ""):
     """Fetch live options chain from IBKR for the given symbol and expiry.

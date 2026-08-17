@@ -23,6 +23,7 @@ import Alerts          from "./pages/strategies/Alerts";     // Smart Alert rule
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
+import SectorRotation  from "./pages/markets/SectorRotation";
 import ChartWorkstation from "./pages/ChartWorkstation";     // Price-action / market-structure chart
 import NewsEventsCenter from "./pages/markets/NewsEventsCenter";
 import { isTradeDeskV2Enabled } from "./trade-desk/featureFlags";
@@ -101,6 +102,7 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
   "markets:watchlists": Watchlists,
   "markets:chart":      ChartWorkstation,
   "markets:news":       NewsEventsCenter,
+  "markets:sector-rotation": SectorRotation,
 
   "system:broker":  () => <SystemCenter initialTab="broker" />,
   "system:market":  () => <SystemCenter initialTab="market" />,

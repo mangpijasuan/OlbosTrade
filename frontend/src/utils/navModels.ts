@@ -19,6 +19,7 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
     { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
+    { key: "markets:sector-rotation", label: "Sector Rotation", advanced: true },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:overview",  label: "Overview" },
@@ -75,6 +76,7 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
+    { key: "markets:sector-rotation", label: "Sector Rotation", advanced: true },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:overview",  label: "Command Overview" },

@@ -69,6 +69,7 @@ export const api = {
   getRegime: () => request("/api/market/regime"),
   getOptionsChain: (symbol: string, expiry: string) => request(`/api/market/options-chain/${symbol}?expiry=${expiry}`),
   getIVRank: (symbol: string) => request(`/api/market/iv-rank/${symbol}`),
+  getSectorRotation: () => request("/api/market/sector-rotation"),
 
   // ── Paper Trading ─────────────────────────────────────────────────────────
   getPositions: () => request("/api/paper-trade/positions"),
