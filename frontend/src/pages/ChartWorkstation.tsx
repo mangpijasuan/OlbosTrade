@@ -259,7 +259,12 @@ export default function ChartWorkstation({
 
   const loadSignals = async () => {
     try {
-      const res: any = await api.getEquitySignals(12);
+      // Must cover the full watchlist (~102 tickers, deduped server-side to
+      // one entry per ticker) — selectedSignal below looks up the CURRENTLY
+      // VIEWED symbol by ticker, not just "recent" signals. A small limit
+      // here silently showed "NO SIGNAL" for any symbol that wasn't among
+      // the last few scanned, even when a real signal existed for it.
+      const res: any = await api.getEquitySignals(150);
       setSignals(res.signals || []);
     } catch {
       setSignals([]);
@@ -268,6 +273,7 @@ export default function ChartWorkstation({
 
   useEffect(() => {
     loadSignals();
+    const si = setInterval(loadSignals, 60000);
     (api.getRegime() as Promise<any>).then(setRegime).catch(() => setRegime(null));
     const loadExec = () =>
       (api.getExecutionMode() as Promise<{ mode?: string }>)
@@ -279,7 +285,10 @@ export default function ChartWorkstation({
         .catch(() => {});
     loadExec();
     const ei = setInterval(loadExec, 15000);
-    return () => clearInterval(ei);
+    return () => {
+      clearInterval(si);
+      clearInterval(ei);
+    };
   }, []);
 
   useEffect(() => {
