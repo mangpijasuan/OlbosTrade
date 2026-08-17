@@ -627,7 +627,13 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                   No open positions
                 </td></tr>
               ) : (positions || []).map((p: any, i: number) => {
-                const pnl = p.unrealized_pnl || 0;
+                // unrealized_pnl requires a live broker mark (paper_trade.py
+                // only sets it when the IBKR position was matched to a
+                // current price) — absent whenever the broker is
+                // disconnected or the position is DB-only. `|| 0` here used
+                // to silently show a fabricated "+$0" instead of the real
+                // "unavailable" state MFE/MAE already show correctly below.
+                const pnl: number | null | undefined = p.unrealized_pnl;
                 const isEquity = p.spread_type === "equity_long" || p.spread_type === "equity_short";
                 const canClose = isEquity && !!p.id;
                 return (
@@ -636,8 +642,8 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                     <td><Badge text={p.asset_type?.toUpperCase() || "OPTIONS"} color="var(--ink-dim)" /></td>
                     <td className="mono" style={{ fontSize: 10 }}>{p.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
                     <td className="mono">${(p.credit_received ?? p.entry_credit ?? p.avg_cost ?? 0).toFixed(2)}</td>
-                    <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
-                      {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
+                    <td className="mono" style={{ color: pnl == null ? "var(--ink-faint)" : pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {fmtDollars(pnl)}
                     </td>
                     <td className="mono" style={{ color: "var(--green)" }}>{fmtDollars(p.mfe_pnl)}</td>
                     <td className="mono" style={{ color: "var(--red)" }}>{fmtDollars(p.mae_pnl)}</td>
