@@ -2147,11 +2147,15 @@ async def _get_or_update_peak_value(current_value: float, starting_capital: floa
                 row.peak_value = Decimal(str(current_value))
                 await session.commit()
                 _peak_value_cache = current_value
+        return _peak_value_cache
     except Exception as exc:
         logger.error("Failed to update peak value: %s", exc)
-        if _peak_value_cache is None:
-            _peak_value_cache = max(current_value, starting_capital)
-    return _peak_value_cache
+        # Do NOT cache a fallback here — that would permanently stop this
+        # process from ever touching the DB again (a transient failure,
+        # e.g. mid-deploy before the migration lands, would silently poison
+        # every guardrail check for the rest of the process's life). Return
+        # an uncached value for just this one response instead.
+        return _peak_value_cache if _peak_value_cache is not None else max(current_value, starting_capital)
 
 
 async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: PortfolioState) -> None:

@@ -21,8 +21,10 @@ from app.services.guardrails import GuardrailStatus, PortfolioState
 def _reset_signature_cache():
     import app.main as main_mod
     main_mod._last_guardrail_signature = None
+    main_mod._peak_value_cache = None
     yield
     main_mod._last_guardrail_signature = None
+    main_mod._peak_value_cache = None
 
 
 def _status(**overrides) -> GuardrailStatus:
@@ -59,6 +61,67 @@ def _session_for_seed(last_row):
     session.add = MagicMock()
     session.commit = AsyncMock()
     return session
+
+
+# ── _get_or_update_peak_value ────────────────────────────────────────────────
+
+def _session_get_returns(row):
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.get = AsyncMock(return_value=row)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    return session
+
+
+@pytest.mark.asyncio
+async def test_peak_value_seeds_from_db_on_first_call():
+    import app.main as main_mod
+
+    row = NS(peak_value=Decimal("120000.0"))
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session_get_returns(row)):
+        peak = await main_mod._get_or_update_peak_value(100_000.0, 100_000.0)
+
+    assert peak == 120000.0
+    assert main_mod._peak_value_cache == 120000.0
+
+
+@pytest.mark.asyncio
+async def test_peak_value_updates_on_new_high():
+    import app.main as main_mod
+
+    row = NS(peak_value=Decimal("100000.0"))
+    session = _session_get_returns(row)
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        peak = await main_mod._get_or_update_peak_value(110_000.0, 100_000.0)
+
+    assert peak == 110000.0
+    assert row.peak_value == Decimal("110000.0")
+    session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_peak_value_db_failure_does_not_poison_cache_for_next_call():
+    """Regression: a transient DB failure (e.g. mid-deploy, before a
+    migration lands) must not permanently stop this process from ever
+    reading/writing risk_peak_state again — the cache must stay None so
+    the next call retries the DB instead of silently going local-only
+    forever."""
+    import app.main as main_mod
+
+    with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("relation does not exist")):
+        peak = await main_mod._get_or_update_peak_value(100_000.0, 100_000.0)
+
+    assert peak == 100_000.0  # transient fallback for this call only
+    assert main_mod._peak_value_cache is None  # NOT poisoned
+
+    row = NS(peak_value=Decimal("120000.0"))
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session_get_returns(row)):
+        peak2 = await main_mod._get_or_update_peak_value(100_000.0, 100_000.0)
+
+    assert peak2 == 120000.0  # successfully seeded from DB on the retry
+    assert main_mod._peak_value_cache == 120000.0
 
 
 # ── _maybe_log_guardrail_event ──────────────────────────────────────────────
