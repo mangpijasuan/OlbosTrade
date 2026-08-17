@@ -19,8 +19,15 @@ interface MarginInfo {
 // surfaces these behind its advanced-analytics toggle, so they're duplicated
 // here rather than shared, matching this file's existing local-interface style.
 interface ScenarioRow { scenario: string; portfolio_pnl: number; portfolio_pnl_pct: number | null; }
-interface ScenariosResp { scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number; }
-interface VarResp { var: number; expected_shortfall: number; var_pct: number | null; es_pct: number | null; confidence: number; }
+interface ScenariosResp {
+  scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number;
+  excluded_symbols?: { ticker: string; reason: string }[];
+}
+interface VarResp {
+  available?: boolean; reason?: string;
+  var: number | null; expected_shortfall: number | null; var_pct: number | null; es_pct: number | null;
+  confidence: number; spot_price?: number; spot_source?: string; spot_data_status?: string;
+}
 interface HeatInfo {
   portfolio_heat_pct: number; heat_status: "ok" | "elevated" | "high";
   largest_underlying: string | null; largest_underlying_pct: number;
@@ -469,12 +476,17 @@ export default function RiskMonitor() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <Section title="Stress & VaR" action={varRep && (
+        <Section title="Stress & VaR" action={varRep && varRep.available !== false && (
           <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             VaR {Math.round((varRep.confidence ?? 0) * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var ?? 0).toLocaleString()}</b>
             {varRep.var_pct != null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall ?? 0).toLocaleString()}
           </span>
         )}>
+          {varRep && varRep.available === false && (
+            <div style={{ padding: "10px 16px", fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--amber)", borderBottom: "1px solid var(--line-dim)" }}>
+              VaR unavailable{varRep.reason ? ` — ${varRep.reason}` : ""}.
+            </div>
+          )}
           {scen && (scen.scenarios?.length ?? 0) > 0 ? (
             scen.scenarios.map(r => (
               <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: "1px solid var(--line-dim)" }}>
@@ -488,6 +500,15 @@ export default function RiskMonitor() {
           ) : (
             <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError && !scen ? "var(--red)" : "var(--ink-faint)" }}>
               {scen ? "No open positions to stress." : sectionsError ? "Failed to load stress scenarios." : "Loading…"}
+            </div>
+          )}
+          {scen?.excluded_symbols && scen.excluded_symbols.length > 0 && (
+            <div style={{ padding: "8px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+              {scen.excluded_symbols.map(x => (
+                <div key={x.ticker} className="mono" style={{ fontSize: 10, color: "var(--amber)" }}>
+                  {x.ticker} excluded — {x.reason}
+                </div>
+              ))}
             </div>
           )}
         </Section>

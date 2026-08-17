@@ -337,23 +337,51 @@ async def reset_kill_switch(body: KillSwitchResetRequest):
 
 
 # ── Scenario / stress analysis + parametric VaR (Phase 2 Batch 4) ──────────────────
-def _trade_to_scenario_position(t, spot_iv: float = 0.25) -> dict:
+async def _fetch_spot(symbol: str) -> float:
+    """Live last-price lookup via yfinance — same primitive already used by
+    income_screener.py and unusual_activity.py, wrapped for async use the
+    same way main.py's _yf_bars wraps its own sync yfinance call."""
+    import asyncio as _asyncio
+    import yfinance as yf
+
+    loop = _asyncio.get_running_loop()
+
+    def _fetch():
+        tk = yf.Ticker(symbol)
+        try:
+            return float(tk.fast_info["last_price"])
+        except Exception:
+            h = tk.history(period="1d")
+            if h.empty:
+                raise ValueError(f"no price data for {symbol}")
+            return float(h["Close"].iloc[-1])
+
+    return await loop.run_in_executor(None, _fetch)
+
+
+def _trade_to_scenario_position(t, spot: float, spot_iv: float = 0.25) -> dict:
     """
-    Approximate a stored options trade as a scenario position. Uses the short
-    strike as the spot proxy and a flat IV when live marks aren't available;
-    refined automatically once market data is wired in.
+    Turn a stored options trade into a scenario position using its real
+    live spot (caller resolves this per-underlying). IV/rate stay flat —
+    real per-position IV needs a live options-chain lookup, deliberately
+    deferred (same reasoning as Alerts' unwired iv_rank/iv_percentile).
     """
     qty = int(t.quantity or 1)
+    spread = str(t.spread_type or "")
     # Credit spreads are net short the near leg → negative quantity.
-    short = str(t.spread_type or "").startswith(("bull_put", "bear_call", "iron"))
+    short = spread.startswith(("bull_put", "bear_call", "iron"))
     signed = -qty if short else qty
     strike = float(t.short_strike or 0) or 100.0
+    # Trade has no option_type column — derive from spread_type instead of
+    # the nonexistent field (was raising AttributeError on every real trade,
+    # silently swallowed by get_scenarios()'s try/except).
+    option_type = "call" if "call" in spread.lower() else "put"
     from datetime import date as _date
     dte = max(0, (t.expiration - _date.today()).days) if t.expiration else 0
     return {
         "symbol": t.underlying, "kind": "option",
-        "option_type": t.option_type or "put",
-        "spot": strike, "strike": strike, "dte_days": dte,
+        "option_type": option_type,
+        "spot": spot, "strike": strike, "dte_days": dte,
         "iv": spot_iv, "r": 0.04, "quantity": signed, "multiplier": 100,
     }
 
@@ -361,26 +389,54 @@ def _trade_to_scenario_position(t, spot_iv: float = 0.25) -> dict:
 @router.get("/scenarios")
 async def get_scenarios():
     """Stress the open book under the standard shock set (crash, vol spike, …)."""
+    import asyncio
+
+    from app.services import spot_price_cache
     from app.services.scenario_engine import run_all
+
     try:
         async with AsyncSessionLocal() as session:
             open_trades = (await session.execute(
                 select(Trade).where(Trade.status == "open")
             )).scalars().all()
-        positions = [_trade_to_scenario_position(t) for t in open_trades]
+
+        underlyings = sorted({t.underlying for t in open_trades})
+        excluded_symbols: list[dict] = []
+        sem = asyncio.Semaphore(5)
+
+        async def _resolve(symbol: str):
+            async with sem:
+                try:
+                    spot, _status = await spot_price_cache.get_spot(
+                        symbol, lambda: _fetch_spot(symbol)
+                    )
+                    return symbol, spot
+                except Exception as exc:
+                    excluded_symbols.append({"ticker": symbol, "reason": f"spot unavailable: {exc}"})
+                    return symbol, None
+
+        resolved = await asyncio.gather(*(_resolve(u) for u in underlyings))
+        spot_by_underlying = {sym: spot for sym, spot in resolved if spot is not None}
+
+        positions = [
+            _trade_to_scenario_position(t, spot_by_underlying[t.underlying])
+            for t in open_trades if t.underlying in spot_by_underlying
+        ]
+        result = run_all(positions, capital=settings.starting_capital)
+        result["excluded_symbols"] = excluded_symbols
+        return result
     except Exception as exc:
         return {"error": str(exc), "scenarios": [], "worst_scenario": None, "worst_pnl": 0.0}
-    return run_all(positions, capital=settings.starting_capital)
 
 
 @router.get("/var")
 async def get_var(confidence: float = 0.95, horizon_days: int = 1):
     """Parametric (delta-vega-normal) portfolio VaR / Expected Shortfall."""
+    from app.services import spot_price_cache
     from app.services.portfolio_risk_sim import portfolio_var
 
     net_delta = net_vega = 0.0
     vol = 0.18
-    spot = 450.0
     try:
         from app.main import _greeks_tracker, _current_regime
         if _greeks_tracker:
@@ -402,8 +458,21 @@ async def get_var(confidence: float = 0.95, horizon_days: int = 1):
     except Exception:
         pv = settings.starting_capital
 
-    return portfolio_var(net_delta, net_vega, spot, vol, pv,
-                         confidence=confidence, horizon_days=horizon_days)
+    try:
+        spot, spot_status = await spot_price_cache.get_spot("SPY", lambda: _fetch_spot("SPY"))
+    except Exception as exc:
+        return {
+            "available": False, "reason": f"spot price unavailable: {exc}",
+            "confidence": confidence, "horizon_days": horizon_days,
+            "var": None, "expected_shortfall": None, "var_pct": None, "es_pct": None,
+        }
+
+    result = portfolio_var(net_delta, net_vega, spot, vol, pv,
+                            confidence=confidence, horizon_days=horizon_days)
+    return {
+        "available": True, "spot_price": spot, "spot_source": "SPY",
+        "spot_data_status": spot_status, **result,
+    }
 
 
 @router.get("/margin")

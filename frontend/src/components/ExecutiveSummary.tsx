@@ -70,8 +70,15 @@ interface MetaDecision {
 interface MetaResp { regime: string | null; decisions: MetaDecision[]; active_strategies: string[]; }
 interface AllocResp { method: string; weights: Record<string, number>; cash_weight: number; regime?: string; }
 interface ScenarioRow { scenario: string; portfolio_pnl: number; portfolio_pnl_pct: number | null; }
-interface ScenariosResp { scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number; }
-interface VarResp { var: number; expected_shortfall: number; var_pct: number | null; es_pct: number | null; confidence: number; }
+interface ScenariosResp {
+  scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number;
+  excluded_symbols?: { ticker: string; reason: string }[];
+}
+interface VarResp {
+  available?: boolean; reason?: string;
+  var: number | null; expected_shortfall: number | null; var_pct: number | null; es_pct: number | null;
+  confidence: number; spot_price?: number; spot_source?: string; spot_data_status?: string;
+}
 interface HealthDetail {
   scanner: { alive: boolean; last_tick_age_seconds: number | null };
   observability: { counters: Record<string, number>; uptime_seconds: number };
@@ -422,10 +429,15 @@ export default function ExecutiveSummary() {
       {/* Stress scenarios + parametric VaR */}
       <div className="exec-card">
         <PanelHead icon="risk" title="Stress & VaR"
-          right={varRep && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+          right={varRep && varRep.available !== false && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             VaR {Math.round((varRep.confidence ?? 0) * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var ?? 0).toLocaleString()}</b>
             {varRep.var_pct != null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall ?? 0).toLocaleString()}
           </span>} />
+        {varRep && varRep.available === false && (
+          <div style={{ padding: "8px 14px", fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--amber)", borderBottom: "1px solid var(--line-dim)" }}>
+            VaR unavailable{varRep.reason ? ` — ${varRep.reason}` : ""}.
+          </div>
+        )}
         {scen && (scen.scenarios?.length ?? 0) > 0
           ? scen.scenarios.map(r => (
             <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 14px",
