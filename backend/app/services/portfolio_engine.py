@@ -26,6 +26,12 @@ SECTORS: dict[str, str] = {
 HEAT_ELEVATED = 0.30   # >30% of capital at risk
 HEAT_HIGH = 0.50       # >50% of capital at risk
 
+# Correlation Clusters — positions whose daily returns move together enough
+# to behave as one concentrated position rather than diversified risk.
+CORRELATION_THRESHOLD = 0.70    # signed, not abs() — see compute_correlation_clusters
+CORRELATION_MIN_BARS = 30       # matches equity_signal_engine.compute_indicators' own cutoff
+CORRELATION_MAX_CLUSTER_PCT = 0.40
+
 
 def sector_for(ticker: str) -> str:
     return SECTORS.get((ticker or "").upper(), "Unknown")
@@ -105,3 +111,151 @@ def position_risk_dollars(trade) -> float:
     long_k = float(getattr(trade, "long_strike", 0) or 0)
     width = abs(short_k - long_k)
     return round(max(width - credit, 0.0) * 100 * qty, 2)
+
+
+def align_price_series(
+    bars_by_ticker: dict[str, list],
+    min_bars: int = CORRELATION_MIN_BARS,
+) -> tuple[dict[str, list[float]], list[dict]]:
+    """
+    bars_by_ticker: {ticker: [Bar, ...]} (Bar has .timestamp, .close).
+    Drops tickers with fewer than min_bars, then intersects the remaining
+    tickers' calendar dates so every series is equal-length and aligned
+    day-for-day (not just truncated to a common length, which could pair
+    up unrelated dates across tickers with different missing sessions).
+    Returns (aligned_closes, excluded) where excluded is
+    [{"ticker": str, "reason": str}, ...].
+    """
+    excluded: list[dict] = []
+    by_date: dict[str, dict] = {}
+    for ticker, bars in bars_by_ticker.items():
+        if len(bars) < min_bars:
+            excluded.append({
+                "ticker": ticker,
+                "reason": f"only {len(bars)} bars, need >= {min_bars}",
+            })
+            continue
+        by_date[ticker] = {b.timestamp.date(): float(b.close) for b in bars}
+
+    if len(by_date) < 2:
+        return {}, excluded
+
+    common_dates = set.intersection(*(set(d.keys()) for d in by_date.values()))
+    if len(common_dates) < min_bars:
+        for ticker in by_date:
+            excluded.append({
+                "ticker": ticker,
+                "reason": f"only {len(common_dates)} overlapping trading days, need >= {min_bars}",
+            })
+        return {}, excluded
+
+    ordered_dates = sorted(common_dates)
+    aligned = {
+        ticker: [dates[d] for d in ordered_dates]
+        for ticker, dates in by_date.items()
+    }
+    return aligned, excluded
+
+
+def compute_correlation_clusters(
+    aligned_closes: dict[str, list[float]],
+    threshold: float = CORRELATION_THRESHOLD,
+) -> dict:
+    """
+    aligned_closes: {ticker: [close, ...]} — equal length, already aligned
+    (see align_price_series). Computes daily-return Pearson correlation and
+    groups tickers into clusters via union-find over pairs whose *signed*
+    correlation is >= threshold (negative correlation is hedging, not
+    concentration, and must never be treated as a cluster edge).
+    """
+    import pandas as pd
+
+    tickers = sorted(aligned_closes.keys())
+    if len(tickers) < 2:
+        return {
+            "tickers": tickers,
+            "correlation_matrix": {},
+            "clusters": [],
+            "threshold": threshold,
+        }
+
+    returns = pd.DataFrame({t: aligned_closes[t] for t in tickers}).pct_change().dropna()
+    corr = returns.corr()
+    correlation_matrix = {
+        row: {col: round(float(corr.loc[row, col]), 4) for col in tickers}
+        for row in tickers
+    }
+
+    parent = {t: t for t in tickers}
+
+    def find(t):
+        while parent[t] != t:
+            parent[t] = parent[parent[t]]
+            t = parent[t]
+        return t
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i, a in enumerate(tickers):
+        for b in tickers[i + 1:]:
+            if corr.loc[a, b] >= threshold:
+                union(a, b)
+
+    groups: dict[str, list[str]] = {}
+    for t in tickers:
+        groups.setdefault(find(t), []).append(t)
+
+    clusters = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        pairs = [
+            corr.loc[a, b]
+            for i, a in enumerate(members)
+            for b in members[i + 1:]
+        ]
+        avg_corr = round(float(sum(pairs) / len(pairs)), 4) if pairs else 0.0
+        clusters.append({"tickers": sorted(members), "avg_correlation": avg_corr})
+
+    clusters.sort(key=lambda c: -c["avg_correlation"])
+
+    return {
+        "tickers": tickers,
+        "correlation_matrix": correlation_matrix,
+        "clusters": clusters,
+        "threshold": threshold,
+    }
+
+
+def cluster_concentration_flags(
+    clusters: list[dict],
+    risk_dollars_by_underlying: dict[str, float],
+    capital: float,
+    max_cluster_pct: float = CORRELATION_MAX_CLUSTER_PCT,
+) -> tuple[list[dict], list[str]]:
+    """
+    Enriches each cluster with combined_risk_dollars/pct_of_capital and
+    emits a concentration flag string (matching this file's existing
+    "underlying_concentration:"/"sector_concentration:" format) for any
+    cluster whose combined risk exceeds max_cluster_pct of capital.
+    """
+    cap = float(capital) if capital and capital > 0 else 0.0
+    enriched: list[dict] = []
+    flags: list[str] = []
+
+    for cluster in clusters:
+        combined = round(
+            sum(float(risk_dollars_by_underlying.get(t, 0.0) or 0.0) for t in cluster["tickers"]),
+            2,
+        )
+        pct = (combined / cap) if cap > 0 else 0.0
+        entry = {**cluster, "combined_risk_dollars": combined, "pct_of_capital": round(pct * 100, 2)}
+        enriched.append(entry)
+        if cap > 0 and pct > max_cluster_pct:
+            joined = "+".join(cluster["tickers"])
+            flags.append(f"correlation_concentration:{joined} {pct:.0%}>{max_cluster_pct:.0%}")
+
+    return enriched, flags

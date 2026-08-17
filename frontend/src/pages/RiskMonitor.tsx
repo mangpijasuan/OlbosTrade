@@ -34,6 +34,24 @@ interface HeatInfo {
   exposure_by_sector?: Record<string, number>;
 }
 
+interface CorrelationCluster {
+  tickers: string[];
+  avg_correlation: number;
+  combined_risk_dollars: number;
+  pct_of_capital: number;
+}
+interface CorrelationResp {
+  status: "ok" | "insufficient_data" | "error";
+  reason?: string;
+  error?: string;
+  tickers: string[];
+  correlation_matrix: Record<string, Record<string, number>> | null;
+  clusters: CorrelationCluster[];
+  concentration_flags: string[];
+  excluded_symbols: { ticker: string; reason: string }[];
+  threshold: number;
+}
+
 function ExposureBreakdown({ title, exposure, capital }: {
   title: string; exposure: Record<string, number> | undefined; capital: number;
 }) {
@@ -60,6 +78,64 @@ function ExposureBreakdown({ title, exposure, capital }: {
     </div>
   );
 }
+function ClusterBreakdown({ clusters }: { clusters: CorrelationCluster[] }) {
+  if (clusters.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      {clusters.map(c => (
+        <div key={c.tickers.join("+")} style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--mono)", fontSize: 10.5 }}>
+          <span style={{ color: "var(--ink)", minWidth: 130, flexShrink: 0 }}>{c.tickers.join(" + ")}</span>
+          <div className="bar-track" style={{ flex: 1, height: 3 }}>
+            <div className="bar-fill" style={{ width: `${Math.min(c.pct_of_capital, 100)}%`, background: "var(--cyan)" }} />
+          </div>
+          <span style={{ color: "var(--ink-dim)", minWidth: 40, textAlign: "right", flexShrink: 0 }}>{c.pct_of_capital.toFixed(1)}%</span>
+          <span style={{ color: "var(--ink-faint)", minWidth: 70, textAlign: "right", flexShrink: 0 }}>${c.combined_risk_dollars.toFixed(0)}</span>
+          <span style={{ color: "var(--ink-faint)", minWidth: 46, textAlign: "right", flexShrink: 0 }}>r={c.avg_correlation.toFixed(2)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CorrelationMatrix({ matrix, threshold }: { matrix: Record<string, Record<string, number>>; threshold: number }) {
+  const tickers = Object.keys(matrix);
+  if (tickers.length === 0) return null;
+  return (
+    <div style={{ overflowX: "auto", marginTop: 12 }}>
+      <table className="mono" style={{ fontSize: 10, borderCollapse: "collapse", width: "100%" }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", padding: "3px 6px", color: "var(--ink-faint)" }} />
+            {tickers.map(t => (
+              <th key={t} style={{ textAlign: "right", padding: "3px 6px", color: "var(--ink-faint)" }}>{t}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tickers.map(row => (
+            <tr key={row}>
+              <td style={{ padding: "3px 6px", color: "var(--ink-dim)" }}>{row}</td>
+              {tickers.map(col => {
+                const v = matrix[row]?.[col] ?? 0;
+                const strong = row !== col && v >= threshold;
+                return (
+                  <td key={col} style={{
+                    textAlign: "right", padding: "3px 6px",
+                    color: row === col ? "var(--ink-faint)" : strong ? "var(--amber)" : "var(--ink)",
+                    fontWeight: strong ? 600 : 400,
+                  }}>
+                    {v.toFixed(2)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const HEAT_COLOR = { ok: "var(--green)", elevated: "var(--amber)", high: "var(--red)" } as const;
 
 export default function RiskMonitor() {
@@ -70,6 +146,8 @@ export default function RiskMonitor() {
   const [scen, setScen] = useState<ScenariosResp | null>(null);
   const [varRep, setVarRep] = useState<VarResp | null>(null);
   const [heat, setHeat] = useState<HeatInfo | null>(null);
+  const [corr, setCorr] = useState<CorrelationResp | null>(null);
+  const [corrError, setCorrError] = useState(false);
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
@@ -98,6 +176,23 @@ export default function RiskMonitor() {
     };
     load();
     const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Own poll loop, not folded into the shared Promise.allSettled above: this
+  // fetch does a live yfinance call per ticker (slow/occasionally flaky),
+  // and it would be wrong to mark the cheap DB-only sections as errored
+  // whenever yfinance is merely slow. 2 minutes matches how slowly
+  // correlation actually changes.
+  useEffect(() => {
+    const loadCorr = () => {
+      fetch("/api/portfolio/correlation")
+        .then(r => r.json())
+        .then(d => { setCorr(d); setCorrError(false); })
+        .catch(() => setCorrError(true));
+    };
+    loadCorr();
+    const t = setInterval(loadCorr, 120000);
     return () => clearInterval(t);
   }, []);
 
@@ -434,6 +529,56 @@ export default function RiskMonitor() {
           )}
         </Section>
       </div>
+
+      <Section title="Correlation Clusters" action={corr && (
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+          threshold {(corr.threshold ?? 0.7).toFixed(2)} · 60d lookback
+        </span>
+      )}>
+        {corr ? (
+          corr.status === "ok" ? (
+            <div style={{ padding: "14px 16px" }}>
+              {corr.clusters.length > 0 ? (
+                <ClusterBreakdown clusters={corr.clusters} />
+              ) : (
+                <div className="mono" style={{ fontSize: 11, color: "var(--ink-faint)" }}>
+                  No clusters at or above the {(corr.threshold ?? 0.7).toFixed(2)} threshold — positions are not
+                  meaningfully correlated.
+                </div>
+              )}
+              {corr.concentration_flags.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+                  {corr.concentration_flags.map(f => (
+                    <span key={f} className="mono" style={{ fontSize: 10, color: "var(--amber)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 3, padding: "2px 8px" }}>{f}</span>
+                  ))}
+                </div>
+              )}
+              {corr.correlation_matrix && <CorrelationMatrix matrix={corr.correlation_matrix} threshold={corr.threshold ?? 0.7} />}
+              {corr.excluded_symbols.length > 0 && (
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 3 }}>
+                  {corr.excluded_symbols.map(x => (
+                    <div key={x.ticker} className="mono" style={{ fontSize: 10, color: "var(--amber)" }}>
+                      {x.ticker} excluded — {x.reason}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : corr.status === "insufficient_data" ? (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              Not enough data for correlation clustering{corr.reason ? ` (${corr.reason})` : ""}.
+            </div>
+          ) : (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+              Failed to load correlation data{corr.error ? `: ${corr.error}` : ""}.
+            </div>
+          )
+        ) : (
+          <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: corrError ? "var(--red)" : "var(--ink-faint)" }}>
+            {corrError ? "Failed to load correlation data." : "Loading…"}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }
