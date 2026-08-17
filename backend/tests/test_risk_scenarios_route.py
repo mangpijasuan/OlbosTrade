@@ -37,13 +37,16 @@ def _reset_spot_cache():
 
 
 @pytest.mark.asyncio
-async def test_zero_positions_returns_empty_scenarios():
+async def test_zero_positions_returns_zero_pnl_scenarios():
     from app.api.routes import risk as risk_mod
 
     with patch("app.api.routes.risk.AsyncSessionLocal", return_value=_trades_session([])):
         out = await risk_mod.get_scenarios()
 
-    assert out["scenarios"] == []
+    # run_all() always returns one entry per shock (zero P&L with no
+    # positions) — not an empty list; excluded_symbols is what's empty here.
+    assert len(out["scenarios"]) > 0
+    assert all(s["portfolio_pnl"] == 0 for s in out["scenarios"])
     assert out["excluded_symbols"] == []
 
 
