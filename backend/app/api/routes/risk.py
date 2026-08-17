@@ -361,21 +361,36 @@ async def _fetch_spot(symbol: str) -> float:
 
 def _trade_to_scenario_position(t, spot: float, spot_iv: float = 0.25) -> dict:
     """
-    Turn a stored options trade into a scenario position using its real
-    live spot (caller resolves this per-underlying). IV/rate stay flat —
+    Turn a stored trade into a scenario position using its real live spot
+    (caller resolves this per-underlying). IV/rate stay flat for options —
     real per-position IV needs a live options-chain lookup, deliberately
     deferred (same reasoning as Alerts' unwired iv_rank/iv_percentile).
+
+    spread_type is "equity_long"/"equity_short" for equity trades, or
+    "call"/"put" for options — never a strategy name (that's t.strategy).
+    Same equity-vs-option detection convention as position_risk_dollars()
+    in portfolio_engine.py.
     """
+    spread_type = (getattr(t, "spread_type", "") or "").lower()
+    is_equity = (getattr(t, "strategy", "") == "equity") or spread_type.startswith("equity")
     qty = int(t.quantity or 1)
-    spread = str(t.spread_type or "")
-    # Credit spreads are net short the near leg → negative quantity.
-    short = spread.startswith(("bull_put", "bear_call", "iron"))
+
+    if is_equity:
+        # Direction lives in the string, not quantity sign — same
+        # convention trade_recorder.py/trade_desk.py/main.py already use.
+        signed = -qty if spread_type == "equity_short" else qty
+        return {
+            "symbol": t.underlying, "kind": "equity",
+            "spot": spot, "quantity": signed, "multiplier": 1,
+        }
+
+    # Options: spread_type is "call"/"put" here, not a strategy-name
+    # string — this short/long derivation is a pre-existing approximation
+    # (single synthetic leg from short_strike only) left unchanged.
+    short = spread_type.startswith(("bull_put", "bear_call", "iron"))
     signed = -qty if short else qty
     strike = float(t.short_strike or 0) or 100.0
-    # Trade has no option_type column — derive from spread_type instead of
-    # the nonexistent field (was raising AttributeError on every real trade,
-    # silently swallowed by get_scenarios()'s try/except).
-    option_type = "call" if "call" in spread.lower() else "put"
+    option_type = "call" if spread_type.startswith("c") else "put"
     from datetime import date as _date
     dte = max(0, (t.expiration - _date.today()).days) if t.expiration else 0
     return {

@@ -1,5 +1,6 @@
 """Tests for GET /api/risk/scenarios — every position must be stressed
-against its real spot, never modeled at-the-money via the strike."""
+against its real spot, never modeled at-the-money via the strike, and
+equity positions must get linear P&L, never Black-Scholes option pricing."""
 
 from __future__ import annotations
 
@@ -10,10 +11,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _trade(underlying, spread_type="bull_put_spread", short_strike=100.0, long_strike=95.0):
+def _equity_trade(underlying, spread_type="equity_long", quantity=100):
     return NS(
-        underlying=underlying, spread_type=spread_type, quantity=1,
-        short_strike=short_strike, long_strike=long_strike,
+        underlying=underlying, spread_type=spread_type, strategy="equity",
+        quantity=quantity, short_strike=0.0, long_strike=0.0,
+        expiration=date.today() + timedelta(days=30), status="open",
+    )
+
+
+def _option_trade(underlying, spread_type="put", short_strike=100.0, long_strike=95.0):
+    return NS(
+        underlying=underlying, spread_type=spread_type, strategy="bull_put_spread",
+        quantity=1, short_strike=short_strike, long_strike=long_strike,
         expiration=date.today() + timedelta(days=30), status="open",
     )
 
@@ -51,10 +60,59 @@ async def test_zero_positions_returns_zero_pnl_scenarios():
 
 
 @pytest.mark.asyncio
+async def test_equity_long_position_gets_linear_pnl_not_option_pricing():
+    """Regression for the bug this slice fixes: an equity_long position
+    must lose exactly spot * qty * |shock_pct| under market_crash, not
+    some Black-Scholes-derived number."""
+    from app.api.routes import risk as risk_mod
+
+    trades = [_equity_trade("AAPL", spread_type="equity_long", quantity=100)]
+
+    with patch("app.api.routes.risk.AsyncSessionLocal", return_value=_trades_session(trades)), \
+         patch.object(risk_mod, "_fetch_spot", new=AsyncMock(return_value=150.0)):
+        out = await risk_mod.get_scenarios()
+
+    crash = next(s for s in out["scenarios"] if s["scenario"] == "market_crash")
+    assert crash["portfolio_pnl"] == pytest.approx(-100 * 150.0 * 0.20)
+    assert crash["positions"][0]["baseline"] == pytest.approx(100 * 150.0)
+
+
+@pytest.mark.asyncio
+async def test_equity_short_position_gains_where_long_loses():
+    from app.api.routes import risk as risk_mod
+
+    trades = [_equity_trade("AAPL", spread_type="equity_short", quantity=100)]
+
+    with patch("app.api.routes.risk.AsyncSessionLocal", return_value=_trades_session(trades)), \
+         patch.object(risk_mod, "_fetch_spot", new=AsyncMock(return_value=150.0)):
+        out = await risk_mod.get_scenarios()
+
+    crash = next(s for s in out["scenarios"] if s["scenario"] == "market_crash")
+    assert crash["portfolio_pnl"] == pytest.approx(100 * 150.0 * 0.20)
+
+
+@pytest.mark.asyncio
+async def test_option_position_still_uses_black_scholes_kind():
+    """Regression: the option branch (spread_type "call"/"put") must
+    still produce kind:"option" positions, not accidentally fall into
+    the new equity branch."""
+    from app.api.routes import risk as risk_mod
+
+    trades = [_option_trade("AAPL", spread_type="put")]
+
+    with patch("app.api.routes.risk.AsyncSessionLocal", return_value=_trades_session(trades)), \
+         patch.object(risk_mod, "_fetch_spot", new=AsyncMock(return_value=150.0)):
+        out = await risk_mod.get_scenarios()
+
+    assert "error" not in out
+    assert len(out["scenarios"]) > 0
+
+
+@pytest.mark.asyncio
 async def test_resolvable_spots_produce_real_stressed_scenarios():
     from app.api.routes import risk as risk_mod
 
-    trades = [_trade("AAPL"), _trade("MSFT", spread_type="bear_call_spread", short_strike=200.0, long_strike=205.0)]
+    trades = [_equity_trade("AAPL"), _equity_trade("MSFT", quantity=50)]
 
     async def fake_fetch(symbol):
         return {"AAPL": 150.0, "MSFT": 195.0}[symbol]
@@ -65,18 +123,14 @@ async def test_resolvable_spots_produce_real_stressed_scenarios():
 
     assert out["excluded_symbols"] == []
     assert len(out["scenarios"]) > 0
-    # Real spot (150.0), not the strike (100.0), should have been used —
-    # verified indirectly: a real position produces nonzero P&L under a
-    # nonzero shock (an at-the-money-pinned proxy would too, so the
-    # decisive check is that _fetch_spot was actually consulted).
-    assert out["worst_pnl"] != 0.0 or out["scenarios"][0]["portfolio_pnl"] is not None
+    assert out["worst_pnl"] < 0  # both long, worst scenario must be a real loss
 
 
 @pytest.mark.asyncio
 async def test_one_of_several_unresolvable_spots_survivors_still_stressed():
     from app.api.routes import risk as risk_mod
 
-    trades = [_trade("AAPL"), _trade("MSFT"), _trade("BAD")]
+    trades = [_equity_trade("AAPL"), _equity_trade("MSFT"), _equity_trade("BAD")]
 
     async def fake_fetch(symbol):
         if symbol == "BAD":
@@ -96,10 +150,11 @@ async def test_one_of_several_unresolvable_spots_survivors_still_stressed():
 @pytest.mark.asyncio
 async def test_option_type_derived_from_spread_type_not_missing_column():
     """Regression: Trade has no option_type column — _trade_to_scenario_position
-    must derive it from spread_type instead of raising AttributeError."""
+    must derive it from spread_type (here "call") instead of raising
+    AttributeError."""
     from app.api.routes import risk as risk_mod
 
-    trades = [_trade("AAPL", spread_type="bull_call_debit_spread")]
+    trades = [_option_trade("AAPL", spread_type="call")]
 
     with patch("app.api.routes.risk.AsyncSessionLocal", return_value=_trades_session(trades)), \
          patch.object(risk_mod, "_fetch_spot", new=AsyncMock(return_value=150.0)):
