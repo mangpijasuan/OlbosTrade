@@ -26,7 +26,8 @@ jobs:
         run: >
           pytest tests/test_trade_frequency_controller.py tests/test_symphony.py
           tests/test_options_intelligence.py tests/test_performance_analytics.py
-          tests/test_portfolio_engine.py tests/test_strategy_health.py
+          tests/test_portfolio_engine.py tests/test_portfolio_correlation.py
+          tests/test_strategy_health.py
           tests/test_volatility_sizing.py tests/test_observability.py
           tests/test_research_lab.py tests/test_feature_store.py
           tests/test_strategy_registry.py tests/test_meta_strategy.py
