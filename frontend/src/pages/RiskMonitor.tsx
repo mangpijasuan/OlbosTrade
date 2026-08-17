@@ -26,6 +26,39 @@ interface HeatInfo {
   largest_underlying: string | null; largest_underlying_pct: number;
   largest_sector: string | null; largest_sector_pct: number;
   concentration_flags: string[];
+  capital: number;
+  // Full per-symbol/per-sector risk-dollar breakdown, sorted descending by
+  // the backend (portfolio_engine.py) — previously computed but only ever
+  // the single largest of each was ever rendered; the rest silently dropped.
+  exposure_by_underlying?: Record<string, number>;
+  exposure_by_sector?: Record<string, number>;
+}
+
+function ExposureBreakdown({ title, exposure, capital }: {
+  title: string; exposure: Record<string, number> | undefined; capital: number;
+}) {
+  const entries = Object.entries(exposure || {});
+  if (entries.length === 0) return null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="kicker" style={{ marginBottom: 6 }}>{title}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {entries.map(([name, dollars]) => {
+          const pct = capital > 0 ? (dollars / capital) * 100 : 0;
+          return (
+            <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--mono)", fontSize: 10.5 }}>
+              <span style={{ color: "var(--ink)", minWidth: 90, flexShrink: 0 }}>{name}</span>
+              <div className="bar-track" style={{ flex: 1, height: 3 }}>
+                <div className="bar-fill" style={{ width: `${Math.min(pct, 100)}%`, background: "var(--cyan)" }} />
+              </div>
+              <span style={{ color: "var(--ink-dim)", minWidth: 40, textAlign: "right", flexShrink: 0 }}>{pct.toFixed(1)}%</span>
+              <span style={{ color: "var(--ink-faint)", minWidth: 70, textAlign: "right", flexShrink: 0 }}>${dollars.toFixed(0)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 const HEAT_COLOR = { ok: "var(--green)", elevated: "var(--amber)", high: "var(--red)" } as const;
 
@@ -384,6 +417,8 @@ export default function RiskMonitor() {
                 <span>Sector: <b style={{ color: "var(--ink)" }}>{heat.largest_sector || "—"}</b></span>
                 <span>{heat.largest_sector_pct != null ? `${heat.largest_sector_pct.toFixed(1)}%` : "—"}</span>
               </div>
+              <ExposureBreakdown title="By Symbol" exposure={heat.exposure_by_underlying} capital={heat.capital} />
+              <ExposureBreakdown title="By Sector" exposure={heat.exposure_by_sector} capital={heat.capital} />
               {heat.concentration_flags?.length > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
                   {heat.concentration_flags.map(f => (
