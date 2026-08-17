@@ -12,8 +12,10 @@ import Strategy from "./Strategy";
 import SignalResearch from "./SignalResearch";
 import OptionsSignalHistory from "./OptionsSignalHistory";
 import StrategyHealthPanel from "./StrategyHealthPanel";
+import AlphaEdgePanel from "./AlphaEdgePanel";
 
 const TABS = [
+  { key: "alpha-edge", label: "Alpha Edge" },
   { key: "signals", label: "Live Signals" },
   { key: "history", label: "History" },
   { key: "strategies", label: "Strategy Library" },
@@ -40,7 +42,8 @@ export default function SignalsCenter({ initialTab = "signals" }: { initialTab?:
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} label="Signal views" />
       <ErrorBoundary label="Signals">
-        {tab === "signals" ? <EquitySignals />
+        {tab === "alpha-edge" ? <AlphaEdgePanel />
+          : tab === "signals" ? <EquitySignals />
           : tab === "history" ? <SignalsHistory />
           : tab === "health" ? <StrategyHealthPanel />
           : <Strategy />}

@@ -55,6 +55,6 @@ export interface SignalAttributionData {
    * rather than an explicit unavailable row, matching how stale/staleAfterMs
    * are treated as optional enrichment rather than core attribution.
    */
-  topPositiveFactors?: { feature: string; value: number; impact: number }[] | null;
-  topNegativeFactors?: { feature: string; value: number; impact: number }[] | null;
+  topPositiveFactors?: { feature: string; value?: number; impact: number }[] | null;
+  topNegativeFactors?: { feature: string; value?: number; impact: number }[] | null;
 }

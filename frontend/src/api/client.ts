@@ -144,6 +144,8 @@ export const api = {
   getStrategyProfile: (strategyId: string) => request(`/api/strategy/registry/${strategyId}`),
   getStrategyHealth: (minSample?: number) =>
     request(`/api/strategy/health${minSample != null ? `?min_sample=${minSample}` : ""}`),
+  getAlphaEdge: (ticker: string, assetType: "equity" | "options" = "equity") =>
+    request(`/api/alpha-edge/${encodeURIComponent(ticker)}?asset_type=${assetType}`),
   getStrategyPresets: (strategyId?: string) =>
     request(`/api/strategy${strategyId ? `/${strategyId}/presets` : "/presets"}`),
   getStrategySnapshots: (strategyId: string) => request(`/api/strategy/${strategyId}/snapshots`),

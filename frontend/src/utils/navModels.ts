@@ -33,6 +33,7 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
     { key: "options:flow",    label: "Options Flow", advanced: true },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
+    { key: "strat:alpha-edge", label: "Alpha Edge" },
     { key: "equity",           label: "Equity Signals" },
     { key: "options:signals",  label: "Options Signals" },
     { key: "strat:research",   label: "Signal Research" },
@@ -87,6 +88,7 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "trade:settings",  label: "Desk Settings", advanced: true },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
+    { key: "strat:alpha-edge", label: "Alpha Edge" },
     { key: "equity",        label: "Signal Center" },
     { key: "strat:research", label: "Signal Research" },
     { key: "strat:cards",   label: "Strategy Cards", advanced: true },

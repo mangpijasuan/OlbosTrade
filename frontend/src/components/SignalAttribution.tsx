@@ -70,7 +70,7 @@ function FactorList({
   tone,
 }: {
   label: string;
-  factors: { feature: string; value: number; impact: number }[];
+  factors: { feature: string; value?: number; impact: number }[];
   tone: string;
 }) {
   return (

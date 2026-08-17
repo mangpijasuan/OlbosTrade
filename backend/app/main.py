@@ -82,6 +82,7 @@ from app.api.routes import equity
 from app.api.routes import trade_desk
 from app.api.routes import symphony
 from app.api.routes import options
+from app.api.routes import alpha_edge
 from app.api.routes import options_flow
 from app.api.routes import income_matrix
 from app.api.routes import portfolio
@@ -176,6 +177,7 @@ MAX_REGIME_AGE_SECONDS = 2 * 60 * 60
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
+app.include_router(alpha_edge.router,  prefix="/api/alpha-edge",  tags=["Alpha Edge"])
 app.include_router(paper_trade.router, prefix="/api/paper-trade", tags=["Paper Trade"])
 app.include_router(market_data.router, prefix="/api/market",      tags=["Market Data"])
 app.include_router(risk.router,        prefix="/api/risk",         tags=["Risk"])

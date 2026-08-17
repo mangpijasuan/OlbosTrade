@@ -81,6 +81,7 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
 
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
   "strat:health":    () => <SignalsCenter initialTab="health" />,
+  "strat:alpha-edge": () => <SignalsCenter initialTab="alpha-edge" />,
   "strat:builder":   StrategyBuilder,
   "strat:alerts":    Alerts,
   "options:signals": OptionsSignals,
