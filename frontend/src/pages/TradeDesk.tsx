@@ -459,6 +459,23 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
     }
   };
 
+  // Same action, but for a broker position with no matching DB Trade row
+  // (e.g. a fill the app lost track of after an order-placement timeout) —
+  // keyed by symbol instead of a trade id, since there is no id.
+  const closeUntrackedPosition = async (symbol: string) => {
+    setClosingId(symbol);
+    setCloseMsg(null);
+    try {
+      const res: any = await api.closeUntrackedPosition(symbol);
+      setCloseMsg(`${symbol}: ${res.status === "filled" ? "closed" : `order ${res.status}`}`);
+      refresh();
+    } catch (e: any) {
+      setCloseMsg(`${symbol}: ${e?.message || "close failed"}`);
+    } finally {
+      setClosingId(null);
+    }
+  };
+
   // Command Overview's queue cards link out to specific workspaces — map its
   // V2-shaped tab keys onto this page's own tab set (no V2 shell involved).
   // Options has no in-page tab here (unlike V2's own Options Desk), so that
@@ -636,6 +653,12 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                 const pnl: number | null | undefined = p.unrealized_pnl;
                 const isEquity = p.spread_type === "equity_long" || p.spread_type === "equity_short";
                 const canClose = isEquity && !!p.id;
+                // A broker position with no matching DB Trade row (e.g. an
+                // order-placement timeout that filled after the app already
+                // gave up on it) — asset_type now comes from the broker's
+                // own contract type for these, not a DB field, so it's
+                // reliable even with no DB row to read.
+                const canCloseUntracked = p.tracked === false && !p.id && p.asset_type === "equity";
                 return (
                   <tr key={i}>
                     <td className="mono" style={{ color: "var(--ink)" }}>{p.symbol || p.underlying || "—"}</td>
@@ -658,6 +681,14 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                           holdMs={1200}
                           disabled={closingId === p.id}
                           onConfirm={() => closePosition(p.id, p.symbol || p.underlying || "?")}
+                        />
+                      ) : canCloseUntracked ? (
+                        <HoldToConfirmButton
+                          label="Hold to close"
+                          confirmingLabel="Closing"
+                          holdMs={1200}
+                          disabled={closingId === (p.symbol || p.underlying)}
+                          onConfirm={() => closeUntrackedPosition(p.symbol || p.underlying)}
                         />
                       ) : (
                         <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>

@@ -162,7 +162,17 @@ async def get_positions():
             "market_value":   market_value,
             "unrealized_pnl": unrealized_pnl,
             "strategy":       db.strategy if db else "unknown",
-            "asset_type":     "equity" if (spread_type or "").lower().startswith("equity") else "options",
+            # Tracked: derive from the DB's spread_type (trusted, already
+            # correct). Untracked: no DB row means spread_type is always
+            # None here, which silently defaulted to "options" for every
+            # untracked position regardless of its real asset class — use
+            # the broker's own reported asset_type instead (Position.
+            # asset_type, set from the live contract's secType).
+            "asset_type": (
+                ("equity" if (spread_type or "").lower().startswith("equity") else "options")
+                if db else
+                ("equity" if getattr(pos, "asset_type", "option") == "equity" else "options")
+            ),
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
             "spread_type":    spread_type,
             "hold_days":      max((date.today() - db.entry_date.date()).days, 0) if (db and db.entry_date) else None,

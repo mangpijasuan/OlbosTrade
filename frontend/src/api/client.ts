@@ -232,6 +232,15 @@ export const api = {
         ...(limitPrice != null ? { limit_price: limitPrice } : {}),
       }),
     }),
+  closeUntrackedPosition: (symbol: string, orderType: "market" | "limit" = "market", limitPrice?: number) =>
+    request("/api/trade-desk/close-untracked-position", {
+      method: "POST",
+      body: JSON.stringify({
+        symbol,
+        order_type: orderType,
+        ...(limitPrice != null ? { limit_price: limitPrice } : {}),
+      }),
+    }),
   getPendingApprovals: () => request("/api/trade-desk/pending"),
   approveSignal:       (id: string) =>
     request(`/api/trade-desk/approve/${id}`, { method: "POST" }),

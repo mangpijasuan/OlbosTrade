@@ -760,6 +760,89 @@ async def close_position(req: ClosePositionRequest):
     return entry
 
 
+class CloseUntrackedPositionRequest(BaseModel):
+    symbol: str
+    order_type: str = "market"
+    limit_price: Optional[float] = None
+
+
+@router.post("/close-untracked-position", dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def close_untracked_position(req: CloseUntrackedPositionRequest):
+    """
+    Close a live broker equity position that has no matching DB Trade row —
+    e.g. a fill the app lost track of after an order-placement timeout (the
+    coordinator's wait_for gives up on a shielded request that keeps running
+    and can still fill after the caller already treated it as failed).
+
+    Sourced entirely from the broker's own live position, not a DB row —
+    that's the only trusted source of truth here. If a DB Trade IS open for
+    this symbol, this is the wrong endpoint: use /close-position with its
+    trade_id instead, so the DB row's exit gets recorded and doesn't desync.
+
+    Equity only, same deliberate scope limit as /close-position — closing a
+    real 2-leg options position needs mirrored-spread submission logic.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    ticker = req.symbol.upper()
+
+    async with AsyncSessionLocal() as session:
+        existing = (await session.execute(
+            select(Trade).where(Trade.underlying == ticker, Trade.status == "open")
+        )).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            409,
+            f"{ticker} has an open, tracked Trade ({existing.id}) — "
+            "use POST /close-position with that trade_id instead.",
+        )
+
+    from app.broker.broker_factory import get_broker
+    broker = get_broker()
+    broker_positions = await broker.get_positions()
+    pos = next((p for p in broker_positions if p.symbol == ticker or p.underlying == ticker), None)
+    if pos is None or pos.quantity == 0:
+        raise HTTPException(404, f"No open broker position found for {ticker}")
+    if pos.asset_type != "equity":
+        raise HTTPException(
+            400,
+            f"{ticker} is an options position — close it directly with the broker for now.",
+        )
+
+    close_side = "SELL" if pos.quantity > 0 else "BUY"
+    qty = abs(int(pos.quantity))
+
+    cancelled = await broker.cancel_open_orders(ticker)
+
+    result = await ibkr_coordinator.submit(
+        Priority.P0,
+        lambda: broker.place_equity_order(
+            ticker=ticker, qty=qty, side=close_side,
+            order_type=req.order_type, limit_price=req.limit_price,
+        ),
+        req_type="PLACE_ORDER", symbol=ticker,
+    )
+
+    if result.status in ("cancelled", "rejected"):
+        raise HTTPException(502, f"Broker did not accept the close order: {result.status}")
+
+    entry = {
+        "trade_id":  None,
+        "ticker":    ticker,
+        "action":    close_side,
+        "quantity":  qty,
+        "order_id":  result.order_id,
+        "status":    result.status,
+        "cancelled_open_orders": cancelled,
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "closed_by": "manual_untracked",
+    }
+    await _log_execution(entry)
+    return entry
+
+
 # ── Execution log ──────────────────────────────────────────────────────────────
 
 @router.get("/execution-log")

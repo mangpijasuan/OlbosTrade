@@ -637,6 +637,7 @@ class IBKRClient(BrokerInterface):
                         avg_cost=Decimal(str(item.averageCost)),
                         current_price=current_price,
                         unrealized_pnl=unrealized_pnl,
+                        asset_type="option",
                     )
                 )
             else:
@@ -652,6 +653,7 @@ class IBKRClient(BrokerInterface):
                         avg_cost=Decimal(str(item.averageCost)),
                         current_price=current_price,
                         unrealized_pnl=unrealized_pnl,
+                        asset_type="equity",
                     )
                 )
         return positions

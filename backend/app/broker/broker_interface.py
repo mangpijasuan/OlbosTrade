@@ -104,6 +104,12 @@ class Position(BaseModel):
     current_price: Optional[Decimal] = None
     unrealized_pnl: Optional[Decimal] = None
     greeks: Optional[Greeks] = None
+    # Explicit, broker-reported asset class — do not infer this from
+    # strike==0 (the equity/ETF branch's placeholder value) downstream,
+    # that placeholder is indistinguishable from a genuine degenerate
+    # option and was the root cause of untracked equity positions
+    # displaying as "OPTIONS" in the Positions UI.
+    asset_type: Literal["equity", "option"] = "option"
 
 
 class EquityPosition(BaseModel):
