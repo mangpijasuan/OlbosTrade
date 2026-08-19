@@ -232,7 +232,14 @@ class SignalScorer:
 
         # FIX #6: Uncertainty band check
         distance_from_threshold = raw_score - effective_threshold
-        uncertain = abs(distance_from_threshold) < UNCERTAINTY_BAND
+        # bool(...) — effective_threshold can come from a numpy-typed model
+        # metadata value; `float >= numpy.float64` yields numpy.bool_, which
+        # (unlike numpy.float64) is NOT a subclass of Python's bool and
+        # crashes FastAPI's jsonable_encoder wherever this ends up in a
+        # response (confirmed in production: every GET /api/options/signals
+        # 500'd once a numpy.bool_ landed in ScoreResult.approved/.uncertain
+        # via explain()'s evidence dict).
+        uncertain = bool(abs(distance_from_threshold) < UNCERTAINTY_BAND)
 
         # FIX #6: Reject if score is within the uncertainty band
         # A score of 0.67 (just above 0.65 threshold) is not a confident approval
@@ -245,7 +252,7 @@ class SignalScorer:
                 f"for confident approval."
             )
         else:
-            approved = raw_score >= effective_threshold
+            approved = bool(raw_score >= effective_threshold)
             rejection_reason = (
                 f"Score {raw_score:.3f} below threshold {effective_threshold:.2f}"
                 if not approved else None
