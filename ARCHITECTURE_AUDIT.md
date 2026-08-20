@@ -40,6 +40,33 @@ design / nginx).
 
 ---
 
+### Process note (2026-08-20, later same day) — `main` was red for 9 commits
+
+`backend-tests` failed on **every** push from `7cd5c70` (the identity-key
+commit) through `c87013d` — 9 commits, none of them checked with
+`gh run list` / `gh run watch` before the next one landed. `gh run list
+--branch main` shows the full red streak.
+
+**Cause:** not a production bug. `test_paper_trade_positions.py`'s
+`_broker_position()` helper builds a bare `MagicMock()` without setting
+`.asset_type`. A real `Position` always has it (`ibkr_client.py` /
+`alpaca_client.py` set it explicitly on every returned position), but a
+bare `MagicMock()` auto-vivifies `.asset_type` as a Mock object on access
+instead of raising `AttributeError` — so `getattr(pos, "asset_type",
+"option")`'s fallback default never fires, the `7cd5c70` identity-keying
+change silently mismatched, and the tracked-equity test fell through to
+the untracked branch. Fixed in `4c248ef`: the helper now sets a real
+`asset_type` per call site, matching the actual `Position` contract.
+
+**Ask:** run `gh run list --branch main --limit 1` (or watch the run) after
+every push to `main`, the same way this file's own "verify → commit → push
+→ CI → deploy → live-verify" pipeline already expects. A red `main` that
+nobody checks is how a real regression would ship unnoticed next time —
+this particular one happened to be test-only, but the next one might not
+be.
+
+---
+
 # Prior revision (2026-07-19)
 
 Date: 2026-07-19 (revision 2) · Read-only pass · Verified against actual code,
