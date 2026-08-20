@@ -1,24 +1,24 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:        #080e1a;
-  --bg-1:      #0a1220;
-  --bg-2:      #0d1526;
-  --bg-3:      #111e35;
-  --bg-4:      #162240;
-  --line:      rgba(212, 175, 55, 0.12);
-  --line-dim:  rgba(255,255,255,0.07);
-  --ink:       #e2e8f0;
-  --ink-dim:   #94a3b8;   /* brightened from #64748b — passes AA on dark */
-  --ink-faint: #64748b;   /* brightened from #334155 — table headers now legible */
+  --bg:        #070c14;
+  --bg-1:      #0a101c;
+  --bg-2:      #0e1624;
+  --bg-3:      #131c2e;
+  --bg-4:      #1a2538;
+  --line:      rgba(212, 175, 55, 0.18);
+  --line-dim:  rgba(255,255,255,0.09);
+  --ink:       #e8edf4;
+  --ink-dim:   #9aa8bc;
+  --ink-faint: #6b7a90;
   /* Brand gold — LOGO & brand chrome ONLY. Never P&L, prices, or metrics. */
   --brand:     #D4AF37;
   /* Interactive accent (blue) — links, focus rings, non-active affordances. */
   --accent:    #3b82f6;
   /* Solid slate fill for ACTIVE tabs/buttons (not a thin border). */
-  --fill-active: #1e293b;
+  --fill-active: #243044;
   /* Legacy aliases — kept so existing references resolve while screens migrate. */
   --cyan:      var(--accent);
   --cyan-dim:  rgba(59,130,246,0.12);
@@ -29,30 +29,32 @@
   --blue:      #3b82f6;
   --orange:    #f97316;
   --mono:      "JetBrains Mono", monospace;
-  --sans:      "Inter", system-ui, sans-serif;
+  --sans:      "IBM Plex Sans", system-ui, sans-serif;
 
-  /* Depth & motion — glass, glow, timing scale (Rule C). Glass is for
-     FLOATING/overlay surfaces only (modals, drawers, popovers) — never
-     blanket-applied to .panel, which would blur tabular P&L numbers in the
-     dense data grids. Glow reuses the EXISTING pos/neg/accent hues at low
-     opacity to add visual weight to breach/active states — not a new
-     saturated palette. --violet is a new semantic token for indicator/
-     telemetry accents, kept separate from --accent (interactive/copilot only)
-     so automation-status and interactive affordances never share a hue. Opt
-     in via .panel-interactive / component props — never blanket on .panel. */
-  --violet:      #8e7cfb;  /* matches CandlestickChart.tsx COLOR.vwap by convention — canvas can't consume var() */
+  /* Instrument console (skeuomorphic-lite) — crisp bezels, not soft/glass UI.
+     Highlight = top edge catching light; shade = bottom/right recess. */
+  --bevel-hi:     rgba(255,255,255,0.07);
+  --bevel-lo:     rgba(0,0,0,0.45);
+  --inset-well:   inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 var(--bevel-lo);
+  --raised-bezel: 0 1px 0 var(--bevel-hi), 0 2px 4px rgba(0,0,0,0.35),
+                  inset 0 1px 0 rgba(255,255,255,0.06);
+  --chassis-edge: 1px solid rgba(212, 175, 55, 0.22);
+  --rack-groove:  linear-gradient(180deg, #0a101c 0%, #121a2a 48%, #0a101c 100%);
+
+  /* Depth & motion — glass for FLOATING overlays only; never on .panel. */
+  --violet:      #8e7cfb;
   --violet-dim:  rgba(142,124,251,0.12);
   --violet-glow: rgba(142,124,251,0.35);
 
-  --glass-bg:     rgba(13,21,38,0.72);   /* translucent --bg-2 */
+  --glass-bg:     rgba(13,21,38,0.72);
   --glass-border: rgba(255,255,255,0.10);
   --glass-blur:   blur(14px);
 
-  --glow-pos:    0 0 12px rgba(34,197,94,0.35);
-  --glow-neg:    0 0 12px rgba(239,68,68,0.35);
-  --glow-active: 0 0 12px rgba(59,130,246,0.35);
-  --glow-violet: 0 0 12px rgba(142,124,251,0.35);
-  --shadow-md:   0 8px 26px rgba(0,0,0,0.35);   /* == .exec-card's existing hover shadow, promoted to a token */
+  --glow-pos:    0 0 10px rgba(34,197,94,0.28);
+  --glow-neg:    0 0 10px rgba(239,68,68,0.28);
+  --glow-active: 0 0 10px rgba(59,130,246,0.28);
+  --glow-violet: 0 0 10px rgba(142,124,251,0.28);
+  --shadow-md:   0 6px 18px rgba(0,0,0,0.4);
 
   --motion-fast: 0.14s ease;
   --motion-med:  0.22s ease;
@@ -60,7 +62,9 @@
 
 html { font-size: 14px; }
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(212,175,55,0.04), transparent 55%),
+    var(--bg);
   color: var(--ink);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -99,11 +103,14 @@ body {
   color: var(--ink);
 }
 
-/* Panel */
+/* Panel — instrument chassis: crisp edge + light top bevel (not soft UI). */
 .panel {
-  background: var(--bg-2);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
   border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  box-shadow: var(--raised-bezel);
   position: relative;
+  border-radius: 2px;
 }
 .panel-head {
   display: flex;
@@ -111,6 +118,8 @@ body {
   justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line-dim);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  box-shadow: inset 0 -1px 0 var(--bevel-lo);
 }
 
 /* Data cells — sans + tabular-nums (Rule B). Monospace is reserved for tickers. */
@@ -168,19 +177,37 @@ body {
 .t-table tr:last-child td { border-bottom: none; }
 .t-table tr:hover td { background: var(--bg-3); }
 
-/* Mode badge — solid colored fills, sans (Active-state rule). */
+/* Mode badge — physical indicator lamps */
 .mode-badge {
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  padding: 2px 8px;
-  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
 }
-.mode-badge.conservative { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
-.mode-badge.balanced     { background: rgba(59,130,246,0.15); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
-.mode-badge.aggressive   { background: rgba(249,115,22,0.15); color: var(--orange);border: 1px solid rgba(249,115,22,0.3); }
-.mode-badge.scalper      { background: rgba(239,68,68,0.15);  color: var(--red);  border: 1px solid rgba(239,68,68,0.3); }
+.mode-badge.conservative {
+  background: linear-gradient(180deg, rgba(34,197,94,0.28) 0%, rgba(34,197,94,0.12) 100%);
+  color: var(--green);
+  border: 1px solid rgba(34,197,94,0.45);
+}
+.mode-badge.balanced {
+  background: linear-gradient(180deg, rgba(59,130,246,0.28) 0%, rgba(59,130,246,0.12) 100%);
+  color: var(--accent);
+  border: 1px solid rgba(59,130,246,0.45);
+}
+.mode-badge.aggressive {
+  background: linear-gradient(180deg, rgba(249,115,22,0.28) 0%, rgba(249,115,22,0.12) 100%);
+  color: var(--orange);
+  border: 1px solid rgba(249,115,22,0.45);
+}
+.mode-badge.scalper {
+  background: linear-gradient(180deg, rgba(239,68,68,0.28) 0%, rgba(239,68,68,0.12) 100%);
+  color: var(--red);
+  border: 1px solid rgba(239,68,68,0.45);
+}
 
 /* Directional signal chips — do not reuse trading-style mode-badge classes. */
 .signal-badge {
@@ -223,21 +250,31 @@ body {
   .skeleton-shimmer { animation: none; opacity: 0.35; }
 }
 
-/* Btn — sans; ACTIVE gets a solid slate fill (not a thin border). */
+/* Btn — raised console key */
 .btn-t {
-  font-family: var(--sans);
-  font-size: 12px;
-  letter-spacing: 0.01em;
-  padding: 6px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 14px;
   border: 1px solid var(--line-dim);
-  background: transparent;
+  border-top-color: rgba(255,255,255,0.12);
+  border-bottom-color: rgba(0,0,0,0.35);
+  background: linear-gradient(180deg, #1a2538 0%, #121a2a 100%);
   color: var(--ink-dim);
   cursor: pointer;
-  transition: all 0.12s;
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
+  transition: border-color var(--motion-fast), color var(--motion-fast), background var(--motion-fast);
 }
-.btn-t:hover { border-color: var(--accent); color: var(--ink); }
-.btn-t.active { border-color: transparent; background: var(--fill-active); color: var(--ink); }
-.btn-t.danger { border-color: rgba(239,68,68,0.5); color: var(--red); }
+.btn-t:hover { border-color: var(--brand); color: var(--ink); }
+.btn-t:active { box-shadow: var(--inset-well); transform: translateY(1px); }
+.btn-t.active {
+  border-color: rgba(212,175,55,0.35);
+  background: linear-gradient(180deg, #2a3548 0%, var(--fill-active) 100%);
+  color: var(--ink);
+}
+.btn-t.danger { border-color: rgba(239,68,68,0.55); color: var(--red); }
 .btn-t.danger:hover { background: rgba(239,68,68,0.12); }
 .workspace-tab:hover { color: var(--ink); background: rgba(255,255,255,0.03); }
 
@@ -478,8 +515,85 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
 /* Slightly richer scrollbar on hover for the terminal feel */
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-dim); }
 
-/* Panel title gets a faint gold glow to lift the hierarchy */
-.panel-title { text-shadow: 0 0 10px var(--cyan-glow); }
+/* Panel titles stay crisp — no glow on dense data chrome */
+.panel-title { text-shadow: none; }
+
+/* ── Instrument console chrome (skeuomorphic-lite) ───────────────────────── */
+.instrument-ticker {
+  background: var(--rack-groove);
+  border-bottom: var(--chassis-edge);
+  box-shadow: inset 0 1px 0 var(--bevel-hi), 0 2px 0 rgba(0,0,0,0.25);
+}
+.instrument-status {
+  background: var(--rack-groove);
+  border-top: var(--chassis-edge);
+  box-shadow: inset 0 1px 0 var(--bevel-hi);
+}
+.instrument-rail {
+  background: linear-gradient(180deg, #101826 0%, #0c1320 100%);
+  border-bottom: 1px solid var(--line-dim);
+  border-top: 1px solid rgba(212,175,55,0.12);
+  box-shadow: var(--raised-bezel);
+}
+.instrument-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 12px;
+  min-width: 0;
+  border-right: 1px solid var(--line-dim);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 70%);
+  box-shadow: inset -1px 0 0 rgba(0,0,0,0.25);
+}
+.instrument-chip-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.instrument-chip-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.instrument-well {
+  background: #0a1018;
+  border: 1px solid var(--line-dim);
+  border-radius: 2px;
+  box-shadow: var(--inset-well);
+}
+.instrument-mode-card {
+  text-align: left;
+  padding: 12px;
+  cursor: pointer;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #161f30 0%, #101826 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(255,255,255,0.1);
+  box-shadow: var(--raised-bezel);
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.instrument-mode-card:hover { border-color: rgba(212,175,55,0.35); }
+.instrument-mode-card.is-active {
+  border-color: rgba(212,175,55,0.45);
+  box-shadow: var(--raised-bezel), inset 0 0 0 1px rgba(212,175,55,0.12);
+}
+.instrument-halt {
+  border: 1px solid rgba(239,68,68,0.45) !important;
+  border-top-color: rgba(255,180,180,0.25) !important;
+  background: linear-gradient(180deg, #2a1518 0%, #1a0e10 100%) !important;
+  box-shadow: var(--raised-bezel) !important;
+  border-radius: 2px;
+  font-family: var(--mono) !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.instrument-halt.is-engaged {
+  background: linear-gradient(180deg, #5a1818 0%, #2a0c0c 100%) !important;
+  box-shadow: var(--raised-bezel), var(--glow-neg) !important;
+}
 
 /* ── Chart Workstation layout ─────────────────────────────────────────────
    Three columns: compact Market Watch / Positions on the left, the chart

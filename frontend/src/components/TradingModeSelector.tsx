@@ -53,16 +53,16 @@ export default function TradingModeSelector() {
           const color = COLOR[info.ui_color] || "var(--accent)";
           const active = info.is_active;
           return (
-            <button key={key} onClick={() => handleSelect(key, info)}
+            <button
+              key={key}
+              onClick={() => handleSelect(key, info)}
               disabled={!!switching}
+              className={`instrument-mode-card${active ? " is-active" : ""}`}
               style={{
-                textAlign: "left", padding: 12, cursor: active ? "default" : "pointer",
-                borderRadius: 6,
-                background: active ? "var(--fill-active)" : "var(--bg-3)",
-                border: `1px solid ${active ? color + "50" : "var(--line-dim)"}`,
-                borderLeft: `2px solid ${active ? color : "transparent"}`,
-                transition: "all 0.12s",
-              }}>
+                cursor: active ? "default" : "pointer",
+                borderLeft: `3px solid ${active ? color : "transparent"}`,
+              }}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: active ? color : "var(--ink)" }}>
                   {info.display_name}

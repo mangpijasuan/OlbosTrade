@@ -65,20 +65,17 @@ export default function KillSwitchButton({
           aria-label={engaged ? "Kill switch engaged" : "Engage kill switch"}
           disabled={busy}
           title={engaged ? "Kill switch is engaged" : "Engage kill switch"}
+          className={`instrument-halt${engaged ? " is-engaged" : ""}`}
           style={{
             width: "100%",
-            minHeight: 30,
+            minHeight: 32,
             display: "flex",
             alignItems: "center",
             justifyContent: expanded ? "space-between" : "center",
             gap: 8,
-            border: "1px solid transparent",
-            background: engaged ? "rgba(239,68,68,0.12)" : "transparent",
-            boxShadow: engaged ? "var(--glow-neg)" : "none",
             color: "var(--red)",
             cursor: engaged || busy ? "default" : "pointer",
             padding: expanded ? "0 8px" : 0,
-            fontFamily: "var(--sans)",
           }}
         >
           {expanded && (

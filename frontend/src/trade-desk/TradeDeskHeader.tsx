@@ -14,40 +14,11 @@ function Chip({ label, value, tone = "muted" }: Snap) {
     tone === "ok" ? "var(--green)" :
     tone === "warn" ? "var(--amber)" :
     tone === "crit" ? "var(--red)" :
-    "var(--ink-dim)";
+    "var(--ink)";
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        padding: "4px 10px",
-        borderRight: "1px solid var(--line-dim)",
-        minWidth: 0,
-      }}
-    >
-      <span
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 9,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--ink-faint)",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          fontWeight: 600,
-          color,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {value}
-      </span>
+    <div className="instrument-chip">
+      <span className="instrument-chip-label">{label}</span>
+      <span className="instrument-chip-value" style={{ color }}>{value}</span>
     </div>
   );
 }
@@ -166,12 +137,11 @@ export default function TradeDeskHeader() {
 
   return (
     <header
+      className="instrument-rail"
       style={{
         display: "flex",
         alignItems: "stretch",
         flexWrap: "wrap",
-        background: "var(--bg-2)",
-        borderBottom: "1px solid var(--line-dim)",
         flexShrink: 0,
       }}
       aria-label="Trade Desk status"

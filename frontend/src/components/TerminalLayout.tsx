@@ -348,9 +348,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
-    <div style={{
-      background: "var(--bg-3)",
-      borderBottom: "1px solid var(--line-dim)",
+    <div className="instrument-ticker" style={{
       display: "flex",
       alignItems: "center",
       height: 38,
@@ -739,10 +737,8 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
 function StatusBar({ page }: { page: string }) {
   const label = statusLabelForPage(page, activeNavModel());
   return (
-    <div style={{
+    <div className="instrument-status" style={{
       height: 28,
-      background: "var(--bg-3)",
-      borderTop: "1px solid var(--line-dim)",
       display: "flex",
       alignItems: "center",
       padding: "0 16px",
@@ -753,7 +749,7 @@ function StatusBar({ page }: { page: string }) {
       letterSpacing: "0.08em",
       flexShrink: 0,
     }}>
-      <span style={{ color: "var(--cyan)", textTransform: "uppercase" }}>{label}</span>
+      <span style={{ color: "var(--brand)", textTransform: "uppercase" }}>{label}</span>
       <span id="broker-status-bar">IBKR GATEWAY</span>
       <span>SPY · QQQ · IWM · NVDA · AAPL</span>
       <div style={{ flex: 1 }} />

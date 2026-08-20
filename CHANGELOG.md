@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Instrument console UI (skeuomorphic-lite)
+
+- Terminal chrome: raised bezels on panels/buttons, rack ticker + status bars,
+  instrument chips on Trade Desk header, physical-style kill + mode cards
+- Typography: IBM Plex Sans + JetBrains Mono (replaces Inter)
+- Explicitly not glass/neumorphism/clay — crisp console, high contrast
+
 ## Unreleased — Trading Style in Trade Desk V2
 
 - Desk Settings now includes Trading Style (Conservative / Balanced /
