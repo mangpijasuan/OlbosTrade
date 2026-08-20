@@ -135,13 +135,13 @@ export default function CopilotQueue() {
           {pending.map((s: any) => (
             <div
               key={s.id}
+              className="instrument-card"
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 16,
                 padding: "12px 16px",
-                borderBottom: "1px solid var(--line-dim)",
-                background: "var(--bg-2)",
+                margin: "6px 8px",
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>

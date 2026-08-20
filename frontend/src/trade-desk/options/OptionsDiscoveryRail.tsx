@@ -147,13 +147,12 @@ export default function OptionsDiscoveryRail({
                 key={s.id || `${s.ticker}-${s.generated_at}`}
                 type="button"
                 onClick={() => onSelect(s.ticker)}
+                className="instrument-card"
                 style={{
                   width: "100%",
                   textAlign: "left",
                   padding: "8px 10px",
-                  marginBottom: 4,
-                  border: "1px solid var(--line-dim)",
-                  background: "var(--bg-3)",
+                  marginBottom: 6,
                   cursor: "pointer",
                   fontFamily: "var(--mono)",
                 }}
@@ -179,13 +178,12 @@ export default function OptionsDiscoveryRail({
                 key={`${p.symbol || p.underlying}-${i}`}
                 type="button"
                 onClick={() => onSelect(p.underlying || p.symbol)}
+                className="instrument-card"
                 style={{
                   width: "100%",
                   textAlign: "left",
                   padding: "8px 10px",
-                  marginBottom: 4,
-                  border: "1px solid var(--line-dim)",
-                  background: "var(--bg-3)",
+                  marginBottom: 6,
                   cursor: "pointer",
                   fontFamily: "var(--mono)",
                 }}

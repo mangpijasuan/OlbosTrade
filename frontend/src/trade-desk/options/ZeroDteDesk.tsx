@@ -53,7 +53,7 @@ export default function ZeroDteDesk({ symbol }: { symbol: string }) {
           { label: "Underlying", value: symbol, tone: "var(--ink)" },
           { label: "Data", value: "Options flow tape", tone: "var(--ink-dim)" },
         ].map((c) => (
-          <div key={c.label} style={{ border: "1px solid var(--line-dim)", padding: "10px 12px", background: "var(--bg-3)" }}>
+          <div key={c.label} className="instrument-card" style={{ padding: "10px 12px" }}>
             <div style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
               {c.label.toUpperCase()}
             </div>

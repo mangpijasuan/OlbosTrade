@@ -166,12 +166,10 @@ function SignalCard({
   const block = deriveSignalBlockReason(sig, blockCtx);
 
   return (
-    <div style={{
-      background: "var(--bg-2)",
+    <div className="instrument-card" style={{
       border: `1px solid ${sig.action === "BUY" ? "rgba(34,197,94,0.25)" :
                             sig.action === "SELL" ? "rgba(239,68,68,0.25)" :
                             "var(--line-dim)"}`,
-      borderRadius: 6,
       padding: "14px 16px",
       display: "flex",
       flexDirection: "column",
@@ -417,9 +415,8 @@ function TopSignals({
   };
 
   return (
-    <div style={{
-      background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-      borderRadius: 6, padding: "14px 16px", display: "flex",
+    <div className="instrument-card" style={{
+      padding: "14px 16px", display: "flex",
       flexDirection: "column", gap: 12,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

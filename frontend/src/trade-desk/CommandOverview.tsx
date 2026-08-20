@@ -35,10 +35,9 @@ function QueueCard({
 
   return (
     <div
+      className="instrument-card"
       style={{
-        background: "var(--bg-2)",
         border: `1px solid ${border}`,
-        boxShadow: "var(--raised-bezel)",
         padding: primary ? "16px 18px" : "14px 16px",
         display: "flex",
         flexDirection: "column",
@@ -137,10 +136,8 @@ function ScoreCard({
 
   return (
     <div
+      className="instrument-card"
       style={{
-        background: "var(--bg-2)",
-        border: "1px solid var(--line-dim)",
-        boxShadow: "var(--raised-bezel)",
         padding: "14px 16px",
         display: "flex",
         flexDirection: "column",

@@ -92,7 +92,7 @@ export default function ExecutionMonitor() {
             Refresh
           </button>
         </div>
-        <div style={{ display: "flex", gap: 0, border: "1px solid var(--line-dim)" }}>
+        <div className="instrument-card" style={{ display: "flex", gap: 0, overflow: "hidden" }}>
           {(
             [
               ["Submitted", stats.submitted, "var(--green)"],
@@ -108,7 +108,6 @@ export default function ExecutionMonitor() {
                 flex: 1,
                 padding: "10px 14px",
                 borderRight: i < arr.length - 1 ? "1px solid var(--line-dim)" : undefined,
-                background: "var(--bg-2)",
               }}
             >
               <div className="kicker" style={{ marginBottom: 4 }}>

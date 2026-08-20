@@ -463,15 +463,18 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
 
 /* ── Executive / dashboard cards (Bloomberg-style) ───────────────────────── */
 .exec-card {
-  background: linear-gradient(180deg, var(--bg-2) 0%, rgba(8,14,26,0.55) 100%);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
   border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
   position: relative;
   overflow: hidden;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 .exec-card:hover {
   border-color: var(--line);
-  box-shadow: 0 8px 26px rgba(0,0,0,0.35);
+  box-shadow: var(--raised-bezel), var(--shadow-md);
   transform: translateY(-1px);
 }
 /* subtle accent tab, top-left — color follows --tab-color when a card sets
@@ -483,6 +486,24 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   height: 2px; width: 40px;
   background: var(--tab-color, var(--cyan));
   opacity: 0.5;
+}
+
+/* Instrument card — same raised chassis as Trade Desk Submitted queue.
+   Use for columns, queue tiles, signal cards, and desk wells. */
+.instrument-card {
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
+  position: relative;
+}
+.instrument-card--flat {
+  /* Nested wells inside a raised card — inset, not another lift. */
+  background: #0a1018;
+  border: 1px solid var(--line-dim);
+  border-radius: 2px;
+  box-shadow: var(--inset-well);
 }
 
 /* Opt-in hover-lift for Panel — generalizes .exec-card's existing hover

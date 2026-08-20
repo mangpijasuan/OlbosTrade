@@ -147,13 +147,12 @@ export default function EquityDiscoveryRail({
                   key={s.id || `${s.ticker}-${s.generated_at}`}
                   type="button"
                   onClick={() => onSelect(s.ticker)}
+                  className="instrument-card"
                   style={{
                     width: "100%",
                     textAlign: "left",
                     padding: "8px 10px",
-                    marginBottom: 4,
-                    border: "1px solid var(--line-dim)",
-                    background: "var(--bg-3)",
+                    marginBottom: 6,
                     cursor: "pointer",
                     fontFamily: "var(--mono)",
                   }}
@@ -188,13 +187,12 @@ export default function EquityDiscoveryRail({
                 key={`${p.symbol}-${p.entry_date || "x"}`}
                 type="button"
                 onClick={() => onSelect(p.symbol || p.underlying)}
+                className="instrument-card"
                 style={{
                   width: "100%",
                   textAlign: "left",
                   padding: "8px 10px",
-                  marginBottom: 4,
-                  border: "1px solid var(--line-dim)",
-                  background: "var(--bg-3)",
+                  marginBottom: 6,
                   cursor: "pointer",
                   fontFamily: "var(--mono)",
                 }}
