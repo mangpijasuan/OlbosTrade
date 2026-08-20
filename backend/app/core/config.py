@@ -168,6 +168,11 @@ class Settings(BaseSettings):
     execution_portfolio_gate: bool = Field(default=True)
     # Greeks delta/vega caps — OFF by default (miscalibrated for live spreads).
     execution_enforce_portfolio_greeks: bool = Field(default=False)
+    # When True and max concurrent positions is hit, close N equity positions
+    # (highest unrealized P&L, then lowest signal_score) to free a slot for a
+    # new equity entry. Off by default — money-path auto-close.
+    position_rotation_on_max: bool = Field(default=False)
+    position_rotation_closes: int = Field(default=2)
 
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)

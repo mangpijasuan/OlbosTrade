@@ -710,52 +710,23 @@ async def close_position(req: ClosePositionRequest):
             "close options spreads directly with the broker for now.",
         )
 
-    close_side = "SELL" if spread_type == "equity_long" else "BUY"
-    ticker = trade.underlying
-    qty = int(trade.quantity or 1)
-
     from app.broker.broker_factory import get_broker
+    from app.services.position_rotation import close_equity_trade
+
     broker = get_broker()
-
-    # Cancel the bracket's still-working stop/take-profit legs first — leaving
-    # them live after this close would be a dangling order with no position
-    # behind it, able to fire unexpectedly against a later trade in the same ticker.
-    cancelled = await broker.cancel_open_orders(ticker)
-
-    result = await ibkr_coordinator.submit(
-        Priority.P0,
-        lambda: broker.place_equity_order(
-            ticker=ticker, qty=qty, side=close_side,
-            order_type=req.order_type, limit_price=req.limit_price,
-        ),
-        req_type="PLACE_ORDER", symbol=ticker,
-    )
-
-    if result.status in ("cancelled", "rejected"):
-        raise HTTPException(502, f"Broker did not accept the close order: {result.status}")
-
-    if result.status == "filled" and result.fill_price is not None:
-        from app.services.trade_recorder import trade_recorder
-        await trade_recorder.record_exit(
-            trade_id=req.trade_id,
-            cost_to_close=float(result.fill_price),
-            exit_reason="manual",
+    try:
+        entry = await close_equity_trade(
+            trade,
+            broker=broker,
+            closed_by="manual",
+            order_type=req.order_type,
+            limit_price=req.limit_price,
         )
-    # else: order is working/pending — the existing fill reconciler (_poll_fills)
-    # detects the position disappearing from the broker and closes it out,
-    # same as it already does for automated bracket exits.
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    entry = {
-        "trade_id":  req.trade_id,
-        "ticker":    ticker,
-        "action":    close_side,
-        "quantity":  qty,
-        "order_id":  result.order_id,
-        "status":    result.status,
-        "cancelled_open_orders": cancelled,
-        "closed_at": datetime.now(timezone.utc).isoformat(),
-        "closed_by": "manual",
-    }
     await _log_execution(entry)
     return entry
 
@@ -996,10 +967,40 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # Step 8 — wires RiskManager + portfolio_engine into the live OMS path.
     # Greeks caps remain off unless execution_enforce_portfolio_greeks=true.
     # Rollback: execution_portfolio_gate=false.
+    # When max_positions would block an equity entry and position_rotation_on_max
+    # is enabled, close N equity positions (best P&L + lowest confidence) then
+    # re-check the gate.
+    from app.core.config import settings as _rot_cfg
     from app.services.execution_portfolio_gate import check_execution_portfolio
     portfolio_gate = await check_execution_portfolio(
         signal, portfolio_value=float(portfolio_state.current_value or 0),
     )
+    if (
+        not portfolio_gate.allowed
+        and "max_positions" in (portfolio_gate.flags or [])
+        and asset_type == "equity"
+        and getattr(_rot_cfg, "position_rotation_on_max", False)
+    ):
+        try:
+            from app.broker.broker_factory import get_broker
+            from app.services.position_rotation import rotate_for_new_equity_entry
+            _rot_broker = get_broker()
+            rotated = await rotate_for_new_equity_entry(
+                incoming_ticker=ticker,
+                broker=_rot_broker,
+                log_execution=_log_execution,
+            )
+            if rotated:
+                logger.info(
+                    "Position rotation freed %d slot(s) for %s: %s",
+                    len(rotated), ticker,
+                    [r.get("ticker") for r in rotated],
+                )
+                portfolio_gate = await check_execution_portfolio(
+                    signal, portfolio_value=float(portfolio_state.current_value or 0),
+                )
+        except Exception as _rot_exc:
+            logger.error("Position rotation failed for %s: %s", ticker, _rot_exc)
     if not portfolio_gate.allowed:
         logger.warning(
             "Portfolio gate blocked %s: %s flags=%s",

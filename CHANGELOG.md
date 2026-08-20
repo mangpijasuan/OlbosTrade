@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Position rotation at max concurrent
+
+- When `POSITION_ROTATION_ON_MAX=true` and max open positions blocks a new
+  **equity** entry, close N positions (default 2): highest unrealized P&L,
+  then lowest `signal_score` (oldest if scores missing). Skips the incoming
+  ticker; options closes deferred. Flag **off** by default.
+
 ## Unreleased — Trade Desk V2 default-on
 
 - Product defaults: `trade_desk_v2` + equity/options/copilot/execution/replay/
