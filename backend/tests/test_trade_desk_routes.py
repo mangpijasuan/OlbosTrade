@@ -3,6 +3,7 @@ and the options execution branch."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -419,6 +420,72 @@ async def test_options_record_failure_still_submits():
                new=AsyncMock(return_value=None)):
         res = await _execute_signal(_options_signal(), approved_by="manual")
     assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_options_place_order_timeout_records_pending_not_lost():
+    """The coordinator's wait_for can time out while the real IBKR call
+    (shielded, still running) later fills — this must not be a silent lost
+    fill: a pending Trade row has to get written so _poll_fills() can later
+    promote or cancel it, and the caller must see an honest result instead
+    of a generic error."""
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch.object(td.ibkr_coordinator, "submit",
+                      new=AsyncMock(side_effect=asyncio.TimeoutError("timed out"))), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-pending-1")) as record_mock:
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+
+    assert res["result"] == "pending_confirmation"
+    assert res["asset_type"] == "options"
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["status"] == "pending"
+    assert record_mock.await_args.kwargs["dispatch_id"] == "o1"
+
+
+@pytest.mark.asyncio
+async def test_options_place_order_timeout_and_record_failure_logs_critical():
+    """Belt-and-suspenders: even the pending-row write can fail (DB down) —
+    must not raise, just log critical, since a real order may be in flight
+    at the broker with zero remaining trace of it."""
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch.object(td.ibkr_coordinator, "submit",
+                      new=AsyncMock(side_effect=asyncio.TimeoutError("timed out"))), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value=None)):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+
+    assert res["result"] == "pending_confirmation"
+
+
+@pytest.mark.asyncio
+async def test_equity_place_order_timeout_records_pending_not_lost():
+    broker = MagicMock()
+    broker.get_latest_quote = AsyncMock(return_value=MagicMock(ask_price=150.5, bid_price=150.0))
+    sig = _equity_signal(source="equity_desk_composer", confidence=None, kelly_fraction=None)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch.object(td.ibkr_coordinator, "submit",
+                      new=AsyncMock(side_effect=asyncio.TimeoutError("timed out"))), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-pending-2")) as record_mock:
+        res = await _execute_signal(sig, approved_by="user")
+
+    assert res["result"] == "pending_confirmation"
+    assert res["asset_type"] == "equity"
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["status"] == "pending"
+    assert record_mock.await_args.kwargs["dispatch_id"] == "e1"
+    assert record_mock.await_args.kwargs["option_type"] == "equity_long"
 
 
 @pytest.mark.asyncio

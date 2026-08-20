@@ -1114,19 +1114,69 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     ticker, _q_exc,
                 )
 
-            result = await ibkr_coordinator.submit(
-                Priority.P0,
-                lambda: broker.place_equity_order(
-                    ticker=ticker,
-                    qty=shares,
-                    side=action,
-                    order_type=signal.get("order_type", "limit"),
-                    limit_price=entry_price,
-                    stop=trade_plan.get("stop_price"),
-                    take_profit=trade_plan.get("target_price"),
-                ),
-                req_type="PLACE_ORDER", symbol=ticker,
-            )
+            try:
+                result = await ibkr_coordinator.submit(
+                    Priority.P0,
+                    lambda: broker.place_equity_order(
+                        ticker=ticker,
+                        qty=shares,
+                        side=action,
+                        order_type=signal.get("order_type", "limit"),
+                        limit_price=entry_price,
+                        stop=trade_plan.get("stop_price"),
+                        take_profit=trade_plan.get("target_price"),
+                    ),
+                    req_type="PLACE_ORDER", symbol=ticker, timeout=150.0,
+                )
+            except asyncio.TimeoutError:
+                # The coordinator's wait_for gives up, but asyncio.shield()
+                # means the real IBKR call keeps running regardless — it can
+                # still fill seconds later with nothing here left to record
+                # it. Write the same pending row the normal path below would
+                # (dispatch_id falls back to signal["id"] exactly like the
+                # success path already does when result.order_id is
+                # unavailable) so the existing _poll_fills() reconciliation
+                # (main.py) promotes it to "open" once the position shows up
+                # live, or cancels it after the usual grace period if it
+                # never does — instead of the fill silently going untracked.
+                from app.services.trade_recorder import trade_recorder
+                equity_direction = "equity_short" if action.upper() == "SELL" else "equity_long"
+                recorded = await trade_recorder.record_fill(
+                    strategy="equity",
+                    underlying=ticker,
+                    option_type=equity_direction,
+                    short_strike=trade_plan.get("entry_price") or 0,
+                    long_strike=trade_plan.get("stop_price") or 0,
+                    expiration=date.today(),
+                    quantity=shares,
+                    entry_credit=trade_plan.get("entry_price") or 0,
+                    signal_score=signal.get("signal_score", 0),
+                    iv_rank=signal.get("iv_rank", 0),
+                    regime=signal.get("regime", "unknown"),
+                    approved_by=approved_by,
+                    dispatch_id=signal.get("id", ""),
+                    status="pending",
+                )
+                if recorded is None:
+                    logger.critical(
+                        "CRITICAL: equity order for %s timed out waiting on the broker "
+                        "AND the fallback pending-row write failed — position may be "
+                        "untracked. Immediate review required.", ticker,
+                    )
+                observability.incr("execute.timeout")
+                observability.event("timeout", ticker=ticker, asset_type="equity")
+                return {
+                    "signal_id":  signal.get("id"),
+                    "ticker":     ticker,
+                    "asset_type": "equity",
+                    "result":     "pending_confirmation",
+                    "note": (
+                        "Broker did not acknowledge in time; a pending position was "
+                        "recorded and will be confirmed or cancelled automatically "
+                        "once the broker responds."
+                    ),
+                    "executed_at": executed_at,
+                }
 
             # A terminated-unfilled order is NOT recorded — recording it would
             # create a phantom position the broker never opened.
@@ -1227,10 +1277,53 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 limit_price=limit_px,
                 time_in_force="DAY",
             )
-            result = await ibkr_coordinator.submit(
-                Priority.P0, lambda: broker.place_order(order),
-                req_type="PLACE_ORDER", symbol=ticker,
-            )
+            try:
+                result = await ibkr_coordinator.submit(
+                    Priority.P0, lambda: broker.place_order(order),
+                    req_type="PLACE_ORDER", symbol=ticker, timeout=150.0,
+                )
+            except asyncio.TimeoutError:
+                # Same lost-fill gap as the equity branch above — see that
+                # comment for the full asyncio.shield() explanation.
+                from app.services.trade_recorder import trade_recorder
+                recorded = await trade_recorder.record_fill(
+                    strategy=strategy,
+                    underlying=ticker,
+                    option_type=opt_type,
+                    short_strike=float(short_str),
+                    long_strike=float(long_str),
+                    expiration=expiry_date,
+                    quantity=quantity,
+                    entry_credit=credit_per_share,
+                    spread_width=abs(float(short_str) - float(long_str)),
+                    signal_score=signal.get("signal_score", 0),
+                    iv_rank=signal.get("iv_rank", 0),
+                    regime=signal.get("regime", "unknown"),
+                    approved_by=approved_by,
+                    dispatch_id=signal.get("id", ""),
+                    status="pending",
+                )
+                if recorded is None:
+                    logger.critical(
+                        "CRITICAL: options order for %s %s timed out waiting on the "
+                        "broker AND the fallback pending-row write failed — position "
+                        "may be untracked. Immediate review required.", strategy, ticker,
+                    )
+                observability.incr("execute.timeout")
+                observability.event("timeout", ticker=ticker, asset_type="options", strategy=strategy)
+                return {
+                    "signal_id":  signal.get("id"),
+                    "ticker":     ticker,
+                    "asset_type": "options",
+                    "strategy":   strategy,
+                    "result":     "pending_confirmation",
+                    "note": (
+                        "Broker did not acknowledge in time; a pending position was "
+                        "recorded and will be confirmed or cancelled automatically "
+                        "once the broker responds."
+                    ),
+                    "executed_at": executed_at,
+                }
 
             # A terminated-unfilled order is NOT recorded (no phantom position).
             if result.status in ("cancelled", "rejected"):
