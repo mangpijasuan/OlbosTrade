@@ -4,11 +4,10 @@ Operator walkthrough on **paper** only. Do not flip `IBKR_TRADING_MODE=live`.
 
 ## Decision: V2 default-on
 
-**Keep Trade Desk V2 opt-in** (`trade_desk_v2` and related flags default **off** in
-`frontend/src/trade-desk/featureFlags.ts`). Enable locally via Desk Settings /
-`localStorage olbos.flags.trade_desk_v2=1` / `VITE_TRADE_DESK_V2=1` for this
-walkthrough. Flip product defaults only after this checklist passes on paper
-and operators agree.
+**Trade Desk V2 is product-default on** (`trade_desk_v2` and desk/monitor/replay/
+mobile flags in `featureFlags.ts`). Rollback: Desk Settings off or
+`localStorage olbos.flags.trade_desk_v2=0`. Experimental flags
+(`zero_dte_desk`, `options_flow`, etc.) stay off.
 
 ## Preconditions
 
@@ -16,7 +15,7 @@ and operators agree.
 - [ ] Kill switch **Clear**
 - [ ] `EXECUTION_PORTFOLIO_GATE=true`, `EXECUTION_ENFORCE_PORTFOLIO_GREEKS=false`
 - [ ] If `SECRET_KEY` set: paste into Risk → Operator API Key
-- [ ] Trade Desk 2.0 flag **on for this session only**; execution mode **COPILOT**
+- [ ] Trade Desk 2.0 on (default); execution mode **COPILOT**
 - [ ] Prefer RTH, or temporarily `MARKET_HOURS_ONLY=false` for this smoke only
 
 ## Smoke steps
@@ -44,8 +43,6 @@ and operators agree.
 - Equity + options on same underlying coexist (identity / duplicate guard)
 - Options scan queues with spread; incomplete options payload rejected
 - No live account / live mode
-- **Do not** change V2 defaults to on until this pass is signed off
-
 ## Fail → stop
 
 Any live account mismatch, unexplained broker order, or kill switch that will not engage → stop trading, leave gate engaged, investigate before deploy.

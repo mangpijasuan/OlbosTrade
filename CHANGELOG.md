@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Trade Desk V2 default-on
+
+- Product defaults: `trade_desk_v2` + equity/options/copilot/execution/replay/
+  mobile flags **on**; experimental desks stay off
+- Desk Settings copy: default V2 with localStorage rollback to legacy
+- Paper E2E decision updated accordingly
+
 ## Unreleased — P1 identity / sizing / scan honesty
 
 - Position identity + OMS duplicate guard key on `(underlying, equity|options)`

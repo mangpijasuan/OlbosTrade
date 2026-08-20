@@ -10,10 +10,10 @@ Canvas: `olbostrade-audit-2026-08-20.canvas.tsx`
 
 **Paper: mechanically sound.** Single OMS (`_execute_signal`), Step 8 portfolio
 gate on-path (Greeks off), mutate auth when `SECRET_KEY` set, kill reset via
-env code, Trade Desk V2 **opt-in off**.
+env code, Trade Desk V2 **default on** (legacy rollback via Desk Settings).
 
 **Live capital: not yet.** Kill engage remains unauthenticated at FastAPI (by
-design / nginx). V2 stays **opt-in** until Paper E2E is signed off.
+design / nginx).
 
 ### Closed this pass (was open 2026-08-20)
 

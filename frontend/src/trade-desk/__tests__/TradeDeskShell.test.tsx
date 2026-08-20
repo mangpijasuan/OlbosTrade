@@ -28,9 +28,8 @@ describe("trade desk feature flags", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps trade_desk_v2 opt-in (localStorage can force off over env)", () => {
-    // Product DEFAULTS are false; Vite env (e.g. .env.local) may enable V2
-    // for local tryouts — rollback must still win via localStorage.
+  it("defaults trade_desk_v2 on; localStorage can force legacy off", () => {
+    expect(isTradeDeskV2Enabled()).toBe(true);
     setFlagEnabled("trade_desk_v2", false);
     expect(isTradeDeskV2Enabled()).toBe(false);
   });
@@ -40,13 +39,13 @@ describe("trade desk feature flags", () => {
     expect(isFlagEnabled("trade_desk_v2")).toBe(true);
   });
 
-  it("defaults desk/monitor/replay/mobile flags off until operator enables V2", () => {
-    expect(isFlagEnabled("equity_desk_v2")).toBe(false);
-    expect(isFlagEnabled("options_desk_v2")).toBe(false);
-    expect(isFlagEnabled("copilot_queue_v2")).toBe(false);
-    expect(isFlagEnabled("execution_monitor_v2")).toBe(false);
-    expect(isFlagEnabled("trade_replay_v2")).toBe(false);
-    expect(isFlagEnabled("mobile_trade_desk")).toBe(false);
+  it("defaults desk/monitor/replay/mobile flags on with V2 suite", () => {
+    expect(isFlagEnabled("equity_desk_v2")).toBe(true);
+    expect(isFlagEnabled("options_desk_v2")).toBe(true);
+    expect(isFlagEnabled("copilot_queue_v2")).toBe(true);
+    expect(isFlagEnabled("execution_monitor_v2")).toBe(true);
+    expect(isFlagEnabled("trade_replay_v2")).toBe(true);
+    expect(isFlagEnabled("mobile_trade_desk")).toBe(true);
   });
 });
 

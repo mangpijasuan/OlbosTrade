@@ -30,10 +30,8 @@ export default function DeskSettings() {
         DESK SETTINGS
       </h2>
       <p style={{ margin: 0, fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.6 }}>
-        Trade Desk 2.0 is opt-in. Default experience stays the legacy Trade Desk
-        until you enable this. Turning it on switches nav + pages to V2
-        (Equity/Options desks, Copilot Queue, Orders, Execution, Replay). No
-        execution-path change — same OMS.
+        Trade Desk 2.0 is the default. Turn it off to roll back to the legacy
+        Trade Desk nav/pages. Same OMS either way — no execution-path change.
       </p>
       <label
         style={{
@@ -47,10 +45,10 @@ export default function DeskSettings() {
         }}
       >
         <input type="checkbox" checked={enabled} onChange={toggle} />
-        Trade Desk 2.0 enabled ({enabled ? "ON" : "OFF — legacy default"})
+        Trade Desk 2.0 enabled ({enabled ? "ON — default" : "OFF — legacy"})
       </label>
       <p style={{ margin: 0, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
-        Storage key: olbos.flags.trade_desk_v2 · set to 1 to opt in, 0 to roll back
+        Storage key: olbos.flags.trade_desk_v2 · set to 0 to roll back
       </p>
     </div>
   );
