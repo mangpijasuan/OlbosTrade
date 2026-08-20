@@ -81,17 +81,16 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
 
   return (
     <div
+      className="instrument-card"
       onClick={onClick}
       style={{
-        background: "var(--bg-2)",
-        border: "1px solid var(--line-dim)",
         borderLeft: `3px solid ${isOpen ? "var(--cyan)" : (e.pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)"}`,
         padding: "14px 16px",
         cursor: "pointer",
         transition: "background 0.1s",
       }}
       onMouseEnter={ev => (ev.currentTarget.style.background = "var(--bg-3)")}
-      onMouseLeave={ev => (ev.currentTarget.style.background = "var(--bg-2)")}
+      onMouseLeave={ev => (ev.currentTarget.style.background = "")}
     >
       {/* Row 1: symbol + P&L */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -338,7 +337,7 @@ export default function Journal() {
 
               {/* Overview strip */}
               {entries.length > 0 && (
-                <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", display: "grid", gridTemplateColumns: "repeat(5,1fr)" }}>
+                <div className="instrument-stat-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)" }}>
                   <StatTile variant="divider" size="default" label="Total P&L"       value={fmt(totalPnl)}                         tone={totalPnl >= 0 ? "var(--green)" : "var(--red)"} />
                   <StatTile variant="divider" size="default" label="Win Rate"        value={closed > 0 ? `${winRate}%` : "—"}       tone={winRate >= 50 ? "var(--green)" : "var(--amber)"} />
                   <StatTile variant="divider" size="default" label="Closed / Open"   value={`${closed} / ${open}`} />
@@ -513,8 +512,7 @@ export default function Journal() {
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
           display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
         }}>
-          <div style={{
-            background: "var(--bg-2)", border: "1px solid var(--line-dim)",
+          <div className="instrument-card" style={{
             maxWidth: 500, width: "100%", padding: 28,
           }}>
             <div className="panel-title" style={{ marginBottom: 20 }}>ADD TRADE NOTES</div>

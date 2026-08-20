@@ -43,14 +43,7 @@ export default function OptionsScan() {
         }}
       >
         {/* What is EV? */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Expected Value (EV)</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             <span style={{ fontFamily: "var(--mono)" }}>EV = POP × Max Profit − (1−POP) × Max Loss</span>
@@ -61,14 +54,7 @@ export default function OptionsScan() {
         </div>
 
         {/* Entry Ladder */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Entry Ladder</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             Kelly &lt; 15% → 1 tranche (full entry)
@@ -83,14 +69,7 @@ export default function OptionsScan() {
         </div>
 
         {/* Pricing Sources */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Pricing Sources</h3>
           <div style={{ fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.8 }}>
             <div>
@@ -109,14 +88,7 @@ export default function OptionsScan() {
         </div>
 
         {/* Kelly Fraction */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Kelly Fraction</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             <span style={{ fontFamily: "var(--mono)" }}>f* = (b·p − q) / b</span>
@@ -127,14 +99,7 @@ export default function OptionsScan() {
         </div>
 
         {/* IV Rank */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>IV Rank & Skew</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             <span style={{ fontFamily: "var(--mono)" }}>IV Rank = (VIX − 52w Low) / (52w High − Low) × 100</span>
@@ -145,14 +110,7 @@ export default function OptionsScan() {
         </div>
 
         {/* NO-TRADE Gate */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>NO-TRADE Gate</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             Prevents trading if:

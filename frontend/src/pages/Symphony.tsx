@@ -65,7 +65,7 @@ function Curve({ points }: { points: Pt[] }) {
 
 function Tile({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{ background: "var(--bg-2)", padding: "11px 13px" }}>
+    <div className="instrument-card" style={{ padding: "11px 13px" }}>
       <div className="kicker" style={{ fontSize: 8.5, marginBottom: 5 }}>{label}</div>
       <div className="mono" style={{ fontSize: 16, fontWeight: 600, color: color || "var(--ink)" }}>{value}</div>
     </div>

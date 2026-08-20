@@ -144,15 +144,16 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
   const pop = sig.pop ?? intel.pop ?? sig.confidence;
 
   return (
-    <div style={{
-      background: "var(--bg-2)",
-      border: `1px solid ${border}`,
-      borderRadius: 6,
-      padding: "14px 16px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 10,
-    }}>
+    <div
+      className="instrument-card"
+      style={{
+        border: `1px solid ${border}`,
+        padding: "14px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -251,11 +252,13 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
 
 function RejectionRow({ sig }: { sig: OptionsSignal }) {
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 10,
-      background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-      borderRadius: 4, padding: "7px 12px", fontFamily: "var(--mono)", fontSize: 11,
-    }}>
+    <div
+      className="instrument-card"
+      style={{
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "7px 12px", fontFamily: "var(--mono)", fontSize: 11,
+      }}
+    >
       <span style={{ color: "var(--ink)", fontWeight: 700, minWidth: 52 }}>{sig.ticker}</span>
       <span style={{
         color: "var(--cyan)", fontSize: 9, letterSpacing: "0.06em",

@@ -108,8 +108,8 @@ export default function ManualTradePanel() {
 
   return (
     <div style={{ padding: 16, maxWidth: 560, display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{
-        padding: "10px 14px", background: "var(--bg-2)",
+      <div className="instrument-card" style={{
+        padding: "10px 14px",
         border: "1px solid var(--amber)30", borderLeft: "2px solid var(--amber)",
         fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7,
       }}>
@@ -188,8 +188,8 @@ export default function ManualTradePanel() {
       )}
 
       {result && lifecycle && (
-        <div style={{
-          padding: "10px 12px", background: "var(--bg-2)",
+        <div className="instrument-card" style={{
+          padding: "10px 12px",
           border: `1px solid ${lifecycleColor(lifecycle)}40`, borderLeft: `2px solid ${lifecycleColor(lifecycle)}`,
           fontFamily: "var(--mono)", fontSize: 11,
         }}>

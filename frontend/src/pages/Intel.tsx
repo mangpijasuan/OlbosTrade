@@ -50,7 +50,7 @@ function CalendarTab() {
       .then(d => setEvents(d.events || [])).finally(() => setLoading(false));
   }, []);
   return (
-    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, overflow: "hidden" }}>
+    <div className="instrument-card" style={{ overflow: "hidden" }}>
       <table className="t-table">
         <thead><tr>
           <th>Event</th><th>Date</th><th style={{ textAlign: "right" }}>In</th><th>Type</th><th>Severity</th><th>Source</th>
@@ -82,7 +82,7 @@ function WatchlistsTab() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
       {lists.map(w => (
-        <div key={w.slug} style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+        <div key={w.slug} className="instrument-card" style={{ padding: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{w.name}</span>
             {w.is_system && <Badge kind="tag" tone="var(--ink-faint)" style={{ fontSize: 10, borderRadius: 2, padding: "0 4px", opacity: 1 }}>system</Badge>}
@@ -115,7 +115,7 @@ function Bucket({ title, items, tone }: { title: string; items: string[]; tone: 
 
 function FeedList({ title, items, render }: { title: string; items: FeedItem[]; render: (i: FeedItem) => React.ReactNode }) {
   return (
-    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+    <div className="instrument-card" style={{ padding: 12 }}>
       <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
       {items.length === 0 ? (
         <div style={{ fontSize: 12, color: "var(--ink-faint)" }}>None available.</div>
@@ -194,7 +194,7 @@ function WhyTab() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
         {data && (
-          <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 14 }}>
+          <div className="instrument-card" style={{ padding: 14 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 12 }}>{data.headline}</div>
             <Bucket title="Observed facts" items={data.facts} tone="var(--ink)" />
             <Bucket title="Possible drivers (inference)" items={data.inferences} tone="var(--ink-dim)" />
@@ -207,7 +207,7 @@ function WhyTab() {
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {insider && (
-            <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span className="kicker">Insider activity</span>
                 {insider.cluster && <Badge kind="tag" tone="var(--amber)" style={{ fontSize: 10, borderRadius: 3, padding: "0 6px", opacity: 1 }}>cluster</Badge>}

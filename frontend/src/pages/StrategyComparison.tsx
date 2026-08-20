@@ -71,7 +71,7 @@ export default function StrategyComparison() {
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", height: "100%", overflow: "hidden" }}>
-      <div style={{ borderRight: "1px solid var(--line-dim)", padding: 16, overflowY: "auto", background: "var(--bg-2)" }}>
+      <div className="instrument-card" style={{ borderRight: "1px solid var(--line-dim)", padding: 16, overflowY: "auto" }}>
         <div className="panel-title" style={{ marginBottom: 16 }}>Strategy Comparison</div>
         <div style={{ fontSize: 11, color: "var(--ink-dim)", marginBottom: 16, lineHeight: 1.6 }}>
           Research only — runs our real equity signal engine alongside simple

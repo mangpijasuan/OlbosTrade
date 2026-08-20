@@ -43,7 +43,7 @@ export default function Backtest() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", height: "100%", overflow: "hidden" }}>
       {/* Left: config */}
-      <div style={{ borderRight: "1px solid var(--line-dim)", padding: 16, overflowY: "auto", background: "var(--bg-2)" }}>
+      <div className="instrument-card" style={{ borderRight: "1px solid var(--line-dim)", padding: 16, overflowY: "auto" }}>
         <div className="panel-title" style={{ marginBottom: 16 }}>Configuration</div>
         <Field label="Strategy">
           <select style={selectStyle} value={form.strategy}
@@ -79,10 +79,9 @@ export default function Backtest() {
       {/* Right: results */}
       <div style={{ overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
         {/* Metrics ribbon — tight single row to maximise chart space below. */}
-        <div style={{
+        <div className="instrument-stat-strip" style={{
           display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
-          border: "1px solid var(--line-dim)", borderRadius: 6,
-          background: "var(--bg-2)", overflow: "hidden",
+          overflow: "hidden",
         }}>
           {metrics.map((m, i) => (
             <div key={m.label} style={{

@@ -297,7 +297,7 @@ export default function RiskMonitor() {
     <div style={{ padding: 16, overflowY: "auto", height: "100%" }}>
 
       {/* Header stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16, background: "var(--bg-2)", border: "1px solid var(--line-dim)" }}>
+      <div className="instrument-stat-strip" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
         <Stat label="Portfolio Value" value={pvDisplay} color="var(--cyan)" />
         <Stat label="Daily P&L"
           value={`${daily_pnl >= 0 ? "+" : ""}$${Math.abs(daily_pnl).toFixed(0)}`}

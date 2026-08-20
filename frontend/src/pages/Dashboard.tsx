@@ -359,7 +359,13 @@ export default function Dashboard() {
       </ErrorBoundary>
 
       {/* Top stat bar */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(8, 1fr)", borderBottom: "1px solid var(--line-dim)" }}>
+      <div
+        className="instrument-stat-strip"
+        style={{
+          gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(8, 1fr)",
+          margin: "0 12px 12px",
+        }}
+      >
         <StatTile
           variant="divider" size="default"
           label="Portfolio Value" hint={hintFor("Portfolio Value")}
@@ -401,10 +407,10 @@ export default function Dashboard() {
       </div>
 
       {/* Main panels */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 320px", overflow: isMobile ? "visible" : "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 320px", gap: 12, margin: "0 12px 12px", overflow: isMobile ? "visible" : "hidden" }}>
 
         {/* Left: equity + positions */}
-        <div style={{ display: "flex", flexDirection: "column", borderRight: isMobile ? "none" : "1px solid var(--line-dim)", overflow: "hidden" }}>
+        <div className="instrument-card" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
           {/* Equity curve */}
           <div style={{ flex: "0 0 220px", borderBottom: "1px solid var(--line-dim)" }}>
@@ -474,7 +480,7 @@ export default function Dashboard() {
         </div>
 
         {/* Right: status panels */}
-        <div style={{ display: "flex", flexDirection: "column", overflow: "auto" }}>
+        <div className="instrument-card" style={{ display: "flex", flexDirection: "column", overflow: "auto" }}>
 
           {/* Guardrail status */}
           <div style={{ borderBottom: "1px solid var(--line-dim)" }}>

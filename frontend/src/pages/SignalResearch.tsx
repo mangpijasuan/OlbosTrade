@@ -131,7 +131,7 @@ export default function SignalResearch() {
     <div style={{ overflowY: "auto", height: "100%", padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
 
       {/* Header / explainer */}
-      <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
         <span className="panel-title" style={{ marginRight: 12 }}>SIGNAL RESEARCH</span>
         <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink)" }}>
           Every routable equity signal is tracked from generation to real forward outcome — target hit, stop hit,
@@ -163,7 +163,7 @@ export default function SignalResearch() {
       )}
 
       {/* Confidence bucket breakdown */}
-      <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
+      <div className="instrument-card">
         <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
           <span className="panel-title">Hit Rate by Confidence Bucket</span>
         </div>
@@ -187,7 +187,7 @@ export default function SignalResearch() {
 
       {/* Ticker breakdown */}
       {stats.by_ticker.length > 0 && (
-        <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
+        <div className="instrument-card">
           <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
             <span className="panel-title">By Ticker</span>
           </div>

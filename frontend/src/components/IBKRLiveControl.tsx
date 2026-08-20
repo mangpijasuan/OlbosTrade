@@ -69,11 +69,10 @@ export default function IBKRLiveControl({ compact = false }: IBKRLiveControlProp
   // Full panel view
   return (
     <div
+      className="instrument-card"
       style={{
         padding: "12px",
-        background: "var(--bg-2)",
         border: "1px solid var(--ink-faint)",
-        borderRadius: 4,
         marginBottom: 12,
       }}
     >

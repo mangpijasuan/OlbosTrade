@@ -57,9 +57,9 @@ export default function OptionsOrderComposer({
 
   return (
     <div
+      className="instrument-card"
       style={{
         borderTop: "1px solid var(--line-dim)",
-        background: "var(--bg-2)",
         padding: "10px 12px",
         display: "flex",
         flexWrap: "wrap",

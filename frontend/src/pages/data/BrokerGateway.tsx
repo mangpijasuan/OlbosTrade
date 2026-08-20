@@ -121,7 +121,7 @@ export default function BrokerGateway() {
         </span>
       </div>
 
-      <div style={{ maxWidth: 520, border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "12px 16px" }}>
+      <div className="instrument-card" style={{ maxWidth: 520, padding: "12px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
           <StatusDot ok={connected} />
           <span style={{
@@ -153,7 +153,7 @@ export default function BrokerGateway() {
 
       <div style={{ marginTop: 24, maxWidth: 520 }}>
         <div className="panel-title" style={{ marginBottom: 10 }}>Supported Brokers</div>
-        <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "4px 16px" }}>
+        <div className="instrument-card" style={{ padding: "4px 16px" }}>
           {SUPPORTED_BROKERS.map(opt => (
             <BrokerOptionRow key={opt.id} opt={opt} active={(b?.broker ?? "").toLowerCase() === opt.id} />
           ))}

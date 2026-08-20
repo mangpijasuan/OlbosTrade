@@ -143,9 +143,8 @@ export default function CspScreener() {
       </div>
 
       {/* Status bar */}
-      <div style={{
+      <div className="instrument-stat-strip" style={{
         display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4,
-        border: "1px solid var(--line-dim)", borderRadius: 6,
         margin: "10px 0",
       }}>
         <StatTile variant="divider" size="sm" label="Env" value={(ctx?.environment || "—").toUpperCase()} tone="var(--amber)" />
@@ -172,7 +171,7 @@ export default function CspScreener() {
 
       <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 14, marginTop: 12 }}>
         {/* Filter panel */}
-        <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, padding: 14 }}>
+        <div className="instrument-card" style={{ padding: 14 }}>
           <div className="kicker" style={{ marginBottom: 12 }}>Filters</div>
 
           <label style={{ fontSize: 12, color: "var(--ink-dim)" }}>Risk profile</label>
@@ -249,10 +248,10 @@ function CandidateCard({ c, expanded, onToggle }: {
   const accent = statusTone(elig.status);
 
   return (
-    <div style={{
+    <div className="instrument-card" style={{
       border: `1px solid ${elig.status === "eligible" ? "var(--cyan-dim)" : "var(--line-dim)"}`,
       borderLeft: `3px solid ${accent}`,
-      borderRadius: 6, padding: 12, marginBottom: 8,
+      padding: 12, marginBottom: 8,
       opacity: blocked ? 0.9 : 1,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", cursor: "pointer" }}

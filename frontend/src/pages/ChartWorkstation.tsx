@@ -530,7 +530,7 @@ export default function ChartWorkstation({
                 ))}
               </div>
 
-              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-3)", position: "relative" }}>
+              <div className="instrument-card--flat" style={{ position: "relative" }}>
                 {chartLoading ? (
                   <div className="skeleton-block" style={{ height: 460 }} aria-busy="true" aria-label="Loading chart">
                     <div className="skeleton-shimmer" />
@@ -562,19 +562,17 @@ export default function ChartWorkstation({
           <div className="workstation-bottom-grid">
             <Panel title={planTitle} sectionStyle={{ overflow: "hidden" }}>
               {selectedSignal?.source && selectedSignal.source !== "unknown" && (
-                <div style={{
+                <div className="instrument-card--flat" style={{
                   marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
                   color: "var(--ink-dim)", padding: "8px 10px",
-                  border: "1px solid var(--line-dim)", background: "var(--bg-3)",
                 }}>
                   Source: {selectedSignal.source}
                 </div>
               )}
               {!selectedSignal && (
-                <div style={{
+                <div className="instrument-card--flat" style={{
                   marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
                   color: "var(--ink-dim)", padding: "8px 10px",
-                  border: "1px solid var(--line-dim)", background: "var(--bg-3)",
                 }}>
                   No signal for {symbol} — levels below are chart-derived
                   (recent support/resistance), not the signal engine's own plan.
@@ -619,10 +617,8 @@ export default function ChartWorkstation({
             action={<Button onClick={() => loadSignals()}>Refresh</Button>}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{
-                border: "1px solid var(--line-dim)",
+              <div className="instrument-card--flat" style={{
                 padding: "10px 12px",
-                background: "var(--bg-3)",
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--green)" }}>

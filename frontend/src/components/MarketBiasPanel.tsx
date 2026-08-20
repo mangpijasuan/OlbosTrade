@@ -141,7 +141,7 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
             {(() => {
               const status = setupStatus(bias, conf?.score);
               return (
-                <div style={{ border: `1px solid ${status.tone}66`, background: "var(--bg-3)", padding: 10, marginBottom: 10 }}>
+                <div className="instrument-card--flat" style={{ border: `1px solid ${status.tone}66`, padding: 10, marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                     <span className="kicker">Setup Status</span>
                     <span style={{ color: status.tone, fontWeight: 700, textTransform: "uppercase" }}>{status.label}</span>

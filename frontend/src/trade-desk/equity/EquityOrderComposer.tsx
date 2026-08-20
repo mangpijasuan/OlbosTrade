@@ -148,9 +148,9 @@ export default function EquityOrderComposer({
 
   return (
     <div
+      className="instrument-card"
       style={{
         borderTop: "1px solid var(--line-dim)",
-        background: "var(--bg-2)",
         padding: "10px 12px",
         display: "flex",
         flexDirection: "column",

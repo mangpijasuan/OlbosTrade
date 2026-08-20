@@ -167,7 +167,7 @@ export default function DataQuality() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 640 }}>
-          <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "6px 16px 4px" }}>
+          <div className="instrument-card" style={{ padding: "6px 16px 4px" }}>
             <Check ok={h?.status === "ok"} label="Service"
               detail={h?.status === "ok" ? "ok" : (h?.status ?? "…")} />
             <Check ok={scannerOk} label="Scanner heartbeat"
@@ -181,7 +181,7 @@ export default function DataQuality() {
           </div>
 
           {h?.ibkr && (
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "6px 16px 4px" }}>
+            <div className="instrument-card" style={{ padding: "6px 16px 4px" }}>
               <div className="panel-title" style={{ padding: "8px 0 4px" }}>IBKR Connection</div>
               <Check ok={h.ibkr.connected} label="Broker connection"
                 detail={h.ibkr.connected ? "connected" : "disconnected"} />

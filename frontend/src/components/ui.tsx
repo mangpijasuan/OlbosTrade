@@ -80,10 +80,13 @@ export function StatTile({
   spark?: number[];
 }) {
   const wrap: React.CSSProperties = variant === "boxed"
-    ? { background: "var(--bg-3)", padding: "10px 12px", border: "1px solid var(--line-dim)" }
+    ? { padding: "10px 12px" }
     : { padding: "14px 16px", borderRight: "1px solid var(--line-dim)" };
   return (
-    <div style={wrap}>
+    <div
+      className={variant === "boxed" ? "instrument-card" : undefined}
+      style={wrap}
+    >
       <div className="kicker" style={{ marginBottom: variant === "boxed" ? 8 : 6 }}>{hint ?? label}</div>
       <div className={`data-val${size === "sm" ? " sm" : ""}`} style={{ color: tone || "var(--ink)" }}>{value}</div>
       {sub && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 3 }}>{sub}</div>}

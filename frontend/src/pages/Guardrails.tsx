@@ -181,9 +181,8 @@ export default function Guardrails() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Active risk profile banner */}
-            <div style={{
+            <div className="instrument-card" style={{
               border: `1px solid ${badgeColor}`,
-              background: "var(--bg-2)",
               padding: "14px 20px",
               display: "flex", alignItems: "center", justifyContent: "space-between",
             }}>
@@ -265,8 +264,8 @@ export default function Guardrails() {
                     { label: "Daily P&L",  val: pnlPct(guardrailStatus?.daily_loss_pct) },
                     { label: "Weekly P&L", val: pnlPct(guardrailStatus?.weekly_loss_pct) },
                   ].map(s => (
-                    <div key={s.label} style={{
-                      background: "var(--bg-3)", borderRadius: 4, padding: "7px 10px",
+                    <div key={s.label} className="instrument-card--flat" style={{
+                      padding: "7px 10px",
                       display: "flex", flexDirection: "column", gap: 3,
                     }}>
                       <span className="kicker">{s.label}</span>
@@ -312,7 +311,7 @@ export default function Guardrails() {
                       { label: "Untracked", value: reconciliation?.untracked_at_broker?.length ?? 0, color: "var(--red)" },
                       { label: "Quantity Drift", value: reconciliation?.quantity_mismatches?.length ?? 0, color: "var(--amber)" },
                     ].map((item) => (
-                      <div key={item.label} style={{ border: "1px solid var(--line-dim)", borderRadius: 4, padding: 12, background: "var(--bg-1)" }}>
+                      <div key={item.label} className="instrument-card" style={{ padding: 12 }}>
                         <div className="kicker" style={{ marginBottom: 6 }}>{item.label}</div>
                         <div className="tnum" style={{ fontSize: 16, color: item.color }}>{item.value}</div>
                       </div>
@@ -335,7 +334,7 @@ export default function Guardrails() {
                         ...(reconciliation?.error_message ? [reconciliation.error_message] : []),
                       ], empty: "No drift detected." },
                     ].map((group) => (
-                      <div key={group.title} style={{ border: "1px solid var(--line-dim)", background: "var(--bg-1)", padding: 12 }}>
+                      <div key={group.title} className="instrument-card" style={{ padding: 12 }}>
                         <div className="kicker" style={{ marginBottom: 8 }}>{group.title}</div>
                         {group.items.length === 0 ? (
                           <div style={{ color: "var(--ink-faint)", fontSize: 12 }}>{group.empty}</div>

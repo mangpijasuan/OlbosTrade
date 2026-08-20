@@ -51,8 +51,7 @@ function scoreColor(score: number): string {
 
 function ScoreTile({ label, value, sublabel }: { label: string; value: number | null; sublabel?: string }) {
   return (
-    <div style={{
-      background: "var(--bg-2)", border: "1px solid var(--line-dim)", borderRadius: 6,
+    <div className="instrument-card" style={{
       padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4,
     }}>
       <span style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em" }}>
@@ -103,7 +102,7 @@ export default function AlphaEdgePanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
-      <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
         <span className="panel-title" style={{ marginRight: 12 }}>ALPHA EDGE SIGNAL</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)" }}>
           Entry/Hold/Exit/Risk scores derived from existing signal-scoring code, computed live per lookup.

@@ -220,7 +220,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
             marginBottom: 20,
           }}
         >
-          <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+          <div className="instrument-card" style={{ padding: 12 }}>
             <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontFamily: "var(--mono)", fontWeight: 600, letterSpacing: "0.08em" }}>
               EXPECTED VALUE
             </div>
@@ -228,7 +228,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               ${candidate.expected_value.toFixed(0)}
             </div>
           </div>
-          <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+          <div className="instrument-card" style={{ padding: 12 }}>
             <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontFamily: "var(--mono)", fontWeight: 600, letterSpacing: "0.08em" }}>
               CONFIDENCE
             </div>
@@ -236,7 +236,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               {(candidate.confidence * 100).toFixed(0)}%
             </div>
           </div>
-          <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+          <div className="instrument-card" style={{ padding: 12 }}>
             <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontFamily: "var(--mono)", fontWeight: 600, letterSpacing: "0.08em" }}>
               KELLY %
             </div>
@@ -258,7 +258,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               gap: 12,
             }}
           >
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 11, color: "var(--ink-dim)", marginBottom: 8 }}>
                 <span style={{ fontWeight: 600 }}>Max Loss (stop hit)</span>
                 <div style={{ color: "var(--red)", fontSize: 14, fontWeight: 700, marginTop: 4, fontFamily: "var(--mono)" }}>
@@ -269,7 +269,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 Risk from entry to stop price
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 11, color: "var(--ink-dim)", marginBottom: 8 }}>
                 <span style={{ fontWeight: 600 }}>Max Profit (target hit)</span>
                 <div style={{ color: "var(--green)", fontSize: 14, fontWeight: 700, marginTop: 4, fontFamily: "var(--mono)" }}>
@@ -282,9 +282,8 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
             </div>
           </div>
           <div
+            className="instrument-card"
             style={{
-              background: "var(--bg-3)",
-              borderRadius: 6,
               padding: 12,
               marginTop: 12,
               display: "grid",
@@ -331,7 +330,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               gap: 12,
             }}
           >
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontWeight: 600 }}>
                 ENTRY
               </div>
@@ -339,7 +338,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 ${candidate.entry_price.toFixed(2)}
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontWeight: 600 }}>
                 STOP LOSS
               </div>
@@ -347,7 +346,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 ${candidate.stop_price.toFixed(2)}
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontWeight: 600 }}>
                 PROFIT TARGET
               </div>
@@ -355,7 +354,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 ${candidate.target_price.toFixed(2)}
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontWeight: 600 }}>
                 TARGET MOVE
               </div>
@@ -375,10 +374,8 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
             {candidate.entry_ladder.map((t, idx) => (
               <div
                 key={idx}
+                className="instrument-card"
                 style={{
-                  background: "var(--bg-2)",
-                  border: "1px solid var(--line-dim)",
-                  borderRadius: 4,
                   padding: "10px 12px",
                   display: "flex",
                   justifyContent: "space-between",
@@ -422,7 +419,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               }}
             >
               {Object.entries(candidate.indicators).map(([key, val]) => (
-                <div key={key} style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+                <div key={key} className="instrument-card" style={{ padding: "8px 10px" }}>
                   <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                     {key.toUpperCase()}
                   </div>
@@ -444,7 +441,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               gap: 8,
             }}
           >
-            <div style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="instrument-card" style={{ padding: "8px 10px" }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                 ORDERFLOW SCORE
               </div>
@@ -452,7 +449,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 {candidate.orderflow_score.toFixed(3)}
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="instrument-card" style={{ padding: "8px 10px" }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                 IV RANK
               </div>
@@ -1208,9 +1205,9 @@ export default function EquityScanPanel() {
             return (
               <div
                 key={cand.ticker}
+                className="instrument-card"
                 onClick={() => setSelectedCandidate(cand)}
                 style={{
-                  background: "var(--bg-2)",
                   border: `1px solid ${
                     cand.action === "BUY"
                       ? "rgba(34,197,94,0.25)"
@@ -1218,7 +1215,6 @@ export default function EquityScanPanel() {
                       ? "rgba(239,68,68,0.25)"
                       : "var(--line-dim)"
                   }`,
-                  borderRadius: 6,
                   padding: 12,
                   display: "flex",
                   flexDirection: "column",
@@ -1294,12 +1290,11 @@ export default function EquityScanPanel() {
 
                 {!isMobile && (
                   <div
+                    className="instrument-card--flat"
                     style={{
                       display: "grid",
                       gridTemplateColumns: "repeat(4, 1fr)",
                       gap: 4,
-                      background: "var(--bg-3)",
-                      borderRadius: 3,
                       padding: "6px 8px",
                       fontSize: 9,
                     }}
@@ -1356,10 +1351,8 @@ export default function EquityScanPanel() {
         </div>
       ) : result && result.candidates.length === 0 ? (
         <div
+          className="instrument-card"
           style={{
-            background: "var(--bg-2)",
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
             padding: "20px",
             textAlign: "center",
             color: "var(--ink-dim)",
@@ -1370,10 +1363,8 @@ export default function EquityScanPanel() {
         </div>
       ) : (
         <div
+          className="instrument-card"
           style={{
-            background: "var(--bg-2)",
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
             padding: "20px",
             textAlign: "center",
             color: "var(--ink-dim)",

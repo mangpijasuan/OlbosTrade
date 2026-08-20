@@ -88,7 +88,7 @@ export default function Strategy() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", height: "100%", overflow: "hidden" }}>
       {/* List */}
-      <div style={{ borderRight: "1px solid var(--line-dim)", background: "var(--bg-2)", overflowY: "auto" }}>
+      <div className="instrument-card" style={{ borderRight: "1px solid var(--line-dim)", overflowY: "auto" }}>
         <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
           <span className="panel-title">Strategies</span>
         </div>
@@ -141,13 +141,13 @@ export default function Strategy() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 1, border: "1px solid var(--line-dim)" }}>
+          <div className="instrument-stat-strip" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
             {[
               { label: "Max Profit", val: shape.max_profit, color: "var(--green)" },
               { label: "Max Loss",   val: shape.max_loss,   color: "var(--red)" },
               { label: "Bias",       val: shape.bias,        color: "var(--amber)" },
             ].map(m => (
-              <div key={m.label} style={{ padding: "18px 20px", background: "var(--bg-2)" }}>
+              <div key={m.label} style={{ padding: "18px 20px" }}>
                 <div className="kicker" style={{ marginBottom: 6 }}>{m.label}</div>
                 <div className="data-val sm" style={{ color: m.color }}>{m.val}</div>
               </div>
@@ -156,7 +156,7 @@ export default function Strategy() {
 
           {/* Live health — never fabricated. Explicit insufficient-data state
               rather than showing a 0/blank score as if it meant something. */}
-          <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16 }}>
+          <div className="instrument-card" style={{ padding: 16 }}>
             <div className="panel-title" style={{ marginBottom: 12 }}>Live Health</div>
             {strat.health_status && strat.health_status !== "insufficient_data" ? (
               <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -185,7 +185,7 @@ export default function Strategy() {
             )}
           </div>
 
-          <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16 }}>
+          <div className="instrument-card" style={{ padding: 16 }}>
             <div className="panel-title" style={{ marginBottom: 12 }}>Eligibility</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <EligibilityBadge label="Manual" eligible={strat.manual_eligible} />
@@ -199,7 +199,7 @@ export default function Strategy() {
             )}
           </div>
 
-          <div style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: 16, flex: 1, display: "flex", flexDirection: "column", minHeight: 160 }}>
+          <div className="instrument-card" style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column", minHeight: 160 }}>
             <div className="panel-title" style={{ marginBottom: 12 }}>Current Signals</div>
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
               NO SIGNALS — WAITING FOR 09:35 ET

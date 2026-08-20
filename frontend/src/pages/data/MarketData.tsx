@@ -41,7 +41,7 @@ export default function MarketData() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, maxWidth: 720 }}>
         {cards.map(c => (
-          <div key={c.label} style={{ background: "var(--bg-2)", border: "1px solid var(--line-dim)", padding: "12px 14px" }}>
+          <div key={c.label} className="instrument-card" style={{ padding: "12px 14px" }}>
             <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
               {c.label}
             </div>

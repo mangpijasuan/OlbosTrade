@@ -47,9 +47,8 @@ export default function PortfolioGreeks() {
 
   if (!greeks) {
     return (
-      <div style={{
-        background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-        borderRadius: 4, padding: "12px 16px",
+      <div className="instrument-card" style={{
+        padding: "12px 16px",
         fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)",
       }}>
         Loading Greeks...
@@ -58,12 +57,13 @@ export default function PortfolioGreeks() {
   }
 
   return (
-    <div style={{
-      background: "var(--bg-2)",
-      border: `1px solid ${greeks.needs_hedge ? "var(--amber)" : "var(--line-dim)"}`,
-      borderRadius: 4,
-      padding: "12px 20px",
-    }}>
+    <div
+      className="instrument-card"
+      style={{
+        border: `1px solid ${greeks.needs_hedge ? "var(--amber)" : "var(--line-dim)"}`,
+        padding: "12px 20px",
+      }}
+    >
       <div style={{
         display: "flex", alignItems: "center", gap: 4,
         marginBottom: 10, fontFamily: "var(--mono)", fontSize: 10,

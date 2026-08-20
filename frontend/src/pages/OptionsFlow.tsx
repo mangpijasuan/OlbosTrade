@@ -50,11 +50,9 @@ function FlowCard({ row, onPickTicker }: { row: FlowRow; onPickTicker: (t: strin
 
   return (
     <div
+      className="instrument-card"
       style={{
-        background: "var(--bg-2)",
-        border: "1px solid var(--line-dim)",
         borderLeft: `3px solid ${tone}`,
-        borderRadius: 3,
         padding: "12px 14px",
         display: "flex",
         flexDirection: "column",

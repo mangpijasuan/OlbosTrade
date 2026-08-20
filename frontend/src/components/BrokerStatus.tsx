@@ -34,17 +34,18 @@ export default function BrokerStatus() {
   const brokerLabel = info.broker.toUpperCase();
 
   return (
-    <div style={{
-      background: "var(--bg-2)",
-      border: "1px solid var(--line-dim)",
-      borderRadius: 4,
-      padding: "12px 16px",
-      fontFamily: "var(--mono)",
-      fontSize: 11,
-      display: "flex",
-      alignItems: "center",
-      gap: 12,
-    }}>
+    <div
+      className="instrument-card"
+      style={{
+        padding: "12px 16px",
+        fontFamily: "var(--mono)",
+        fontSize: 11,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+      }}
+    >
       <span className={`dot ${connected ? "live" : "dead"}`} />
       <span style={{ color: "var(--cyan)", fontWeight: 600 }}>
         {brokerLabel}

@@ -74,9 +74,9 @@ function StrategyHealthRowView({ row }: { row: StrategyHealthRow }) {
   const ratio = row.expectancy_ratio != null ? `${(row.expectancy_ratio * 100).toFixed(0)}% of base` : "—";
 
   return (
-    <div style={{
-      background: "var(--bg-2)", border: `1px solid ${color}40`, borderLeft: `2px solid ${color}`,
-      borderRadius: 6, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10,
+    <div className="instrument-card" style={{
+      border: `1px solid ${color}40`, borderLeft: `2px solid ${color}`,
+      padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 15, fontWeight: 700 }}>
@@ -166,7 +166,7 @@ export default function StrategyHealthPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
-      <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
         <span className="panel-title" style={{ marginRight: 12 }}>STRATEGY HEALTH</span>
         <span className="mono" style={{ fontSize: 11, color: suspended.length === 0 ? "var(--green)" : "var(--red)" }}>
           {data?.total_strategies ?? strategies.length} tracked

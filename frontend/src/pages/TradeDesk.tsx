@@ -351,7 +351,7 @@ function PnLBreakdown() {
   });
 
   const StatBox = ({ label, value, color }: any) => (
-    <div style={{ background: "var(--bg-3)", padding: "14px 18px", flex: 1, borderRight: "1px solid var(--line-dim)" }}>
+    <div style={{ padding: "14px 18px", flex: 1, borderRight: "1px solid var(--line-dim)" }}>
       <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
       <div className="data-val sm" style={{ color: color || "var(--ink)" }}>{value}</div>
     </div>
@@ -364,7 +364,7 @@ function PnLBreakdown() {
         <Badge text="COMMISSIONS + SLIPPAGE INCLUDED" color="var(--amber)" />
       </div>
 
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, border: "1px solid var(--line-dim)" }}>
+      <div className="instrument-stat-strip" style={{ display: "flex", gap: 0, marginBottom: 16 }}>
         <StatBox label="Net P&L"         value={`${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`}  color={totalPnl >= 0 ? "var(--green)" : "var(--red)"} />
         <StatBox label="Gross P&L"       value={`$${grossPnl.toFixed(2)}`}    color="var(--ink)" />
         <StatBox label="Commission Drag" value={`-$${totalComm.toFixed(2)}`}  color="var(--amber)" />
@@ -373,10 +373,10 @@ function PnLBreakdown() {
         <StatBox label="Win / Loss"      value={`${wins.length} / ${losses.length}`} color="var(--ink)" />
       </div>
 
-      <div style={{
+      <div className="instrument-card" style={{
         fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
-        padding: "8px 12px", background: "var(--bg-3)", marginBottom: 14,
-        border: "1px solid var(--line-dim)", lineHeight: 1.7,
+        padding: "8px 12px", marginBottom: 14,
+        lineHeight: 1.7,
       }}>
         Commission: $0.65/contract · $1.30 per spread (IBKR standard) ·
         Slippage: VIX-adjusted est. ~15% of bid-ask spread at VIX 17, widens at higher VIX ·
@@ -558,9 +558,9 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
         {tab === "signals" && (
           <div>
             {lastSignal && (
-              <div style={{
+              <div className="instrument-card" style={{
                 padding: "12px 16px", borderBottom: "1px solid var(--line-dim)",
-                background: "var(--bg-3)", display: "flex", gap: 24, alignItems: "center",
+                display: "flex", gap: 24, alignItems: "center",
               }}>
                 <span className="panel-title">LAST SIGNAL</span>
                 <Badge text={lastSignal.strategy?.toUpperCase() || "—"} color="var(--ink-dim)" />
@@ -714,10 +714,10 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
         {tab === "mode" && (
           <div style={{ padding: 20, maxWidth: 720 }}>
             <div className="panel-title" style={{ marginBottom: 16 }}>Market Regime & Trading Style</div>
-            <div style={{
+            <div className="instrument-card" style={{
               fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
-              padding: "8px 12px", background: "var(--bg-3)", marginBottom: 20,
-              border: "1px solid var(--line-dim)", lineHeight: 1.7,
+              padding: "8px 12px", marginBottom: 20,
+              lineHeight: 1.7,
             }}>
               Risk Profile controls position sizing, strategy selection, and risk budget.<br />
               Execution Mode (bar above) controls whether trades need your approval.<br />

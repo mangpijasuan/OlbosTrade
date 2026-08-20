@@ -506,6 +506,31 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   box-shadow: var(--inset-well);
 }
 
+/* Alias used by pages migrating off flat bg-2 shells */
+.surface-card {
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
+  position: relative;
+}
+
+/* Stat-bar / KPI strip: raised chassis with inset cell dividers */
+.instrument-stat-strip {
+  display: grid;
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
+  overflow: hidden;
+}
+.instrument-stat-strip > * {
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 70%);
+  box-shadow: inset -1px 0 0 rgba(0,0,0,0.25);
+}
+
 /* Opt-in hover-lift for Panel — generalizes .exec-card's existing hover
    treatment. Apply only where a panel is genuinely clickable/navigable. */
 .panel-interactive { cursor: pointer; transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast); }
