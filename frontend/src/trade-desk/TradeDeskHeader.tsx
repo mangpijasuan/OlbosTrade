@@ -137,6 +137,13 @@ export default function TradeDeskHeader() {
     brokerStatus === "connected" || brokerStatus === "ok" ? "ok" :
     brokerStatus === "disconnected" ? "warn" : "muted";
 
+  // #7 — one instrument label: PAPER · AGGRESSIVE · AUTOPILOT (never color-only).
+  const stylePart =
+    riskProfile === "—" || riskProfile === "Unavailable" ? "—" : riskProfile;
+  const execPart =
+    execMode === "—" || execMode === "Unavailable" ? "—" : execMode;
+  const sessionLabel = `${env.toUpperCase()} · ${stylePart} · ${execPart}`;
+
   return (
     <header
       className="instrument-rail"
@@ -148,8 +155,11 @@ export default function TradeDeskHeader() {
       }}
       aria-label="Trade Desk status"
     >
-      <Chip label="Environment" value={env} tone={envTone} />
-      <Chip label="Execution" value={execMode} tone={execMode === "AUTOPILOT" ? "warn" : "muted"} />
+      <Chip
+        label="Session"
+        value={sessionLabel}
+        tone={env === "Live" ? "crit" : envTone}
+      />
       <div className="instrument-chip" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="instrument-chip-label">Style</span>
         <TradingStyleControl

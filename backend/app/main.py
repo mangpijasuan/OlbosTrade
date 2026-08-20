@@ -2313,6 +2313,10 @@ async def guardrail_status():
         "flags":                 status.flags,
         "paper_mode":            settings.is_paper_trading,
         "paper_visibility_mode": settings.paper_visibility_active,
+        # Display-only OMS flag for status lamps (not a control surface).
+        "position_rotation_on_max": bool(
+            getattr(settings, "position_rotation_on_max", False)
+        ),
         "daily_pnl":             daily_pnl,
         "weekly_pnl":            weekly_pnl,
         "monthly_pnl":           monthly_pnl,

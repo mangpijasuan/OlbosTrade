@@ -736,15 +736,83 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
 }
 
 // ── Status bar ────────────────────────────────────────────────────────────────
+function StatusLamp({
+  label,
+  on,
+  warn,
+}: {
+  label: string;
+  on: boolean;
+  warn?: boolean;
+}) {
+  const color = warn ? "var(--amber)" : on ? "var(--green)" : "var(--ink-faint)";
+  return (
+    <span
+      title={`${label}: ${warn ? "warn" : on ? "on" : "off"}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        color,
+        textTransform: "uppercase",
+      }}
+    >
+      <span
+        className={`dot ${on || warn ? "live" : "dead"}`}
+        style={{ background: color, width: 6, height: 6 }}
+      />
+      {label}
+    </span>
+  );
+}
+
 function StatusBar({ page }: { page: string }) {
   const label = statusLabelForPage(page, activeNavModel());
+  const [killOn, setKillOn] = useState(false);
+  const [execMode, setExecMode] = useState("manual");
+  const [styleMode, setStyleMode] = useState("balanced");
+  const [rotationOn, setRotationOn] = useState(false);
+  const [paper, setPaper] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      Promise.all([
+        api.getTradeDeskKillSwitch().catch(() =>
+          api.getKillSwitchStatus().catch(() => ({})),
+        ),
+        api.getExecutionMode().catch(() => ({})),
+        api.getCurrentMode().catch(() => ({})),
+        api.getGuardrailStatus().catch(() => ({})),
+        fetch("/api/market/broker").then((r) => r.json()).catch(() => ({})),
+      ]).then(([kill, exec, mode, guard, broker]) => {
+        if (!alive) return;
+        setKillOn(!!(kill as any).engaged || !!(kill as any).is_engaged);
+        setExecMode(((exec as any).mode || "manual").toLowerCase());
+        setStyleMode(((mode as any).mode || "balanced").toLowerCase());
+        setRotationOn(!!(guard as any).position_rotation_on_max);
+        if ((broker as any).paper_mode === false) setPaper(false);
+        else if ((broker as any).paper_mode === true) setPaper(true);
+        else if (typeof (guard as any).paper_mode === "boolean") {
+          setPaper(!!(guard as any).paper_mode);
+        }
+      });
+    };
+    load();
+    const id = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
   return (
     <div className="instrument-status" style={{
       height: 28,
       display: "flex",
       alignItems: "center",
       padding: "0 16px",
-      gap: 24,
+      gap: 16,
       fontFamily: "var(--mono)",
       fontSize: 10,
       color: "var(--ink-faint)",
@@ -752,9 +820,22 @@ function StatusBar({ page }: { page: string }) {
       flexShrink: 0,
     }}>
       <span style={{ color: "var(--brand)", textTransform: "uppercase" }}>{label}</span>
-      <span id="broker-status-bar">IBKR GATEWAY</span>
-      <span>SPY · QQQ · IWM · NVDA · AAPL</span>
+      <span
+        style={{
+          color: paper ? "var(--green)" : "var(--red)",
+          fontWeight: 700,
+          textTransform: "uppercase",
+        }}
+        title={paper ? "Paper trading" : "Live trading — real capital"}
+      >
+        {paper ? "PAPER" : "LIVE"}
+      </span>
+      <StatusLamp label="Kill" on={killOn} warn={killOn} />
+      <StatusLamp label={`Exec ${execMode}`} on={execMode !== "manual"} warn={execMode === "autopilot"} />
+      <StatusLamp label={`Style ${styleMode}`} on />
+      <StatusLamp label="Rotation" on={rotationOn} />
       <div style={{ flex: 1 }} />
+      <span id="broker-status-bar">IBKR GATEWAY</span>
       <span style={{ color: "var(--brand)", fontWeight: 700 }}>Olbos v5.0</span>
     </div>
   );

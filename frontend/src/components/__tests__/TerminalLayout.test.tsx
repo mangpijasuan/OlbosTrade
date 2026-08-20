@@ -7,6 +7,12 @@ import TerminalLayout from "../TerminalLayout";
 vi.mock("../../api/client", () => ({
   api: {
     getExecutionMode: vi.fn().mockResolvedValue({ mode: "manual" }),
+    getCurrentMode: vi.fn().mockResolvedValue({ mode: "balanced" }),
+    getGuardrailStatus: vi.fn().mockResolvedValue({
+      trading_allowed: true,
+      paper_mode: true,
+      position_rotation_on_max: false,
+    }),
     getTradeDeskKillSwitch: vi.fn().mockResolvedValue({ engaged: false }),
     getKillSwitchStatus: vi.fn().mockResolvedValue({ engaged: false }),
     setTradeDeskKillSwitch: vi.fn().mockResolvedValue({ engaged: true }),

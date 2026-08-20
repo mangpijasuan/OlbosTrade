@@ -1,6 +1,6 @@
 /**
  * Command Overview — Trade Desk landing. Read-only queues from existing APIs.
- * Actionable, not a crowded dashboard. No order submission.
+ * Density: one readout strip + primary pending/blocked/submitted queues + signal feeds.
  */
 
 import React, { useEffect, useState } from "react";
@@ -9,6 +9,8 @@ import type { TradeDeskTab } from "./TradeDeskTabs";
 import { formatConfidenceFloor } from "../hooks/useTradingStyleFloor";
 import { useDeskBlockContext } from "../hooks/useDeskBlockContext";
 import { deriveSignalBlockReason } from "../utils/signalBlockReason";
+import { deskNextAction } from "../utils/deskNextAction";
+import { lifecycleFromExecution } from "./executionStatus";
 
 interface QueueCardProps {
   title: string;
@@ -18,9 +20,13 @@ interface QueueCardProps {
   tone?: "ok" | "warn" | "crit" | "muted";
   onOpen?: () => void;
   actionLabel?: string;
+  /** Larger primary queue column */
+  primary?: boolean;
 }
 
-function QueueCard({ title, count, items, empty, tone = "muted", onOpen, actionLabel }: QueueCardProps) {
+function QueueCard({
+  title, count, items, empty, tone = "muted", onOpen, actionLabel, primary,
+}: QueueCardProps) {
   const border =
     tone === "crit" ? "rgba(239,68,68,0.35)" :
     tone === "warn" ? "rgba(245,158,11,0.35)" :
@@ -32,18 +38,19 @@ function QueueCard({ title, count, items, empty, tone = "muted", onOpen, actionL
       style={{
         background: "var(--bg-2)",
         border: `1px solid ${border}`,
-        padding: "14px 16px",
+        boxShadow: "var(--raised-bezel)",
+        padding: primary ? "16px 18px" : "14px 16px",
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        minHeight: 160,
+        minHeight: primary ? 220 : 160,
       }}
     >
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
         <span
           style={{
             fontFamily: "var(--mono)",
-            fontSize: 11,
+            fontSize: primary ? 12 : 11,
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             color: "var(--ink-dim)",
@@ -51,7 +58,14 @@ function QueueCard({ title, count, items, empty, tone = "muted", onOpen, actionL
         >
           {title}
         </span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 18, fontWeight: 700, color: "var(--ink)" }}>
+        <span
+          style={{
+            fontFamily: "var(--mono)",
+            fontSize: primary ? 22 : 18,
+            fontWeight: 700,
+            color: "var(--ink)",
+          }}
+        >
           {count}
         </span>
       </div>
@@ -71,12 +85,12 @@ function QueueCard({ title, count, items, empty, tone = "muted", onOpen, actionL
             flex: 1,
           }}
         >
-          {items.slice(0, 5).map((line, i) => (
+          {items.slice(0, primary ? 8 : 5).map((line, i) => (
             <li
               key={i}
               style={{
                 fontFamily: "var(--mono)",
-                fontSize: 11,
+                fontSize: primary ? 12 : 11,
                 color: "var(--ink)",
                 borderBottom: "1px solid var(--line-dim)",
                 paddingBottom: 4,
@@ -126,11 +140,12 @@ function ScoreCard({
       style={{
         background: "var(--bg-2)",
         border: "1px solid var(--line-dim)",
+        boxShadow: "var(--raised-bezel)",
         padding: "14px 16px",
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        minHeight: 200,
+        minHeight: 180,
       }}
     >
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
@@ -148,11 +163,11 @@ function ScoreCard({
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 28, fontWeight: 700, color: scoreColor }}>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 24, fontWeight: 700, color: scoreColor }}>
           {score == null ? "—" : score.toFixed(0)}
         </span>
         {score != null && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 14, color: scoreColor }}>{scoreSuffix}</span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 13, color: scoreColor }}>{scoreSuffix}</span>
         )}
       </div>
 
@@ -211,21 +226,45 @@ function ScoreCard({
   );
 }
 
-function StatusRow({ label, value }: { label: string; value: string }) {
+function ReadoutCell({
+  label,
+  value,
+  tone = "muted",
+}: {
+  label: string;
+  value: string;
+  tone?: "ok" | "warn" | "crit" | "muted";
+}) {
+  const color =
+    tone === "ok" ? "var(--green)" :
+    tone === "warn" ? "var(--amber)" :
+    tone === "crit" ? "var(--red)" :
+    "var(--ink)";
   return (
     <div
       style={{
         display: "flex",
-        justifyContent: "space-between",
-        gap: 12,
-        padding: "6px 0",
-        borderBottom: "1px solid var(--line-dim)",
-        fontFamily: "var(--mono)",
-        fontSize: 11,
+        flexDirection: "column",
+        gap: 2,
+        padding: "10px 14px",
+        borderRight: "1px solid var(--line-dim)",
+        minWidth: 100,
       }}
     >
-      <span style={{ color: "var(--ink-faint)" }}>{label}</span>
-      <span style={{ color: "var(--ink)", textAlign: "right" }}>{value}</span>
+      <span
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--ink-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700, color }}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -239,9 +278,8 @@ export default function CommandOverview({
   const [pendingCount, setPendingCount] = useState(0);
   const [execLog, setExecLog] = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
-  const [regime, setRegime] = useState("—");
-  const [ks, setKs] = useState("—");
-  const [broker, setBroker] = useState("—");
+  const [heat, setHeat] = useState<string>("—");
+  const [heatTone, setHeatTone] = useState<"ok" | "warn" | "crit" | "muted">("muted");
   const [riskBudget, setRiskBudget] = useState("—");
   const [equitySignals, setEquitySignals] = useState<any[]>([]);
   const [optionsSignals, setOptionsSignals] = useState<any[]>([]);
@@ -253,18 +291,14 @@ export default function CommandOverview({
     let alive = true;
     const load = async () => {
       try {
-        const [pend, log, pos, reg, kill, br, risk, eqSig, optSig] = await Promise.all([
+        const [pend, log, pos, risk, eqSig, optSig, heatResp] = await Promise.all([
           api.getPendingApprovals().catch(() => ({ pending: [], count: 0 })),
-          api.getExecutionLog().catch(() => ({ events: [] })),
+          api.getExecutionLog().catch(() => ({ events: [], log: [] })),
           api.getPositions().catch(() => ({ positions: [] })),
-          api.getRegime().catch(() => ({})),
-          api.getTradeDeskKillSwitch().catch(() =>
-            api.getKillSwitchStatus().catch(() => ({})),
-          ),
-          fetch("/api/market/broker").then((r) => r.json()).catch(() => ({})),
           api.getPortfolioState().catch(() => ({})),
           api.getEquitySignals(20).catch(() => ({ signals: [] })),
           api.getOptionsSignals(20).catch(() => ({ signals: [] })),
+          fetch("/api/portfolio/heat").then((r) => r.json()).catch(() => ({})),
         ]);
         if (!alive) return;
         const p = (pend as any).pending || [];
@@ -272,22 +306,32 @@ export default function CommandOverview({
         setPendingCount((pend as any).count ?? p.length);
         setExecLog((log as any).events || (log as any).log || []);
         setPositions((pos as any).positions || (Array.isArray(pos) ? pos : []));
-        const r = (reg as any).regime || (reg as any).regime_type;
-        setRegime(typeof r === "string" ? r.replace(/_/g, " ") : "Unavailable");
-        const engaged = !!(kill as any).engaged || !!(kill as any).is_engaged;
-        setKs(engaged ? "ENGAGED" : "Clear");
-        setBroker(
-          `${((br as any).broker || "—").toUpperCase()} · ${(br as any).status || "unknown"}` +
-          ((br as any).paper_mode === false ? " · LIVE" : (br as any).paper_mode ? " · PAPER" : ""),
-        );
+
         const s = (risk as any).state || risk;
         if (typeof s.daily_loss_pct === "number" && typeof s.max_daily_loss_pct === "number") {
-          setRiskBudget(
-            `${(Math.max(0, s.max_daily_loss_pct - s.daily_loss_pct) * 100).toFixed(1)}% daily remaining`,
-          );
+          const lossUsed = Math.max(0, -s.daily_loss_pct);
+          const rem = Math.max(0, s.max_daily_loss_pct - lossUsed);
+          setRiskBudget(`${(rem * 100).toFixed(1)}%`);
         } else {
-          setRiskBudget("Unavailable");
+          setRiskBudget("—");
         }
+
+        const h = heatResp as any;
+        if (typeof h.portfolio_heat_pct === "number") {
+          setHeat(`${h.portfolio_heat_pct.toFixed(1)}%`);
+          setHeatTone(
+            h.heat_status === "high" ? "crit" :
+            h.heat_status === "elevated" ? "warn" : "ok",
+          );
+        } else if (typeof h.heat_pct === "number") {
+          const pct = h.heat_pct <= 1 ? h.heat_pct * 100 : h.heat_pct;
+          setHeat(`${pct.toFixed(1)}%`);
+          setHeatTone(pct >= 70 ? "crit" : pct >= 40 ? "warn" : "ok");
+        } else {
+          setHeat(h.error ? "Unavailable" : "—");
+          setHeatTone("muted");
+        }
+
         setEquitySignals((eqSig as any).signals || []);
         setOptionsSignals((optSig as any).signals || []);
         setError(null);
@@ -303,36 +347,63 @@ export default function CommandOverview({
     };
   }, []);
 
-  const rejected = execLog.filter((e) => {
-    const st = (e.status || e.result?.status || e.kind || "").toString().toLowerCase();
-    return st.includes("reject") || st.includes("block") || st.includes("fail");
-  });
+  const openCount = positions.filter(
+    (p: any) =>
+      !p.status ||
+      String(p.status).toLowerCase() === "open" ||
+      p.status === "OPEN",
+  ).length;
+  const maxOpen = blockCtx.maxConcurrent ?? 5;
+  const consecLim = blockCtx.maxConsecutiveLosses;
+  const consecLabel =
+    consecLim != null
+      ? `${blockCtx.consecutiveLosses}/${consecLim}`
+      : String(blockCtx.consecutiveLosses);
 
-  const opportunityLines = pending.slice(0, 5).map((p) => {
+  const pendingLines = pending.slice(0, 8).map((p) => {
     const t = p.ticker || p.signal?.ticker || "?";
     const a = p.action || p.signal?.action || "";
-    return `${t} ${a}`.trim();
-  });
-
-  const reviewLines = pending.map((p) => {
-    const t = p.ticker || "?";
     const src = p.source || p.signal?.source || "pending";
-    return `${t} · ${src}`;
+    return `${t} ${a} · ${src}`.trim();
   });
 
-  const riskLines: string[] = [];
-  if (ks === "ENGAGED") riskLines.push("Kill switch engaged — trading halted");
-  if (riskBudget !== "—" && riskBudget !== "Unavailable") riskLines.push(`Budget: ${riskBudget}`);
-
-  const exceptionLines = rejected.slice(0, 5).map((e) => {
-    const t = e.ticker || e.signal_id || e.kind || "event";
-    const st = e.status || e.result?.status || e.kind || "exception";
-    return `${t} · ${st}`;
-  });
-
-  // Equities score card — actionable (non-HOLD) signals from the background
-  // scanner, same feed EquitySignals.tsx reads (/api/equity/signals).
   const actionableEquity = equitySignals.filter((s) => s.action === "BUY" || s.action === "SELL");
+  const blockedSignalLines = actionableEquity
+    .map((s) => {
+      const block = deriveSignalBlockReason(s, blockCtx);
+      if (!block) return null;
+      const conf = formatConfidenceFloor(
+        typeof s.confidence === "number" ? s.confidence : null,
+        minConfidence,
+      ).text;
+      return `${s.ticker} ${s.action} · ${block.label} · ${conf}`;
+    })
+    .filter(Boolean) as string[];
+
+  const execBlocked = execLog.filter((e) => {
+    const life = lifecycleFromExecution(e);
+    return life === "blocked" || life === "rejected" || life === "error";
+  });
+  const execBlockedLines = execBlocked.slice(0, 8).map((e) => {
+    const t = e.ticker || e.signal_id || e.kind || "event";
+    const life = lifecycleFromExecution(e);
+    const reason = e.reason || e.result?.reason || e.status || life;
+    return `${t} · ${reason}`;
+  });
+
+  // Prefer live signal blocks; fall back to recent exec failures.
+  const blockedLines =
+    blockedSignalLines.length > 0
+      ? blockedSignalLines.slice(0, 8)
+      : execBlockedLines;
+
+  const submitted = execLog.filter((e) => lifecycleFromExecution(e) === "submitted");
+  const submittedLines = submitted.slice(0, 8).map((e) => {
+    const t = e.ticker || e.signal_id || "?";
+    const a = e.action || e.signal?.action || "";
+    return `${t} ${a} · submitted`.trim();
+  });
+
   const equityAvgConfidence =
     actionableEquity.length > 0
       ? (actionableEquity.reduce((sum, s) => sum + (s.confidence || 0), 0) / actionableEquity.length) * 100
@@ -349,8 +420,6 @@ export default function CommandOverview({
     return `${s.ticker} ${s.action} · ${conf}${suffix}`;
   });
 
-  // Options score card — recent spread signals (/api/options/signals),
-  // confidence there is POP when available (see main.py signal builder).
   const optionsAvgConfidence =
     optionsSignals.length > 0
       ? (optionsSignals.reduce((sum, s) => sum + (s.confidence || 0), 0) / optionsSignals.length) * 100
@@ -371,8 +440,28 @@ export default function CommandOverview({
     return `${s.ticker} ${strat} · ${conf}${suffix}`;
   });
 
+  const openTone: "ok" | "warn" | "crit" | "muted" =
+    openCount >= maxOpen ? "warn" : openCount > 0 ? "ok" : "muted";
+  const consecTone: "ok" | "warn" | "crit" | "muted" =
+    !blockCtx.tradingAllowed ? "crit" :
+    consecLim != null && blockCtx.consecutiveLosses >= Math.max(1, consecLim - 2) ? "warn" :
+    "muted";
+  const ksTone: "ok" | "warn" | "crit" | "muted" = blockCtx.killEngaged ? "crit" : "ok";
+  const nextAction = deskNextAction(blockCtx, openCount);
+
+  const pendingEmpty = nextAction && pendingCount === 0
+    ? nextAction
+    : "No Copilot approvals waiting.";
+  const blockedEmpty = nextAction && !blockCtx.tradingAllowed
+    ? nextAction
+    : "No live signal blocks or recent rejects.";
+  const submittedEmpty =
+    openCount <= 0 && blockCtx.tradingAllowed
+      ? "Flat · nothing submitted yet — queue a signal that clears the style floor"
+      : "No recent submitted fills in the execution log.";
+
   return (
-    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100 }}>
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, maxWidth: 1100 }}>
       <div>
         <h2
           style={{
@@ -386,7 +475,7 @@ export default function CommandOverview({
           COMMAND OVERVIEW
         </h2>
         <p style={{ margin: "6px 0 0", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-          Decision queues from live desk state. Read-only — execution stays on existing Trade Desk paths.
+          Pending · blocked · submitted. Read-only — execution stays on existing Trade Desk paths.
         </p>
       </div>
 
@@ -404,64 +493,96 @@ export default function CommandOverview({
         </div>
       )}
 
+      {/* #5 Positions / risk readout strip — always visible */}
       <div
+        className="instrument-rail"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-          gap: 0,
-          border: "1px solid var(--line-dim)",
-          background: "var(--bg-2)",
-          padding: "4px 12px",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "stretch",
+          overflow: "hidden",
         }}
+        aria-label="Desk positions and risk readout"
       >
-        <StatusRow label="Regime" value={regime} />
-        <StatusRow label="Kill switch" value={ks} />
-        <StatusRow label="Broker" value={broker} />
-        <StatusRow label="Risk budget" value={riskBudget} />
-        <StatusRow label="Open positions" value={String(positions.length)} />
-        <StatusRow label="Copilot queue" value={String(pendingCount)} />
+        <ReadoutCell label="Open" value={`${openCount}/${maxOpen}`} tone={openTone} />
+        <ReadoutCell label="Heat" value={heat} tone={heatTone} />
+        <ReadoutCell label="Consec losses" value={consecLabel} tone={consecTone} />
+        <ReadoutCell label="Risk budget" value={riskBudget} tone={riskBudget === "—" ? "muted" : "ok"} />
+        <ReadoutCell
+          label="Kill switch"
+          value={blockCtx.killEngaged ? "ENGAGED" : "Clear"}
+          tone={ksTone}
+        />
+        <ReadoutCell
+          label="Trading"
+          value={blockCtx.tradingAllowed ? "Allowed" : "Suspended"}
+          tone={blockCtx.tradingAllowed ? "ok" : "crit"}
+        />
+        <div style={{ flex: 1, minWidth: 8 }} />
+        <div style={{ display: "flex", alignItems: "center", padding: "8px 12px", gap: 8 }}>
+          <button
+            type="button"
+            className="btn-t"
+            onClick={() => onNavigateTab("positions")}
+            style={{ fontSize: 10, letterSpacing: "0.08em" }}
+          >
+            Positions
+          </button>
+        </div>
       </div>
 
+      {nextAction && (
+        <div
+          style={{
+            border: "1px solid rgba(245,158,11,0.35)",
+            background: "rgba(245,158,11,0.06)",
+            padding: "10px 14px",
+            fontFamily: "var(--mono)",
+            fontSize: 11,
+            color: "var(--amber)",
+            letterSpacing: "0.02em",
+          }}
+          role="status"
+        >
+          Next · {nextAction}
+        </div>
+      )}
+
+      {/* #4 Primary queues — pending / blocked / submitted */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
           gap: 12,
         }}
       >
         <QueueCard
-          title="Opportunities"
+          primary
+          title="Pending"
           count={pendingCount}
-          items={opportunityLines}
-          empty="No queued opportunities. Scans and signals appear here when Copilot has work."
-          tone={pendingCount > 0 ? "ok" : "muted"}
-          onOpen={() => onNavigateTab("copilot")}
-          actionLabel="Open Copilot"
-        />
-        <QueueCard
-          title="Reviews required"
-          count={pendingCount}
-          items={reviewLines}
-          empty="No approvals waiting."
+          items={pendingLines}
+          empty={pendingEmpty}
           tone={pendingCount > 0 ? "warn" : "muted"}
           onOpen={() => onNavigateTab("copilot")}
           actionLabel="Review queue"
         />
         <QueueCard
-          title="Risk actions"
-          count={riskLines.length || (ks === "ENGAGED" ? 1 : 0)}
-          items={riskLines.length ? riskLines : ["No mandatory risk actions from current status."]}
-          empty="No risk actions."
-          tone={ks === "ENGAGED" ? "crit" : "muted"}
-          onOpen={() => onNavigateTab("positions")}
-          actionLabel="Positions"
+          primary
+          title="Blocked"
+          count={blockedLines.length || execBlocked.length}
+          items={blockedLines}
+          empty={blockedEmpty}
+          tone={(blockedLines.length || execBlocked.length) > 0 ? "crit" : "muted"}
+          onOpen={() => onNavigateTab("execution")}
+          actionLabel="Execution log"
         />
         <QueueCard
-          title="Execution exceptions"
-          count={rejected.length}
-          items={exceptionLines}
-          empty="No recent rejects/blocks in the execution log."
-          tone={rejected.length > 0 ? "crit" : "muted"}
+          primary
+          title="Submitted"
+          count={submitted.length}
+          items={submittedLines}
+          empty={submittedEmpty}
+          tone={submitted.length > 0 ? "ok" : "muted"}
           onOpen={() => onNavigateTab("execution")}
           actionLabel="Execution log"
         />
