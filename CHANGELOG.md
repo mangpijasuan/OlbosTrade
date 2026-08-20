@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Trading Style in Trade Desk V2
+
+- Desk Settings now includes Trading Style (Conservative / Balanced /
+  Aggressive / Scalper) — was only on the legacy Trade Desk page
+- Mode cards show min confidence + daily hard max from the frequency controller
+
 ## Unreleased — Position rotation at max concurrent
 
 - When `POSITION_ROTATION_ON_MAX=true` and max open positions blocks a new

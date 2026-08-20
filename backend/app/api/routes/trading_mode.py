@@ -29,6 +29,8 @@ async def get_current_mode():
 @router.get("/all")
 async def get_all_modes():
     """Get all available modes for the mode selector UI."""
+    from app.services.trade_frequency_controller import MODE_RULES
+
     return {
         mode.value: {
             "display_name":       config.display_name,
@@ -40,6 +42,9 @@ async def get_all_modes():
             "ui_color":           config.ui_color,
             "ui_icon":            config.ui_icon,
             "is_active":          trading_mode_manager.current.active_mode.value == mode.value,
+            # Frequency controller floor — why 75% signals die under Balanced (0.90).
+            "min_confidence":     MODE_RULES[mode].min_confidence,
+            "hard_max_per_day":   MODE_RULES[mode].hard_max_per_day,
         }
         for mode, config in TRADING_MODES.items()
     }
