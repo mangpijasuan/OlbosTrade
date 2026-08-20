@@ -20,12 +20,19 @@ import pytest
 from app.api.routes.paper_trade import get_positions
 
 
-def _broker_position(*, symbol, quantity, avg_cost, underlying=None):
+def _broker_position(*, symbol, quantity, avg_cost, underlying=None, asset_type="equity"):
+    # asset_type mirrors Position.asset_type (Literal["equity", "option"]) —
+    # every real broker position sets this explicitly (ibkr_client.py /
+    # alpaca_client.py), so tests must too. A bare MagicMock() auto-vivifies
+    # `.asset_type` as a Mock object rather than raising AttributeError, so
+    # the route's `getattr(pos, "asset_type", "option")` fallback silently
+    # never triggers and the id_key/asset_type derivation goes wrong.
     p = MagicMock()
     p.symbol = symbol
     p.underlying = underlying or symbol
     p.quantity = quantity
     p.avg_cost = avg_cost
+    p.asset_type = asset_type
     return p
 
 
@@ -98,7 +105,7 @@ async def test_tracked_equity_position_includes_asset_type_hold_days_mode_and_ex
 async def test_tracked_options_position_reports_options_asset_type():
     broker = MagicMock()
     broker.get_positions = AsyncMock(return_value=[
-        _broker_position(symbol="SPY", quantity=1, avg_cost=5.0),
+        _broker_position(symbol="SPY", quantity=1, avg_cost=5.0, asset_type="option"),
     ])
     db_trade = _db_trade(
         underlying="SPY", entry_date=datetime.now(timezone.utc), spread_type="put_credit_spread",
@@ -136,7 +143,10 @@ async def test_untracked_broker_position_has_no_db_derived_fields():
     assert pos["approved_by"] is None
     assert pos["mfe_pnl"] is None
     assert pos["mae_pnl"] is None
-    assert pos["asset_type"] == "options"  # no spread_type known -> can't claim equity
+    # No DB row, so asset_type comes from the broker's own report (MSFT is
+    # a stock) rather than a derived spread_type — this is the untracked-
+    # position asset_type fix, not a hardcoded "no data -> options" default.
+    assert pos["asset_type"] == "equity"
 
 
 @pytest.mark.asyncio
