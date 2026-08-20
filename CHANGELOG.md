@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — P1 identity / sizing / scan honesty
+
+- Position identity + OMS duplicate guard key on `(underlying, equity|options)`
+  so SPY stock and SPY spreads coexist (`trade_identity.py`, `paper_trade`,
+  `_execute_signal` Stage 3)
+- Equity sizing allows **0 shares** (skip) instead of forcing `max(1, …)`
+- Scan panels: “Queue top for approval” (not Auto-execute); removed dead
+  EXECUTE LADDER; options `/signal` requires `asset_type=options` + spread
+- Paper E2E updated; **V2 flags stay opt-in** (no default-on)
+
 ## Unreleased — Feature flags opt-in (pre-deploy)
 
 - Trade Desk V2 flags default **off** (`trade_desk_v2` and desk/monitor/replay/mobile)

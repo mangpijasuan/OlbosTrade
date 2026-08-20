@@ -13,6 +13,7 @@ from app.broker.broker_factory import get_broker
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.trade import Trade
+from app.services.trade_identity import asset_class_from_trade, position_identity_key
 
 router = APIRouter()
 
@@ -96,7 +97,12 @@ async def get_positions():
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Trade).where(Trade.status == "open"))
-            db_trades = {t.underlying: t for t in result.scalars().all()}
+            # Key by (underlying, equity|options) — not bare underlying — so
+            # SPY shares and a SPY spread do not clobber each other.
+            db_trades = {
+                position_identity_key(t.underlying, asset_class_from_trade(t)): t
+                for t in result.scalars().all()
+            }
     except Exception:
         db_trades = {}
 
@@ -126,8 +132,18 @@ async def get_positions():
     for pos in broker_positions:
         sym = getattr(pos, "symbol", str(pos))
         underlying = getattr(pos, "underlying", sym)
-        seen.add(sym)
-        db = db_trades.get(underlying)
+        broker_asset = (
+            "equity" if getattr(pos, "asset_type", "option") == "equity" else "options"
+        )
+        id_key = position_identity_key(underlying, broker_asset)
+        seen.add(id_key)
+        # Prefer exact (underlying, asset) match; fall back to underlying-only
+        # equity/options pair only when broker did not report asset_type well.
+        db = db_trades.get(id_key)
+        if db is None and getattr(pos, "asset_type", None) is None:
+            db = db_trades.get(position_identity_key(underlying, "equity")) or db_trades.get(
+                position_identity_key(underlying, "options")
+            )
         qty      = getattr(pos, "quantity", 0)
         avg_cost = float(getattr(pos, "avg_cost", 0) or 0)
         cur_price = price_map.get(sym)
@@ -189,13 +205,14 @@ async def get_positions():
         })
 
     # Add any DB-open trades not in broker positions (may be paper-only)
-    for sym, t in db_trades.items():
-        if sym not in seen:
+    for (_sym, _asset), t in db_trades.items():
+        id_key = (_sym, _asset)
+        if id_key not in seen:
             positions.append({
                 "id":              str(t.id),
-                "symbol":          sym,
+                "symbol":          _sym,
                 "strategy":        t.strategy,
-                "asset_type":      "equity" if (t.spread_type or "").lower().startswith("equity") else "options",
+                "asset_type":      _asset,
                 "spread_type":     t.spread_type,
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
                 "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,

@@ -362,10 +362,38 @@ def _options_signal():
 
 
 def _dup_session(existing=None):
+    """Mock DB session for Stage 3 duplicate guard.
+
+    `existing` may be:
+      - None / [] → no open trades
+      - a Trade-like object or list of them
+      - legacy ``("trade-id",)`` → synthesize an open SPY options trade
+    """
     session = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
-    session.execute = AsyncMock(return_value=MagicMock(first=lambda: existing))
+    if existing is None or existing == []:
+        rows = []
+    elif (
+        isinstance(existing, tuple)
+        and existing
+        and not hasattr(existing[0], "underlying")
+    ):
+        t = MagicMock()
+        t.id = existing[0]
+        t.underlying = "SPY"
+        t.spread_type = "bull_put_spread"
+        t.strategy = "bull_put_spread"
+        t.status = "open"
+        rows = [t]
+    elif isinstance(existing, (list, tuple)):
+        rows = list(existing)
+    else:
+        rows = [existing]
+    result = MagicMock()
+    result.scalars.return_value = MagicMock(all=lambda: rows)
+    result.first = MagicMock(return_value=rows[0] if rows else None)
+    session.execute = AsyncMock(return_value=result)
     return session
 
 
@@ -496,6 +524,30 @@ async def test_duplicate_open_trade_skipped():
          patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
         res = await _execute_signal(_options_signal(), approved_by="manual")
     assert res["result"] == "skipped" and "already_open" in res["reason"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_guard_allows_other_asset_class_same_underlying():
+    """Open SPY equity must not block a new SPY options signal (and vice versa)."""
+    equity_open = MagicMock()
+    equity_open.id = "eq-1"
+    equity_open.underlying = "SPY"
+    equity_open.spread_type = "equity_long"
+    equity_open.strategy = "equity"
+    equity_open.status = "open"
+
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-opt", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(existing=[equity_open])), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-opt")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
 
 
 # ── Stage 1c: Equity Desk composer confidence-gate carve-out ──────────────────────

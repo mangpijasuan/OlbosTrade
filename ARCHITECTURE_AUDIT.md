@@ -1,5 +1,47 @@
 # Architecture Audit — OlbosTrade
 
+Date: **2026-08-20 (revision 3)** · Full-app re-audit against current `main`.  
+Prior: 2026-07-19 (rev 2), 2026-07-16 (original).  
+Canvas: `olbostrade-audit-2026-08-20.canvas.tsx`
+
+---
+
+## Verdict (2026-08-20 → patched)
+
+**Paper: mechanically sound.** Single OMS (`_execute_signal`), Step 8 portfolio
+gate on-path (Greeks off), mutate auth when `SECRET_KEY` set, kill reset via
+env code, Trade Desk V2 **opt-in off**.
+
+**Live capital: not yet.** Kill engage remains unauthenticated at FastAPI (by
+design / nginx). V2 stays **opt-in** until Paper E2E is signed off.
+
+### Closed this pass (was open 2026-08-20)
+
+| Was | Issue | Fix |
+|-----|--------|-----|
+| P1 | Positions + dup guard keyed on `underlying` only | `(underlying, equity\|options)` via `trade_identity.py` |
+| P1 | Equity size floor `max(1, shares)` | `compute_equity_trade_plan` allows 0 (OMS skip) |
+| P2 | Misleading scan Auto-execute / dead EXECUTE LADDER | Relabeled queue UX; ladder button removed |
+| P2 | Options `/signal` equity-shaped | Require `asset_type=options` + spread or 400 |
+
+### Still open
+
+| Sev | Issue | Where |
+|-----|--------|--------|
+| P1 | Kill engage unauthenticated at FastAPI | `trade_desk.py` (by design; nginx) |
+| P2 | Duplicated delta/vega constants | `risk_manager` vs `portfolio_greeks` |
+| P3 | Vestigial equity approve; TRADING_POLICY SPY-only; App bundle | cleanup |
+
+### Next
+
+1. Run / sign off `docs/trade-desk-2.0/PAPER_E2E.md` on paper  
+2. Only then consider V2 default-on or live prep  
+3. Remaining P2/P3 cleanup as capacity allows  
+
+---
+
+# Prior revision (2026-07-19)
+
 Date: 2026-07-19 (revision 2) · Read-only pass · Verified against actual code,
 not against status labels. Original pass: 2026-07-16 (below, preserved).
 
@@ -237,8 +279,8 @@ true before that stops being a paper account.
 | MED | Regime | `main.py:380-397`; `regime_classifier.py:151-155` | No staleness check on regime age | Max-age gate; degrade to UNKNOWN | **FIXED** |
 | MED | Regime | `main.py:331-346` vs `main.py:722` | Fail-open (equities) vs fail-closed (options) on unknown regime — two policies for one condition | Pick one, document it | **Not re-verified this pass** |
 | MED | Risk limits | `risk_manager.py:57-61` vs `portfolio_greeks.py:37-38, 131` | Same delta/vega limits duplicated in two services | Single limits module | **OPEN — unchanged** |
-| MED | Reconciliation | `paper_trade.py:99`; `main.py:1281-1290` | Position identity keyed by underlying string only — clobbers a second open trade on the same symbol | Normalized position identity | **OPEN — unchanged** |
-| MED | Duplicate guard | `trade_desk.py:421-437` (now ~823-838) | Guard blocks per-underlying across asset types | Key on (underlying, asset_type) or (underlying, strategy) | **OPEN — unchanged** |
+| MED | Reconciliation | `paper_trade.py` + `trade_identity.py` | Position identity keyed by `(underlying, equity\|options)` | Normalized position identity | **CLOSED** |
+| MED | Duplicate guard | `trade_desk.py` Stage 3 | Guard keys on asset class with underlying | Key on (underlying, asset_type) | **CLOSED** |
 | MED | Options | `main.py:757-763`; `trade_desk.py:579-592` | `iron_condor` regime-allowed but structurally 2-leg-only unexecutable | Wire 4-leg combo or remove from config | **FIXED** — explicit guarded skip, logged, documented |
 | MED | Divergence UX | `components/SignalDivergence.tsx` (no consumers) | Built, tested, unused while the disagreement it targets is live | Wire it | **FIXED** — now consumed in `EquityScanPanel.tsx` |
 | LOW | Docs drift | `TRADING_POLICY.md:34-37` | "SPY-only" claim false since QQQ shipped | Update charter | **OPEN — unchanged** |

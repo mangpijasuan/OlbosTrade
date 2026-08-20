@@ -2,13 +2,21 @@
 
 Operator walkthrough on **paper** only. Do not flip `IBKR_TRADING_MODE=live`.
 
+## Decision: V2 default-on
+
+**Keep Trade Desk V2 opt-in** (`trade_desk_v2` and related flags default **off** in
+`frontend/src/trade-desk/featureFlags.ts`). Enable locally via Desk Settings /
+`localStorage olbos.flags.trade_desk_v2=1` / `VITE_TRADE_DESK_V2=1` for this
+walkthrough. Flip product defaults only after this checklist passes on paper
+and operators agree.
+
 ## Preconditions
 
 - [ ] Gateway / broker connected; account shows **Paper**
 - [ ] Kill switch **Clear**
 - [ ] `EXECUTION_PORTFOLIO_GATE=true`, `EXECUTION_ENFORCE_PORTFOLIO_GREEKS=false`
 - [ ] If `SECRET_KEY` set: paste into Risk → Operator API Key
-- [ ] Trade Desk 2.0 flag on; execution mode **COPILOT**
+- [ ] Trade Desk 2.0 flag **on for this session only**; execution mode **COPILOT**
 - [ ] Prefer RTH, or temporarily `MARKET_HOURS_ONLY=false` for this smoke only
 
 ## Smoke steps
@@ -19,19 +27,24 @@ Operator walkthrough on **paper** only. Do not flip `IBKR_TRADING_MODE=live`.
 4. **Approve** → Execution Monitor / log shows `submitted` or a clear `portfolio_gate:` / guardrail block. Confirm size matches shares (not silent 1 unless you sent 1).
 5. **Manual trade** 1 share → same OMS gates apply.
 6. **Engage kill switch** → approve/manual **blocked**; reset with `KILL_SWITCH_RESET_CODE`.
-7. **Options** — prefer a full background/scanner options signal (with `spread`) for approve; do not rely on thin options scan `/signal` for fills.
-8. **AUTOPILOT** briefly — background `handle_signal` may execute; scan `/signal` still **queues**.
-9. Force **portfolio_gate** (heat/concentration/max positions) → block reason contains `portfolio_gate:`.
-10. Set `EXECUTION_PORTFOLIO_GATE=false` → one paper trade allowed → restore `true`.
-11. **Orders / Execution / Replay** tabs show the event; journal optional under Research.
-12. Confirm logs: only `_execute_signal` places opens; no unexpected second path.
+7. **Same-underlying identity** — with open **SPY equity**, queue/approve a **SPY options** spread (or the reverse). Duplicate guard must **not** skip as `already_open` across asset classes. Positions list must show both when both are open.
+8. **Options scan** — “Queue top for approval” sends `asset_type=options` + `spread`; appears in Copilot with strikes. Thin equity-shaped options `/signal` must **400**.
+9. **Scan UX** — label says queue/approval (not “Auto-execute” / “Executed”); no dead **EXECUTE LADDER**.
+10. **AUTOPILOT** briefly — background `handle_signal` may execute; scan `/signal` still **queues**.
+11. Force **portfolio_gate** (heat/concentration/max positions) → block reason contains `portfolio_gate:`.
+12. Set `EXECUTION_PORTFOLIO_GATE=false` → one paper trade allowed → restore `true`.
+13. **Orders / Execution / Replay** tabs show the event; journal optional under Research.
+14. Confirm logs: only `_execute_signal` places opens; no unexpected second path.
 
 ## Pass criteria
 
 - At least one paper fill **or** deliberate block with correct reason string
 - Kill switch engage/reset works
 - Composer shares preserved on approve
+- Equity + options on same underlying coexist (identity / duplicate guard)
+- Options scan queues with spread; incomplete options payload rejected
 - No live account / live mode
+- **Do not** change V2 defaults to on until this pass is signed off
 
 ## Fail → stop
 

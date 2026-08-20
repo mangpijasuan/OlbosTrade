@@ -28,7 +28,10 @@ describe("trade desk feature flags", () => {
     vi.unstubAllGlobals();
   });
 
-  it("defaults trade_desk_v2 to off (opt-in until paper walkthrough)", () => {
+  it("keeps trade_desk_v2 opt-in (localStorage can force off over env)", () => {
+    // Product DEFAULTS are false; Vite env (e.g. .env.local) may enable V2
+    // for local tryouts — rollback must still win via localStorage.
+    setFlagEnabled("trade_desk_v2", false);
     expect(isTradeDeskV2Enabled()).toBe(false);
   });
 

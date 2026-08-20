@@ -1019,19 +1019,29 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             return _skipped("zero_size")
 
     # ── Stage 3: Duplicate guard ───────────────────────────────────────────────
+    # Key on (underlying, asset class) so SPY equity and SPY options can coexist.
     try:
         from app.core.database import AsyncSessionLocal
         from app.models.trade import Trade
+        from app.services.trade_identity import asset_class_from_signal, asset_class_from_trade
         from sqlalchemy import select
+        wanted = asset_class_from_signal({**signal, "asset_type": asset_type})
         async with AsyncSessionLocal() as _db:
-            existing = (await _db.execute(
-                select(Trade.id).where(
+            rows = (await _db.execute(
+                select(Trade).where(
                     Trade.underlying == ticker,
                     Trade.status.in_(["open", "pending"]),
                 )
-            )).first()
-        if existing:
-            logger.info("Skipping %s — open/pending trade already exists in DB", ticker)
+            )).scalars().all()
+        existing = next(
+            (t for t in rows if asset_class_from_trade(t) == wanted),
+            None,
+        )
+        if existing is not None:
+            logger.info(
+                "Skipping %s %s — open/pending %s trade already exists in DB",
+                ticker, wanted, wanted,
+            )
             return _skipped("already_open")
     except Exception as _dup_exc:
         # Fail closed, matching Stage 2's guardrail gate (_fetch_portfolio_state)
@@ -1449,6 +1459,37 @@ class ScanSignalRequest(BaseModel):
     # Equity size — composer sends this; scan panel defaults to 1 if omitted.
     shares: int = 1
     asset_type: str = "equity"
+    # Options scan / composer — required when asset_type is options
+    strategy: Optional[str] = None
+    quantity: int = 1
+    spread: Optional[dict] = None
+
+
+def _require_options_spread(req: "ScanSignalRequest") -> dict:
+    """Validate options queue payload; return normalized spread dict."""
+    spread = dict(req.spread or {})
+    short_strike = spread.get("short_strike")
+    long_strike = spread.get("long_strike")
+    option_type = (spread.get("option_type") or "").lower()
+    if short_strike is None or long_strike is None or option_type not in ("put", "call"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "options signals require spread with short_strike, long_strike, "
+                "and option_type (put|call)"
+            ),
+        )
+    if not spread.get("expiration"):
+        raise HTTPException(
+            status_code=400,
+            detail="options signals require spread.expiration (YYYY-MM-DD)",
+        )
+    if spread.get("net_credit") is None and spread.get("max_loss") is None:
+        raise HTTPException(
+            status_code=400,
+            detail="options signals require spread.net_credit or spread.max_loss",
+        )
+    return spread
 
 
 @router.post("/signal", dependencies=[Depends(require_api_key), Depends(rate_limit)])
@@ -1462,38 +1503,71 @@ async def submit_scan_signal(req: ScanSignalRequest):
 
     Equity payloads include trade_plan.shares so approve → _execute_signal
     does not silently default to 1 share when the composer sent a larger size.
+
+    Options payloads must set asset_type=options and include a defined-risk
+    spread; equity-shaped options_scan_engine bodies are rejected.
     """
     signal_id = str(uuid.uuid4())
-    shares = max(int(req.shares or 1), 1)
+    source = (req.source or "scan_engine").strip()
+    asset_type = (req.asset_type or "equity").lower().strip()
+    if source == "options_scan_engine" or asset_type in ("options", "option"):
+        asset_type = "options"
 
-    # Build signal compatible with _execute_signal()
-    signal = {
-        "id": signal_id,
-        "ticker": req.ticker.upper(),
-        "action": req.action,
-        "asset_type": (req.asset_type or "equity").lower(),
-        "entry_price": req.entry_price,
-        "stop_price": req.stop_price,
-        "target_price": req.target_price,
-        "trade_plan": {
-            "shares": shares,
+    if asset_type == "options":
+        spread = _require_options_spread(req)
+        strategy = (req.strategy or "bull_put_spread").strip()
+        quantity = max(int(req.quantity or 1), 1)
+        signal = {
+            "id": signal_id,
+            "ticker": req.ticker.upper(),
+            "action": req.action,
+            "asset_type": "options",
+            "strategy": strategy,
+            "quantity": quantity,
+            "spread": spread,
             "entry_price": req.entry_price,
             "stop_price": req.stop_price,
             "target_price": req.target_price,
-            "risk_reward": (
-                abs(req.target_price - req.entry_price) / abs(req.entry_price - req.stop_price)
-                if abs(req.entry_price - req.stop_price) > 1e-9 else 0.0
-            ),
-        },
-        "confidence": req.confidence,
-        "kelly_fraction": req.kelly_fraction,
-        "expected_value": req.expected_value,
-        "pop": req.pop,
-        "entry_ladder": req.entry_ladder,
-        "source": req.source,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "approved_by": "scan_panel",
-    }
+            "confidence": req.confidence,
+            "kelly_fraction": req.kelly_fraction,
+            "expected_value": req.expected_value,
+            "pop": req.pop,
+            "entry_ladder": req.entry_ladder,
+            "source": source,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": "scan_panel",
+        }
+        shares = quantity
+    else:
+        shares = max(int(req.shares or 1), 1)
+        # Build signal compatible with _execute_signal()
+        signal = {
+            "id": signal_id,
+            "ticker": req.ticker.upper(),
+            "action": req.action,
+            "asset_type": "equity",
+            "entry_price": req.entry_price,
+            "stop_price": req.stop_price,
+            "target_price": req.target_price,
+            "trade_plan": {
+                "shares": shares,
+                "entry_price": req.entry_price,
+                "stop_price": req.stop_price,
+                "target_price": req.target_price,
+                "risk_reward": (
+                    abs(req.target_price - req.entry_price) / abs(req.entry_price - req.stop_price)
+                    if abs(req.entry_price - req.stop_price) > 1e-9 else 0.0
+                ),
+            },
+            "confidence": req.confidence,
+            "kelly_fraction": req.kelly_fraction,
+            "expected_value": req.expected_value,
+            "pop": req.pop,
+            "entry_ladder": req.entry_ladder,
+            "source": source,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": "scan_panel",
+        }
 
     mode = execution_mode_manager.mode
 

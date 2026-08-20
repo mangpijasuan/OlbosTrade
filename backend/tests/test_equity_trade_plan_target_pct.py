@@ -40,3 +40,10 @@ def test_hold_action_returns_no_target_move_pct():
     plan = compute_equity_trade_plan(_ind(100.0, 5.0), "HOLD", portfolio_value=100_000.0)
     assert "target_move_pct" not in plan
     assert plan == {"entry_price": 100.0, "action": "HOLD"}
+
+
+def test_tiny_portfolio_may_size_to_zero_shares():
+    """Do not force max(1) — OMS skips zero-size instead of a 1-share floor."""
+    # $50 portfolio, $100 stock, $10 risk/share → base shares floor to 0
+    plan = compute_equity_trade_plan(_ind(100.0, 5.0), "BUY", portfolio_value=50.0)
+    assert plan["shares"] == 0

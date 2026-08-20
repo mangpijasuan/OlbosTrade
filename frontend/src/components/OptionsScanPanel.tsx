@@ -21,6 +21,7 @@ interface Candidate {
   option_type: "put" | "call";
   short_strike: number;
   long_strike: number;
+  expiration?: string;
   dte: number;
   credit: number;
   action: "BUY" | "SELL" | "HOLD";
@@ -483,22 +484,6 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
           >
             CLOSE
           </button>
-          <button
-            style={{
-              flex: 1,
-              background: "var(--green)",
-              border: "none",
-              borderRadius: 4,
-              padding: "8px 12px",
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: "pointer",
-              color: "var(--bg)",
-            }}
-          >
-            EXECUTE LADDER
-          </button>
         </div>
       </div>
     </div>
@@ -530,14 +515,25 @@ export default function OptionsScanPanel() {
   const ITEM_HEIGHT = isMobile ? 180 : isTablet ? 240 : 300;
   const VISIBLE_ITEMS = Math.ceil((window.innerHeight - 200) / ITEM_HEIGHT);
 
-  const executeTopCandidates = async (count: number) => {
+  const queueTopCandidates = async (count: number) => {
     if (!result?.candidates || count <= 0) return;
 
     const topCandidates = result.candidates.slice(0, count);
-    const toExecute = new Set(topCandidates.map((c) => c.ticker));
-    setExecutingCandidates(toExecute);
+    const pending = new Set(topCandidates.map((c) => c.ticker));
+    setExecutingCandidates(pending);
+    let queued = 0;
+    let failed = 0;
 
     for (const candidate of topCandidates) {
+      const impliedStrategy =
+        candidate.option_type === "put"
+          ? candidate.credit > 0 ? "bull_put_spread" : "bear_put_debit_spread"
+          : candidate.credit > 0 ? "bear_call_spread" : "bull_call_debit_spread";
+      const expiration =
+        candidate.expiration ||
+        new Date(Date.now() + Math.max(candidate.dte || 30, 1) * 86400000)
+          .toISOString()
+          .slice(0, 10);
       try {
         const response = await fetch("/api/trade-desk/signal", {
           method: "POST",
@@ -545,6 +541,9 @@ export default function OptionsScanPanel() {
           body: JSON.stringify({
             ticker: candidate.ticker,
             action: candidate.action,
+            asset_type: "options",
+            strategy: impliedStrategy,
+            quantity: 1,
             entry_price: candidate.credit,
             stop_price: 0,
             target_price: candidate.credit * 1.5,
@@ -554,19 +553,37 @@ export default function OptionsScanPanel() {
             pop: candidate.pop,
             confidence: candidate.confidence,
             source: "options_scan_engine",
+            spread: {
+              expiration,
+              short_strike: candidate.short_strike,
+              long_strike: candidate.long_strike,
+              option_type: candidate.option_type,
+              net_credit: candidate.credit,
+              max_loss: candidate.max_loss,
+            },
           }),
         });
 
         if (response.ok) {
-          toExecute.delete(candidate.ticker);
-          setExecutingCandidates(new Set(toExecute));
+          queued += 1;
+          pending.delete(candidate.ticker);
+          setExecutingCandidates(new Set(pending));
+        } else {
+          failed += 1;
         }
       } catch (e) {
-        console.error(`Failed to execute ${candidate.ticker}:`, e);
+        failed += 1;
+        console.error(`Failed to queue ${candidate.ticker}:`, e);
       }
     }
 
-    setToast({ message: `Executed ${count} top candidates`, type: "success" });
+    setToast({
+      message:
+        failed > 0
+          ? `Queued ${queued} for approval (${failed} failed)`
+          : `Queued ${queued} top candidates for approval`,
+      type: failed > 0 ? "warning" : "success",
+    });
     setAutoExecuteTop(0);
   };
 
@@ -817,11 +834,11 @@ export default function OptionsScanPanel() {
           </>
         )}
 
-        {/* Auto-execute top N */}
+        {/* Queue top N for approval (does not place broker orders) */}
         {result && result.candidates.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
             <label style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
-              Auto-execute top:
+              Queue top for approval:
             </label>
             <input
               type="number"
@@ -841,7 +858,7 @@ export default function OptionsScanPanel() {
               }}
             />
             <button
-              onClick={() => autoExecuteTop > 0 && executeTopCandidates(autoExecuteTop)}
+              onClick={() => autoExecuteTop > 0 && queueTopCandidates(autoExecuteTop)}
               disabled={autoExecuteTop <= 0 || executingCandidates.size > 0}
               style={{
                 background: autoExecuteTop > 0 ? "var(--green)" : "var(--bg-3)",
@@ -855,7 +872,7 @@ export default function OptionsScanPanel() {
                 cursor: autoExecuteTop > 0 ? "pointer" : "default",
               }}
             >
-              GO
+              QUEUE
             </button>
           </div>
         )}
@@ -1112,12 +1129,11 @@ export default function OptionsScanPanel() {
                         timeframe: typeof cand.dte === "number" ? `${cand.dte} DTE` : null,
                         confidence: typeof cand.confidence === "number" ? cand.confidence : null,
                         updatedAt: (cand as unknown as { last_update?: string }).last_update ?? null,
-                        // The scan panel can submit this candidate to
-                        // /api/trade-desk/signal directly (see EXECUTE
-                        // control below) — that only reaches the broker
-                        // through the same guardrail/execution-mode gate as
-                        // every other path, so "advisory" (not
-                        // execution-authoritative on its own).
+                        // The scan panel can queue this candidate via
+                        // /api/trade-desk/signal ("Queue top for approval") —
+                        // that only reaches the broker through the same
+                        // guardrail/execution-mode gate as every other path,
+                        // so "advisory" (not execution-authoritative on its own).
                         authority: "advisory",
                       }}
                       size="sm"

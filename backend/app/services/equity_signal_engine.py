@@ -300,11 +300,14 @@ def compute_equity_trade_plan(
     elif action == "SELL" and sentiment_score > 0.1:
         sentiment_scale = max(0.70, 1.0 - sentiment_score)
 
-    shares = max(1, int(shares_raw * sentiment_scale))
+    shares = int(shares_raw * sentiment_scale)
+    # Allow 0 — caller / OMS skips zero-size instead of forcing a 1-share trade.
+    shares = max(0, shares)
 
     # Cap at max_position_pct of portfolio
     max_shares = int((portfolio_value * max_position_pct) / max(entry, 0.01))
-    shares = min(shares, max_shares)
+    if shares > 0:
+        shares = min(shares, max_shares)
 
     position_size = shares * entry
     risk_dollars  = shares * risk_per_share

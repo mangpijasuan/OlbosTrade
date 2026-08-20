@@ -547,22 +547,6 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
           >
             CLOSE
           </button>
-          <button
-            style={{
-              flex: 1,
-              background: "var(--green)",
-              border: "none",
-              borderRadius: 4,
-              padding: "8px 12px",
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: "pointer",
-              color: "var(--bg)",
-            }}
-          >
-            EXECUTE LADDER
-          </button>
         </div>
       </div>
     </div>
@@ -656,12 +640,14 @@ export default function EquityScanPanel() {
     setToast({ message: `Exported ${result.candidates.length} candidates to CSV`, type: "success" });
   };
 
-  const executeTopCandidates = async (count: number) => {
+  const queueTopCandidates = async (count: number) => {
     if (!result?.candidates || count <= 0) return;
 
     const topCandidates = result.candidates.slice(0, count);
-    const toExecute = new Set(topCandidates.map((c) => c.ticker));
-    setExecutingCandidates(toExecute);
+    const pending = new Set(topCandidates.map((c) => c.ticker));
+    setExecutingCandidates(pending);
+    let queued = 0;
+    let failed = 0;
 
     for (const candidate of topCandidates) {
       try {
@@ -686,15 +672,25 @@ export default function EquityScanPanel() {
         });
 
         if (response.ok) {
-          toExecute.delete(candidate.ticker);
-          setExecutingCandidates(new Set(toExecute));
+          queued += 1;
+          pending.delete(candidate.ticker);
+          setExecutingCandidates(new Set(pending));
+        } else {
+          failed += 1;
         }
       } catch (e) {
-        console.error(`Failed to execute ${candidate.ticker}:`, e);
+        failed += 1;
+        console.error(`Failed to queue ${candidate.ticker}:`, e);
       }
     }
 
-    setToast({ message: `Executed ${count} top candidates`, type: "success" });
+    setToast({
+      message:
+        failed > 0
+          ? `Queued ${queued} for approval (${failed} failed)`
+          : `Queued ${queued} top candidates for approval`,
+      type: failed > 0 ? "warning" : "success",
+    });
     setAutoExecuteTop(0);
   };
 
@@ -937,11 +933,11 @@ export default function EquityScanPanel() {
           </>
         )}
 
-        {/* Auto-execute top N */}
+        {/* Queue top N for approval (does not place broker orders) */}
         {result && result.candidates.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
             <label style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
-              Auto-execute top:
+              Queue top for approval:
             </label>
             <input
               type="number"
@@ -961,7 +957,7 @@ export default function EquityScanPanel() {
               }}
             />
             <button
-              onClick={() => autoExecuteTop > 0 && executeTopCandidates(autoExecuteTop)}
+              onClick={() => autoExecuteTop > 0 && queueTopCandidates(autoExecuteTop)}
               disabled={autoExecuteTop <= 0 || executingCandidates.size > 0}
               style={{
                 background: autoExecuteTop > 0 ? "var(--green)" : "var(--bg-3)",
@@ -975,7 +971,7 @@ export default function EquityScanPanel() {
                 cursor: autoExecuteTop > 0 ? "pointer" : "default",
               }}
             >
-              GO
+              QUEUE
             </button>
           </div>
         )}
