@@ -162,8 +162,12 @@ export default function RiskMonitor() {
   const [operatorKey, setOperatorKey] = useState(() => getOperatorApiKey());
   const [sectionsError, setSectionsError] = useState(false);
 
+  // Combined status (OR of both flags — same source TerminalLayout's header
+  // badge and the sidebar KillSwitchButton already read), not the risk.py-
+  // only status, so this page can't show "not engaged" while the app is
+  // actually still halted on the trade-desk flag.
   const loadKs = () =>
-    api.getKillSwitchStatus().then(setKs).catch(() => {});
+    api.getTradeDeskKillSwitch().then(setKs).catch(() => {});
 
   useEffect(() => {
     const load = () => {
@@ -203,9 +207,19 @@ export default function RiskMonitor() {
     return () => clearInterval(t);
   }, []);
 
+  // Both engage and reset go through /api/trade-desk/kill-switch, not the
+  // risk.py-only /api/risk/kill-switch/engage|reset — this app has two
+  // independent kill-switch flags (kill_switch_service, and trade_desk.py's
+  // own in-memory _kill_switch), and the combined status shown everywhere
+  // (header, sidebar) is an OR of both. The risk.py-only endpoints used to
+  // leave a reset stuck: they cleared kill_switch_service but never
+  // trade_desk.py's _kill_switch, so the UI kept showing Halted even after
+  // a "successful" reset with the correct authorization code. The
+  // trade-desk endpoint's own handler already clears both together on
+  // engage and on reset — this just routes both buttons through it.
   const engageKs = async () => {
     setKsBusy(true); setKsError(null);
-    try { await api.engageKillSwitch(); await loadKs(); }
+    try { await api.setTradeDeskKillSwitch(true); await loadKs(); }
     catch (e: any) { setKsError(e?.message || "Failed to engage kill switch"); }
     finally { setKsBusy(false); }
   };
@@ -218,7 +232,7 @@ export default function RiskMonitor() {
     }
     setKsBusy(true); setKsError(null);
     try {
-      await api.resetKillSwitch(code);
+      await api.setTradeDeskKillSwitch(false, code);
       setResetCode("");
       await loadKs();
     } catch (e: any) {
