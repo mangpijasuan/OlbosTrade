@@ -21,6 +21,7 @@ import { NAV_MODEL_LEGACY, NAV_MODEL_V2, groupIdForKey } from "../utils/navModel
 import { isTradeDeskV2Enabled } from "../trade-desk/featureFlags";
 import { TerminalNavProvider } from "./TerminalNavContext";
 import { Badge } from "./ui";
+import TradingStyleControl from "./TradingStyleControl";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -410,12 +411,13 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         </div>
       </div>
 
-      {/* Execution mode — single tri-state control */}
+      {/* Execution mode + trading style */}
       <div style={{
         display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
         padding: "0 12px", borderLeft: "1px solid var(--line-dim)",
       }}>
         <ExecutionModeControl mode={execMode} onChange={setExec} />
+        <TradingStyleControl mode={mode} onChanged={(m) => setMode(m)} />
       </div>
 
       {/* Market status + clock — pinned right */}

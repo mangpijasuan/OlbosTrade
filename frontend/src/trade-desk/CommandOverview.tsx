@@ -6,6 +6,9 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { TradeDeskTab } from "./TradeDeskTabs";
+import { formatConfidenceFloor } from "../hooks/useTradingStyleFloor";
+import { useDeskBlockContext } from "../hooks/useDeskBlockContext";
+import { deriveSignalBlockReason } from "../utils/signalBlockReason";
 
 interface QueueCardProps {
   title: string;
@@ -243,6 +246,8 @@ export default function CommandOverview({
   const [equitySignals, setEquitySignals] = useState<any[]>([]);
   const [optionsSignals, setOptionsSignals] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const blockCtx = useDeskBlockContext();
+  const { minConfidence } = blockCtx;
 
   useEffect(() => {
     let alive = true;
@@ -335,8 +340,13 @@ export default function CommandOverview({
   const equityBuyCount = actionableEquity.filter((s) => s.action === "BUY").length;
   const equitySellCount = actionableEquity.filter((s) => s.action === "SELL").length;
   const equityLines = actionableEquity.slice(0, 5).map((s) => {
-    const conf = typeof s.confidence === "number" ? `${(s.confidence * 100).toFixed(0)}%` : "—";
-    return `${s.ticker} ${s.action} · ${conf}`;
+    const conf = formatConfidenceFloor(
+      typeof s.confidence === "number" ? s.confidence : null,
+      minConfidence,
+    ).text;
+    const block = deriveSignalBlockReason(s, blockCtx);
+    const suffix = block ? ` · blocked: ${block.label}` : "";
+    return `${s.ticker} ${s.action} · ${conf}${suffix}`;
   });
 
   // Options score card — recent spread signals (/api/options/signals),
@@ -349,8 +359,16 @@ export default function CommandOverview({
   const optionsDebitCount = optionsSignals.filter((s) => (s.spread?.net_credit ?? 0) < 0).length;
   const optionsLines = optionsSignals.slice(0, 5).map((s) => {
     const strat = s.strategy ? s.strategy.replace(/_/g, " ") : s.action || "—";
-    const conf = typeof s.confidence === "number" ? `${(s.confidence * 100).toFixed(0)}%` : "—";
-    return `${s.ticker} ${strat} · ${conf}`;
+    const conf = formatConfidenceFloor(
+      typeof s.confidence === "number" ? s.confidence : null,
+      minConfidence,
+    ).text;
+    const block = deriveSignalBlockReason(
+      { action: s.action || "BUY", confidence: s.confidence },
+      blockCtx,
+    );
+    const suffix = block ? ` · blocked: ${block.label}` : "";
+    return `${s.ticker} ${strat} · ${conf}${suffix}`;
   });
 
   return (

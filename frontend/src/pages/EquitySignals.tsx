@@ -8,7 +8,11 @@ import React, { useEffect, useState } from "react";
 import BrokerStatus from "../components/BrokerStatus";
 import PortfolioGreeks from "../components/PortfolioGreeks";
 import SignalAttribution from "../components/SignalAttribution";
+import ConfidenceFloorLabel from "../components/ConfidenceFloorLabel";
+import WhyBlockedChip from "../components/WhyBlockedChip";
 import type { SignalAttributionData } from "../types/signal";
+import { useDeskBlockContext } from "../hooks/useDeskBlockContext";
+import { deriveSignalBlockReason } from "../utils/signalBlockReason";
 import OptionsSignals from "./OptionsSignals";
 
 export type AssetTab = "equities" | "options";
@@ -109,19 +113,22 @@ function TickerLogo({ ticker, size = 28 }: { ticker: string; size?: number }) {
   );
 }
 
-function ConfidenceBar({ value }: { value: number }) {
+function ConfidenceBar({ value, minConfidence }: { value: number; minConfidence: number }) {
   const pct = Math.round(value * 100);
   const color = pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{
-        flex: 1, height: 4, background: "var(--bg-4)", borderRadius: 2, overflow: "hidden",
-      }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2 }} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{
+          flex: 1, height: 4, background: "var(--bg-4)", borderRadius: 2, overflow: "hidden",
+        }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2 }} />
+        </div>
+        <span style={{ color, fontFamily: "var(--mono)", fontSize: 11, fontWeight: 600, minWidth: 36 }}>
+          {pct}%
+        </span>
       </div>
-      <span style={{ color, fontFamily: "var(--mono)", fontSize: 11, fontWeight: 600, minWidth: 36 }}>
-        {pct}%
-      </span>
+      <ConfidenceFloorLabel confidence={value} minConfidence={minConfidence} />
     </div>
   );
 }
@@ -145,9 +152,18 @@ function toAttribution(sig: Signal): SignalAttributionData {
   };
 }
 
-function SignalCard({ sig }: { sig: Signal }) {
+function SignalCard({
+  sig,
+  minConfidence,
+  blockCtx,
+}: {
+  sig: Signal;
+  minConfidence: number;
+  blockCtx: ReturnType<typeof useDeskBlockContext>;
+}) {
   const tp = sig.trade_plan || {};
   const ind = sig.indicators || {};
+  const block = deriveSignalBlockReason(sig, blockCtx);
 
   return (
     <div style={{
@@ -170,6 +186,7 @@ function SignalCard({ sig }: { sig: Signal }) {
           {sig.ticker}
         </span>
         <SignalAttribution data={toAttribution(sig)} size="sm" />
+        <WhyBlockedChip reason={block} />
         {sig.earnings_gated && (
           <span style={{
             color: "var(--amber)", border: "1px solid var(--amber)",
@@ -192,7 +209,7 @@ function SignalCard({ sig }: { sig: Signal }) {
           <div style={{ color: "var(--ink-dim)", fontSize: 9, fontFamily: "var(--mono)", marginBottom: 4, letterSpacing: "0.08em" }}>
             CONFIDENCE
           </div>
-          <ConfidenceBar value={sig.confidence} />
+          <ConfidenceBar value={sig.confidence} minConfidence={minConfidence} />
         </div>
       )}
 
@@ -314,7 +331,17 @@ const ACTION_GROUP_COLOR: Record<Signal["action"], string> = {
   HOLD: "var(--ink-dim)",
 };
 
-function SignalGroup({ action, signals }: { action: Signal["action"]; signals: Signal[] }) {
+function SignalGroup({
+  action,
+  signals,
+  minConfidence,
+  blockCtx,
+}: {
+  action: Signal["action"];
+  signals: Signal[];
+  minConfidence: number;
+  blockCtx: ReturnType<typeof useDeskBlockContext>;
+}) {
   if (signals.length === 0) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -331,7 +358,14 @@ function SignalGroup({ action, signals }: { action: Signal["action"]; signals: S
         <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
-        {signals.map(sig => <SignalCard key={sig.id} sig={sig} />)}
+        {signals.map(sig => (
+          <SignalCard
+            key={sig.id}
+            sig={sig}
+            minConfidence={minConfidence}
+            blockCtx={blockCtx}
+          />
+        ))}
       </div>
     </div>
   );
@@ -357,7 +391,17 @@ function buildShareText(top: Signal[], label: string): string {
   ].join("\n");
 }
 
-function TopSignals({ top, label }: { top: Signal[]; label: string }) {
+function TopSignals({
+  top,
+  label,
+  minConfidence,
+  blockCtx,
+}: {
+  top: Signal[];
+  label: string;
+  minConfidence: number;
+  blockCtx: ReturnType<typeof useDeskBlockContext>;
+}) {
   const [copied, setCopied] = useState(false);
   if (top.length === 0) return null;
 
@@ -402,10 +446,12 @@ function TopSignals({ top, label }: { top: Signal[]; label: string }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {top.map(sig => {
           const move = sig.trade_plan?.target_move_pct;
+          const block = deriveSignalBlockReason(sig, blockCtx);
           return (
             <div key={sig.id} style={{
               display: "flex", alignItems: "center", gap: 10,
               background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
+              flexWrap: "wrap",
             }}>
               <TickerLogo ticker={sig.ticker} size={24} />
               <span style={{ color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 13, fontWeight: 700, minWidth: 56 }}>
@@ -417,9 +463,10 @@ function TopSignals({ top, label }: { top: Signal[]; label: string }) {
               }}>
                 {sig.action}
               </span>
-              <div style={{ flex: 1, maxWidth: 160 }}>
-                <ConfidenceBar value={sig.confidence} />
+              <div style={{ flex: 1, maxWidth: 180, minWidth: 120 }}>
+                <ConfidenceBar value={sig.confidence} minConfidence={minConfidence} />
               </div>
+              <WhyBlockedChip reason={block} />
               {move != null && (
                 <span style={{ color: "var(--amber)", fontFamily: "var(--mono)", fontSize: 11, fontWeight: 600 }}>
                   {move.toFixed(1)}% target
@@ -438,6 +485,8 @@ function EquitySignalsGrid() {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minMovePct, setMinMovePct] = useState(0);
+  const blockCtx = useDeskBlockContext();
+  const { minConfidence } = blockCtx;
 
   const loadSignals = () => {
     // Explicit limit — a single scan cycle across the equity watchlist (102
@@ -560,12 +609,12 @@ function EquitySignalsGrid() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
-            <TopSignals top={topBuySignals} label="BUY" />
-            <TopSignals top={topSellSignals} label="SELL" />
+            <TopSignals top={topBuySignals} label="BUY" minConfidence={minConfidence} blockCtx={blockCtx} />
+            <TopSignals top={topSellSignals} label="SELL" minConfidence={minConfidence} blockCtx={blockCtx} />
           </div>
-          <SignalGroup action="BUY" signals={buySignals} />
-          <SignalGroup action="SELL" signals={sellSignals} />
-          <SignalGroup action="HOLD" signals={holdSignals} />
+          <SignalGroup action="BUY" signals={buySignals} minConfidence={minConfidence} blockCtx={blockCtx} />
+          <SignalGroup action="SELL" signals={sellSignals} minConfidence={minConfidence} blockCtx={blockCtx} />
+          <SignalGroup action="HOLD" signals={holdSignals} minConfidence={minConfidence} blockCtx={blockCtx} />
         </div>
       )}
     </div>

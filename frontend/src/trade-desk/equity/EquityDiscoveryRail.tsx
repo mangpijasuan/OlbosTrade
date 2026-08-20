@@ -4,6 +4,10 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import ConfidenceFloorLabel from "../../components/ConfidenceFloorLabel";
+import WhyBlockedChip from "../../components/WhyBlockedChip";
+import { useDeskBlockContext } from "../../hooks/useDeskBlockContext";
+import { deriveSignalBlockReason } from "../../utils/signalBlockReason";
 
 const DEFAULT_WATCH = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "QQQ", "SPY"];
 
@@ -22,6 +26,8 @@ export default function EquityDiscoveryRail({
   const [positions, setPositions] = useState<any[]>([]);
   const [signalsError, setSignalsError] = useState(false);
   const [positionsError, setPositionsError] = useState(false);
+  const blockCtx = useDeskBlockContext();
+  const { minConfidence } = blockCtx;
 
   useEffect(() => {
     let alive = true;
@@ -160,8 +166,12 @@ export default function EquityDiscoveryRail({
                         color: s.action === "BUY" ? "var(--green)" : "var(--red)",
                       }}
                     >
-                      {s.action} {typeof s.confidence === "number" ? `${Math.round(s.confidence * 100)}%` : ""}
+                      {s.action}
                     </span>
+                  </div>
+                  <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                    <ConfidenceFloorLabel confidence={s.confidence} minConfidence={minConfidence} />
+                    <WhyBlockedChip reason={deriveSignalBlockReason(s, blockCtx)} />
                   </div>
                 </button>
               ))

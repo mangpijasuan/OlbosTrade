@@ -6,6 +6,8 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import KillSwitchButton from "../components/KillSwitchButton";
+import TradingStyleControl from "../components/TradingStyleControl";
+import type { TradingStyleKey } from "../hooks/useTradingStyleFloor";
 
 type Snap = { label: string; value: string; tone?: "ok" | "warn" | "crit" | "muted" };
 
@@ -148,7 +150,16 @@ export default function TradeDeskHeader() {
     >
       <Chip label="Environment" value={env} tone={envTone} />
       <Chip label="Execution" value={execMode} tone={execMode === "AUTOPILOT" ? "warn" : "muted"} />
-      <Chip label="Risk profile" value={riskProfile} />
+      <div className="instrument-chip" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span className="instrument-chip-label">Style</span>
+        <TradingStyleControl
+          mode={(riskProfile === "—" || riskProfile === "Unavailable"
+            ? "balanced"
+            : riskProfile
+          ).toLowerCase()}
+          onChanged={(m: TradingStyleKey) => setRiskProfile(m.toUpperCase())}
+        />
+      </div>
       <Chip label="Broker" value={`${broker} · ${brokerStatus}`} tone={brokerTone} />
       <Chip label="Regime" value={regime} />
       <Chip label="Day P&L" value={dayPnl} tone={dayPnl.startsWith("-") || dayPnl.includes("loss") ? "crit" : "ok"} />
