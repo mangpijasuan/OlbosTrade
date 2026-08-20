@@ -39,7 +39,6 @@ export default function SetupScannerPanel() {
 
   return (
     <Panel
-      sectionStyle={{ borderRadius: 6 }}
       padding={8}
       title="Setup Readiness"
       action={<Button style={{ fontSize: 11 }} onClick={run} disabled={loading}>{loading ? "Scanning…" : "Rescan"}</Button>}

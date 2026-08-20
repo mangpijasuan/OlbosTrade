@@ -107,7 +107,6 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
 
   return (
     <Panel
-      sectionStyle={{ borderRadius: 6 }}
       padding={12}
       title={`Market Bias · ${symbol}`}
       action={bias && <span style={{ fontSize: 11, color: "var(--ink-faint)" }}>~{Math.round(bias.data_freshness_s / 60)}m old</span>}
