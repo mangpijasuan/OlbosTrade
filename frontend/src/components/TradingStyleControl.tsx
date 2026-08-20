@@ -50,17 +50,8 @@ export default function TradingStyleControl({
       role="group"
       aria-label="Trading style"
       title={`Trading style (min confidence ${floorPct}%). Conservative/Balanced 90%, Aggressive 70%, Scalper 60%.`}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        height: 22,
-        padding: 2,
-        borderRadius: 2,
-        border: "1px solid var(--line-dim)",
-        background: "linear-gradient(180deg, #1a2538 0%, #121a2a 100%)",
-        boxShadow: "var(--raised-bezel)",
-      }}
+      className="segmented-group"
+      style={{ height: 22 }}
     >
       {OPTIONS.map((opt) => {
         const on = active === opt.key;
@@ -74,7 +65,6 @@ export default function TradingStyleControl({
             style={{
               height: 18,
               padding: "0 7px",
-              borderRadius: 2,
               background: on ? "var(--cyan-dim)" : "transparent",
               border: `1px solid ${on ? opt.onColor : "transparent"}`,
               color: on ? opt.onColor : "var(--ink-faint)",

@@ -288,6 +288,21 @@ body {
 }
 .btn-t.danger { border-color: rgba(239,68,68,0.55); color: var(--red); }
 .btn-t.danger:hover { background: rgba(239,68,68,0.12); }
+
+/* Segmented group (style/mode switches) — same raised console-key chassis
+   as .btn-t, shared here so per-instance components stop hand-rolling
+   their own copy of the radius/border/gradient/shadow inline. */
+.segmented-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line-dim);
+  background: linear-gradient(180deg, #1a2538 0%, #121a2a 100%);
+  box-shadow: var(--raised-bezel);
+}
+.segmented-group button { border-radius: calc(var(--radius-control) - 3px); }
 .workspace-tab:hover { color: var(--ink); background: rgba(255,255,255,0.03); }
 
 .btn-t:focus-visible,
