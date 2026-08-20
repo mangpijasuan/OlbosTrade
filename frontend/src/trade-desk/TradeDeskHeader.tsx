@@ -170,7 +170,10 @@ export default function TradeDeskHeader() {
       <Chip label="Drawdown" value={drawdown} />
       <Chip label="Kill switch" value={ks} tone={ksTone} />
       <div style={{ flex: 1, minWidth: 8 }} />
-      <div style={{ display: "flex", alignItems: "center", padding: "4px 8px" }}>
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "stretch",
+        gap: 4, padding: "4px 8px", maxWidth: 220,
+      }}>
         <KillSwitchButton variant="panel" />
       </div>
     </header>
