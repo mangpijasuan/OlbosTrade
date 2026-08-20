@@ -32,6 +32,7 @@ export default function TradeDeskHeader() {
   const [execMode, setExecMode] = useState("—");
   const [riskProfile, setRiskProfile] = useState("—");
   const [dayPnl, setDayPnl] = useState<string>("—");
+  const [dayPnlTone, setDayPnlTone] = useState<"ok" | "crit" | "muted">("muted");
   const [heat, setHeat] = useState("—");
   const [drawdown, setDrawdown] = useState("—");
   const [ks, setKs] = useState<"Engaged" | "Clear" | "Unknown">("Unknown");
@@ -67,16 +68,20 @@ export default function TradeDeskHeader() {
         .then((d: any) => {
           if (!alive) return;
           const s = d.state || d;
-          const pnl = s.daily_pnl ?? s.daily_loss_pct;
           if (typeof s.daily_pnl === "number") {
-            setDayPnl(`${s.daily_pnl >= 0 ? "+" : ""}$${s.daily_pnl.toFixed(0)}`);
+            // Format as +$120 / -$1615 so the sign is never hidden behind `$`.
+            const n = s.daily_pnl;
+            setDayPnl(`${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(0)}`);
+            setDayPnlTone(n >= 0 ? "ok" : "crit");
           } else if (typeof s.daily_loss_pct === "number") {
             // daily_loss_pct is a signed P&L ratio — don't hardcode "loss"
             // on what could be a gain.
             const v = s.daily_loss_pct * 100;
             setDayPnl(`${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
+            setDayPnlTone(v >= 0 ? "ok" : "crit");
           } else {
             setDayPnl("—");
+            setDayPnlTone("muted");
           }
           if (typeof s.daily_loss_pct === "number" && typeof s.max_daily_loss_pct === "number") {
             // Clamp to the negative portion only — a gain uses 0% of the
@@ -90,11 +95,11 @@ export default function TradeDeskHeader() {
             setHeat("—");
             setDrawdown("—");
           }
-          void pnl;
         })
         .catch(() => {
           if (alive) {
             setDayPnl("Unavailable");
+            setDayPnlTone("muted");
             setHeat("Unavailable");
             setDrawdown("Unavailable");
           }
@@ -172,7 +177,7 @@ export default function TradeDeskHeader() {
       </div>
       <Chip label="Broker" value={`${broker} · ${brokerStatus}`} tone={brokerTone} />
       <Chip label="Regime" value={regime} />
-      <Chip label="Day P&L" value={dayPnl} tone={dayPnl.startsWith("-") || dayPnl.includes("loss") ? "crit" : "ok"} />
+      <Chip label="Day P&L" value={dayPnl} tone={dayPnlTone} />
       <Chip label="Risk budget" value={heat} />
       <Chip label="Drawdown" value={drawdown} />
       <Chip label="Kill switch" value={ks} tone={ksTone} />
