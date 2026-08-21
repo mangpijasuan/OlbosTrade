@@ -170,7 +170,7 @@ async def get_options_chain(symbol: str, expiry: str = ""):
         return await ibkr_coordinator.submit(
             Priority.P1, _serialize,
             key=f"chain:{symbol.upper()}:{expiry}",
-            timeout=45.0, req_type="OPTION_CHAIN", symbol=symbol,
+            timeout=120.0, req_type="OPTION_CHAIN", symbol=symbol,
         )
 
     try:
