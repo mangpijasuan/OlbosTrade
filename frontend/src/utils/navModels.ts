@@ -55,6 +55,9 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
     { key: "lab:intel",      label: "Intelligence" },
     { key: "backtest",       label: "Backtests" },
   ]},
+  { id: "quant", label: "Quant Lab", icon: "analytics", advanced: true, children: [
+    { key: "quant:lab", label: "Strategy Builder & Backtest" },
+  ]},
   { id: "journal",   label: "Journal & Replay", icon: "journal",   key: "journal" },
   { id: "analytics", label: "Performance",      icon: "analytics", key: "analytics" },
   { id: "system", label: "System", icon: "data", children: [
@@ -113,6 +116,9 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "lab:models",     label: "Model Health" },
     { key: "lab:intel",      label: "Intelligence" },
     { key: "backtest",       label: "Backtests" },
+  ]},
+  { id: "quant", label: "Quant Lab", icon: "analytics", advanced: true, children: [
+    { key: "quant:lab", label: "Strategy Builder & Backtest" },
   ]},
   { id: "journal",   label: "Journal",     icon: "journal",   key: "journal" },
   { id: "analytics", label: "Performance", icon: "analytics", key: "analytics" },
