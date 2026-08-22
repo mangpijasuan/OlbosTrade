@@ -94,6 +94,7 @@ from app.api.routes import alerts
 from app.api.routes import ibkr_live
 from app.api.routes import forecasts
 from app.api.routes import signal_research
+from app.api.routes import quant
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -201,6 +202,7 @@ app.include_router(alerts.notif_router,prefix="/api/notifications",tags=["Notifi
 app.include_router(ibkr_live.router,   prefix="/api/ibkr",         tags=["IBKR Live Data"])
 app.include_router(forecasts.router,   prefix="/api/forecasts",    tags=["Probabilistic Intelligence"])
 app.include_router(signal_research.router, prefix="/api/signal-research", tags=["Signal Research"])
+app.include_router(quant.router,          prefix="/api/quant",           tags=["Quant Research"])
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────

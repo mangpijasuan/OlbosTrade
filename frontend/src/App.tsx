@@ -20,6 +20,7 @@ import IncomeStrategiesCenter from "./pages/options/IncomeStrategiesCenter";
 import SystemCenter    from "./pages/SystemCenter";
 import StrategyBuilder from "./pages/strategies/StrategyBuilder"; // Configure + register a strategy experiment
 import Alerts          from "./pages/strategies/Alerts";     // Smart Alert rules + notifications
+import QuantLab        from "./pages/QuantLab";               // Quant Research & Strategy Lab (Phase 1)
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
@@ -103,6 +104,8 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
   "markets:chart":      ChartWorkstation,
   "markets:news":       NewsEventsCenter,
   "markets:sector-rotation": SectorRotation,
+
+  "quant:lab": QuantLab,
 
   "system:broker":  () => <SystemCenter initialTab="broker" />,
   "system:market":  () => <SystemCenter initialTab="market" />,
