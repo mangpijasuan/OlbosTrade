@@ -436,10 +436,10 @@ async def get_backtest_history(limit: int = 20):
             ],
             "total": len(rows),
         }
-    except Exception as exc:
-        # DB unavailable — fall back to in-memory
+    except Exception:
+        # DB unavailable — fall back to in-memory (do not expose exc details externally)
         runs = sorted(_bt_runs.values(), key=lambda r: r.get("queued_at", ""), reverse=True)
-        return {"runs": runs[:limit], "total": len(runs), "warning": str(exc)}
+        return {"runs": runs[:limit], "total": len(runs), "warning": "Database unavailable — showing in-memory runs only"}
 
 
 @router.get("/backtest/{run_id}")
