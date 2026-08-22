@@ -33,8 +33,18 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 router = APIRouter()
 
-# In-memory cache for active backtest runs (fast polling during execution)
+# In-memory cache for active backtest runs (fast polling during execution).
+# Capped at 200 entries — oldest evicted first once the limit is reached.
 _bt_runs: dict[str, dict] = {}
+_BT_RUNS_MAX = 200
+
+
+def _bt_runs_set(run_id: str, data: dict) -> None:
+    """Insert/update _bt_runs, evicting the oldest entry when the cap is exceeded."""
+    _bt_runs[run_id] = data
+    if len(_bt_runs) > _BT_RUNS_MAX:
+        oldest_key = next(iter(_bt_runs))
+        del _bt_runs[oldest_key]
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -383,7 +393,7 @@ async def run_backtest(req: BacktestRequest):
     except Exception as db_exc:
         logger.warning("Failed to persist initial quant backtest record: %s", db_exc)
 
-    _bt_runs[run_id] = {
+    _bt_runs_set(run_id, {
         "run_id":     run_id,
         "status":     "queued",
         "symbol":     req.symbol,
@@ -391,7 +401,7 @@ async def run_backtest(req: BacktestRequest):
         "end_date":   req.end_date,
         "queued_at":  datetime.now(timezone.utc).isoformat(),
         "disclaimer": "BACKTESTED — NOT LIVE PERFORMANCE",
-    }
+    })
 
     asyncio.create_task(_run_backtest_task(run_id, req))
     return {**_bt_runs[run_id], "message": "Poll GET /api/quant/backtest/{run_id} for status."}
@@ -454,7 +464,7 @@ async def get_backtest_result(run_id: str):
                     "disclaimer":      "BACKTESTED — NOT LIVE PERFORMANCE",
                     **(row.metrics or {}),
                 }
-                _bt_runs[run_id] = data
+                _bt_runs_set(run_id, data)
                 return data
     except Exception:
         pass

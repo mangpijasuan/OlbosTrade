@@ -806,7 +806,6 @@ class BacktestEngine:
     def _compute_monthly_returns(eq: pd.Series) -> list[dict]:
         if eq.empty:
             return []
-        df = eq.resample("ME").last() if hasattr(eq.index, "freq") or isinstance(eq.index[0], (date, datetime)) else eq
         try:
             monthly = eq.resample("ME").last()
             pct = monthly.pct_change().dropna()

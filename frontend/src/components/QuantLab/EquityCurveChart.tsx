@@ -46,6 +46,14 @@ export default function EquityCurveChart({ equityCurve, drawdownCurve, height = 
   const equityVals   = useMemo(() => equityCurve.map(p => p.equity), [equityCurve]);
   const drawdownVals = useMemo(() => drawdownCurve.map(p => p.drawdown_pct), [drawdownCurve]);
 
+  if (equityVals.length < 2) {
+    return (
+      <div style={{ color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11, textAlign: "center", padding: 24 }}>
+        No equity curve data available.
+      </div>
+    );
+  }
+
   const eqMin = Math.min(...equityVals);
   const eqMax = Math.max(...equityVals);
   const ddMin = Math.min(...drawdownVals);
