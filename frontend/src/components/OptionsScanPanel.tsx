@@ -13,6 +13,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import WatchlistManager from "./WatchlistManager";
 import IBKRLiveControl from "./IBKRLiveControl";
 import SignalAttribution from "./SignalAttribution";
+import SignalDirectionBadge from "./SignalDirectionBadge";
 import { useLiveData } from "../hooks/useLiveData";
 import { api, apiAuthHeaders } from "../api/client";
 
@@ -776,57 +777,21 @@ export default function OptionsScanPanel() {
         }}
       >
         <button
+          type="button"
           onClick={runScan}
           disabled={scanning}
-          style={{
-            background: scanning ? "var(--bg-3)" : "var(--cyan)",
-            color: scanning ? "var(--ink-faint)" : "var(--bg)",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 16px",
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: scanning ? "default" : "pointer",
-            letterSpacing: "0.08em",
-          }}
+          className="btn-primary"
         >
-          {scanning ? "SCANNING..." : "RUN SCAN"}
+          {scanning ? "SCANNING…" : "RUN SCAN"}
         </button>
 
         {result && result.candidates.length > 0 && (
           <>
-            <button
-              onClick={exportCSV}
-              style={{
-                background: "var(--bg-2)",
-                border: "1px solid var(--line-dim)",
-                borderRadius: 4,
-                padding: "8px 12px",
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: "pointer",
-                color: "var(--ink-dim)",
-              }}
-            >
-              ⬇ CSV
+            <button type="button" onClick={exportCSV} className="btn-ghost">
+              CSV
             </button>
-            <button
-              onClick={() => setShowWatchlistManager(true)}
-              style={{
-                background: "var(--bg-2)",
-                border: "1px solid var(--line-dim)",
-                borderRadius: 4,
-                padding: "8px 12px",
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: "pointer",
-                color: "var(--ink-dim)",
-              }}
-            >
-              📋 Watchlist
+            <button type="button" onClick={() => setShowWatchlistManager(true)} className="btn-ghost">
+              Watchlist
             </button>
           </>
         )}
@@ -1116,6 +1081,7 @@ export default function OptionsScanPanel() {
                     >
                       {cand.ticker}
                     </span>
+                    <SignalDirectionBadge action={cand.action} size="sm" />
                     <SignalAttribution
                       data={{
                         direction: cand.action,
@@ -1236,28 +1202,16 @@ export default function OptionsScanPanel() {
           })}
         </div>
       ) : result && result.candidates.length === 0 ? (
-        <div
-          className="instrument-card"
-          style={{
-            padding: "20px",
-            textAlign: "center",
-            color: "var(--ink-dim)",
-            fontSize: 13,
-          }}
-        >
-          No options candidates match your filters. Try running a new scan or adjusting filters.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">No options candidates match your filters</p>
+          <p className="empty-chassis__hint">Run a new scan or adjust filters.</p>
         </div>
       ) : (
-        <div
-          className="instrument-card"
-          style={{
-            padding: "20px",
-            textAlign: "center",
-            color: "var(--ink-dim)",
-            fontSize: 13,
-          }}
-        >
-          Click "RUN SCAN" to analyze options spreads.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">No scan yet</p>
+          <p className="empty-chassis__hint">
+            Click <strong style={{ color: "var(--ink)" }}>RUN SCAN</strong> to analyze options spreads.
+          </p>
         </div>
       )}
 

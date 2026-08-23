@@ -641,6 +641,9 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .instrument-well {
   background: #0a1018;
@@ -892,6 +895,9 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   text-align: center;
   border-radius: var(--radius-card);
 }
+.empty-chassis--compact {
+  padding: 16px 12px;
+}
 .empty-chassis__title {
   font-family: var(--mono);
   font-size: 12px;
@@ -902,6 +908,51 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   font-family: var(--sans);
   font-size: 11px;
   color: var(--ink-faint);
+}
+/* Discovery rail tab strip — full-width sibling of .asset-toggle */
+.discovery-rail-tabs {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 100%);
+  border-bottom: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.14);
+  box-shadow: inset 0 1px 0 var(--bevel-hi);
+}
+.discovery-rail-tabs__btn {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 7px 4px;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.discovery-rail-tabs__btn--active {
+  background: var(--fill-active);
+  color: var(--ink);
+  border-color: var(--line);
+}
+.discovery-rail-row {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.discovery-rail-row--selected {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: var(--raised-bezel), var(--glow-active);
 }
 .desk-tablist {
   display: flex;

@@ -89,48 +89,46 @@ export default function ManualTradePanel() {
   };
 
   const field = (label: string, children: React.ReactNode) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontFamily: "var(--mono)", fontSize: 10 }}>
-      <span style={{ color: "var(--ink-faint)", letterSpacing: "0.08em" }}>{label}</span>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span className="kicker">{label}</span>
       {children}
     </label>
   );
 
-  const inputStyle: React.CSSProperties = {
-    fontFamily: "var(--mono)",
-    fontSize: 12,
-    padding: "6px 8px",
-    background: "var(--bg-3)",
-    color: "var(--ink)",
-    border: "1px solid var(--line)",
-  };
-
   const lifecycle = result ? lifecycleFromExecution(result) : null;
 
   return (
-    <div style={{ padding: 16, maxWidth: 560, display: "flex", flexDirection: "column", gap: 16 }}>
-      <div className="instrument-card" style={{
-        padding: "10px 14px",
-        border: "1px solid var(--amber)30", borderLeft: "2px solid var(--amber)",
-        fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7,
-      }}>
-        Bypasses signal scoring and IV filters — still subject to kill switch,
-        market hours, and all risk guardrails. This places a real order
-        immediately, it does not queue for approval.
+    <div className="page-shell" style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Manual trade</div>
+          <p className="page-header__sub">
+            Places a real equity order now — still subject to kill switch, market hours, and risk guardrails.
+          </p>
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+      <div className="instrument-card" style={{
+        padding: "10px 14px",
+        borderLeft: "2px solid var(--amber)",
+        fontFamily: "var(--sans)", fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.6,
+      }}>
+        Bypasses signal scoring and IV filters. This does not queue for Copilot approval.
+      </div>
+
+      <div className="instrument-card" style={{ padding: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
         {field(
           "TICKER",
           <input
+            className="control-input"
             value={ticker}
             onChange={(e) => setTicker(e.target.value)}
             placeholder="AAPL"
-            style={inputStyle}
           />,
         )}
         {field(
           "SIDE",
-          <select value={action} onChange={(e) => setAction(e.target.value as Action)} style={inputStyle}>
+          <select className="control-input" value={action} onChange={(e) => setAction(e.target.value as Action)}>
             <option value="BUY">BUY</option>
             <option value="SELL">SELL</option>
           </select>,
@@ -138,16 +136,17 @@ export default function ManualTradePanel() {
         {field(
           "SHARES",
           <input
+            className="control-input"
             type="number"
             min={1}
             value={shares}
             onChange={(e) => setShares(Math.max(1, Number(e.target.value) || 1))}
-            style={overSized ? { ...inputStyle, border: "1px solid var(--red)" } : inputStyle}
+            style={overSized ? { borderColor: "var(--red)" } : undefined}
           />,
         )}
         {field(
           "ORDER TYPE",
-          <select value={orderType} onChange={(e) => setOrderType(e.target.value as OrderType)} style={inputStyle}>
+          <select className="control-input" value={orderType} onChange={(e) => setOrderType(e.target.value as OrderType)}>
             <option value="market">MARKET</option>
             <option value="limit">LIMIT</option>
           </select>,
@@ -155,7 +154,7 @@ export default function ManualTradePanel() {
         {orderType === "limit" &&
           field(
             "LIMIT PRICE",
-            <input value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} style={inputStyle} />,
+            <input className="control-input" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />,
           )}
       </div>
 

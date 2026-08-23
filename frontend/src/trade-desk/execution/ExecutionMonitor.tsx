@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
 import { Badge } from "../../components/ui";
 import {
   type DeskLifecycle,
@@ -83,7 +84,7 @@ export default function ExecutionMonitor() {
             Refresh
           </button>
         </div>
-        <div className="instrument-card" style={{ display: "flex", gap: 0, overflow: "hidden" }}>
+        <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}>
           {(
             [
               ["Submitted", stats.submitted, "var(--green)"],
@@ -92,15 +93,8 @@ export default function ExecutionMonitor() {
               ["Rejected", stats.rejected, "var(--ink-dim)"],
               ["Error", stats.error, "var(--red)"],
             ] as const
-          ).map(([label, n, color], i, arr) => (
-            <div
-              key={label}
-              style={{
-                flex: 1,
-                padding: "10px 14px",
-                borderRight: i < arr.length - 1 ? "1px solid var(--line-dim)" : undefined,
-              }}
-            >
+          ).map(([label, n, color]) => (
+            <div key={label} style={{ padding: "10px 14px" }}>
               <div className="kicker" style={{ marginBottom: 4 }}>
                 {label}
               </div>
@@ -110,13 +104,13 @@ export default function ExecutionMonitor() {
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <div className="asset-toggle" style={{ flexWrap: "wrap", alignSelf: "flex-start" }}>
           {filters.map((f) => (
             <button
               key={f.key}
               type="button"
-              className={`btn-t ${filter === f.key ? "active" : ""}`}
-              style={{ fontSize: 10 }}
+              className={`asset-toggle__btn${filter === f.key ? " asset-toggle__btn--active" : ""}`}
+              style={{ fontSize: 10, padding: "5px 10px" }}
               onClick={() => setFilter(f.key)}
             >
               {f.label}
@@ -125,30 +119,15 @@ export default function ExecutionMonitor() {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
         {loading ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-              fontFamily: "var(--mono)",
-              color: "var(--ink-faint)",
-              fontSize: 11,
-            }}
-          >
-            Loading…
+          <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+            <p className="empty-chassis__title">Loading…</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-              fontFamily: "var(--mono)",
-              color: "var(--ink-faint)",
-              fontSize: 11,
-            }}
-          >
-            No execution events
+          <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+            <p className="empty-chassis__title">No execution events</p>
+            <p className="empty-chassis__hint">Submitted and blocked trades will show up here.</p>
           </div>
         ) : (
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -157,13 +136,14 @@ export default function ExecutionMonitor() {
               return (
                 <li
                   key={key}
+                  className="instrument-card"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "16px 140px 1fr auto",
                     gap: 12,
                     alignItems: "start",
-                    padding: "10px 16px",
-                    borderBottom: "1px solid var(--line-dim)",
+                    padding: "10px 14px",
+                    marginBottom: 6,
                   }}
                 >
                   <span
@@ -184,11 +164,11 @@ export default function ExecutionMonitor() {
                       <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                         {e.ticker || "—"}
                       </span>
+                      {(e.action || e.strategy) && (
+                        <SignalDirectionBadge action={e.action || e.strategy} size="sm" />
+                      )}
                       <Badge kind="tag" tone={lifecycleColor(life)}>{lifecycleLabel(life)}</Badge>
                       <Badge kind="tag" tone="var(--ink-dim)">{(e.asset_type || "eq").toUpperCase()}</Badge>
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                        {e.action || e.strategy || "—"}
-                      </span>
                     </div>
                     {e.reason && (
                       <div

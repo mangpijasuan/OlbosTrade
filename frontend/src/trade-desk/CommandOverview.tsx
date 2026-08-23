@@ -463,21 +463,13 @@ export default function CommandOverview({
 
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, maxWidth: 1100 }}>
-      <div>
-        <h2
-          style={{
-            margin: 0,
-            fontFamily: "var(--mono)",
-            fontSize: 15,
-            letterSpacing: "0.08em",
-            color: "var(--ink)",
-          }}
-        >
-          COMMAND OVERVIEW
-        </h2>
-        <p style={{ margin: "6px 0 0", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-          Pending · blocked · submitted. Read-only — execution stays on existing Trade Desk paths.
-        </p>
+      <div className="instrument-card page-header" style={{ margin: 0 }}>
+        <div>
+          <div className="page-header__title">Command Overview</div>
+          <p className="page-header__sub">
+            Pending · blocked · submitted. Read-only — execution stays on existing Trade Desk paths.
+          </p>
+        </div>
       </div>
 
       {error && (

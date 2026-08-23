@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import ConfidenceFloorLabel from "../../components/ConfidenceFloorLabel";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
 import WhyBlockedChip from "../../components/WhyBlockedChip";
 import { useDeskBlockContext } from "../../hooks/useDeskBlockContext";
 import { deriveSignalBlockReason } from "../../utils/signalBlockReason";
@@ -12,6 +13,17 @@ import { deriveSignalBlockReason } from "../../utils/signalBlockReason";
 const DEFAULT_WATCH = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "QQQ", "SPY"];
 
 type DiscTab = "watch" | "signals" | "positions";
+
+function RailEmpty({ title, hint, tone }: { title: string; hint?: string; tone?: "error" }) {
+  return (
+    <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+      <p className="empty-chassis__title" style={tone === "error" ? { color: "var(--red)" } : undefined}>
+        {title}
+      </p>
+      {hint && <p className="empty-chassis__hint">{hint}</p>}
+    </div>
+  );
+}
 
 export default function EquityDiscoveryRail({
   symbol,
@@ -71,27 +83,19 @@ export default function EquityDiscoveryRail({
     { key: "positions", label: "Held" },
   ];
 
+  const actionable = signals.filter((s) => s.action !== "HOLD").slice(0, 20);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <div style={{ display: "flex", borderBottom: "1px solid var(--line-dim)", flexShrink: 0 }}>
+      <div className="discovery-rail-tabs" role="tablist" aria-label="Equity discovery">
         {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
+            role="tab"
+            aria-selected={tab === t.key}
             onClick={() => setTab(t.key)}
-            style={{
-              flex: 1,
-              padding: "8px 4px",
-              border: "none",
-              background: "transparent",
-              borderBottom: tab === t.key ? "2px solid var(--cyan)" : "2px solid transparent",
-              color: tab === t.key ? "var(--cyan)" : "var(--ink-dim)",
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-            }}
+            className={`discovery-rail-tabs__btn${tab === t.key ? " discovery-rail-tabs__btn--active" : ""}`}
           >
             {t.label}
           </button>
@@ -108,25 +112,15 @@ export default function EquityDiscoveryRail({
                 key={t}
                 type="button"
                 onClick={() => onSelect(t)}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "8px 10px",
-                  marginBottom: 4,
-                  border: on ? "1px solid var(--cyan)" : "1px solid var(--line-dim)",
-                  background: on ? "var(--cyan-dim)" : "var(--bg-3)",
-                  color: "var(--ink)",
-                  cursor: "pointer",
-                  fontFamily: "var(--mono)",
-                }}
+                className={`instrument-card discovery-rail-row${on ? " discovery-rail-row--selected" : ""}`}
               >
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontWeight: 700, fontSize: 12 }}>{t}</span>
-                  <span style={{ fontSize: 10, color: (pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <span className="mono" style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>{t}</span>
+                  <span className="tnum" style={{ fontSize: 10, color: (pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
                     {typeof pct === "number" ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : "—"}
                   </span>
                 </div>
-                <div style={{ fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
+                <div className="tnum" style={{ fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
                   {typeof s?.last_close === "number" ? `$${s.last_close.toFixed(2)}` : "—"}
                 </div>
               </button>
@@ -134,74 +128,53 @@ export default function EquityDiscoveryRail({
           })}
 
         {tab === "signals" &&
-          (signals.length === 0 ? (
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: signalsError ? "var(--red)" : "var(--ink-faint)", padding: 8 }}>
-              {signalsError ? "Failed to load signals." : "No equity signals yet."}
-            </div>
+          (actionable.length === 0 ? (
+            <RailEmpty
+              title={signalsError ? "Failed to load signals" : "No equity signals yet"}
+              hint={signalsError ? undefined : "Run a scan on Live Signals to fill this rail."}
+              tone={signalsError ? "error" : undefined}
+            />
           ) : (
-            signals
-              .filter((s) => s.action !== "HOLD")
-              .slice(0, 20)
-              .map((s) => (
-                <button
-                  key={s.id || `${s.ticker}-${s.generated_at}`}
-                  type="button"
-                  onClick={() => onSelect(s.ticker)}
-                  className="instrument-card"
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "8px 10px",
-                    marginBottom: 6,
-                    cursor: "pointer",
-                    fontFamily: "var(--mono)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>{s.ticker}</span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color: s.action === "BUY" ? "var(--green)" : "var(--red)",
-                      }}
-                    >
-                      {s.action}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                    <ConfidenceFloorLabel confidence={s.confidence} minConfidence={minConfidence} />
-                    <WhyBlockedChip reason={deriveSignalBlockReason(s, blockCtx)} />
-                  </div>
-                </button>
-              ))
+            actionable.map((s) => (
+              <button
+                key={s.id || `${s.ticker}-${s.generated_at}`}
+                type="button"
+                onClick={() => onSelect(s.ticker)}
+                className="instrument-card discovery-rail-row"
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span className="mono" style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>{s.ticker}</span>
+                  <SignalDirectionBadge action={s.action} size="sm" />
+                </div>
+                <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                  <ConfidenceFloorLabel confidence={s.confidence} minConfidence={minConfidence} />
+                  <WhyBlockedChip reason={deriveSignalBlockReason(s, blockCtx)} />
+                </div>
+              </button>
+            ))
           ))}
 
         {tab === "positions" &&
           (positions.length === 0 ? (
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: positionsError ? "var(--red)" : "var(--ink-faint)", padding: 8 }}>
-              {positionsError ? "Failed to load positions." : "No open positions."}
-            </div>
+            <RailEmpty
+              title={positionsError ? "Failed to load positions" : "No open positions"}
+              hint={positionsError ? undefined : "Held equity will appear here."}
+              tone={positionsError ? "error" : undefined}
+            />
           ) : (
             positions.map((p: any) => (
               <button
                 key={`${p.symbol}-${p.entry_date || "x"}`}
                 type="button"
                 onClick={() => onSelect(p.symbol || p.underlying)}
-                className="instrument-card"
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "8px 10px",
-                  marginBottom: 6,
-                  cursor: "pointer",
-                  fontFamily: "var(--mono)",
-                }}
+                className="instrument-card discovery-rail-row"
               >
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <span className="mono" style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>
                     {p.symbol || p.underlying}
                   </span>
                   <span
+                    className="tnum"
                     style={{
                       fontSize: 10,
                       color: (p.unrealized_pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)",
