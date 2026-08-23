@@ -31,10 +31,10 @@ implemented.
 - **Mag-7:** AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA
 - **Future expansion:** GLD, TLT, XLE, XLF, SMH, SOXX
 
-*Status:* the **equity** watchlist covers these. **Options spreads are SPY-only**
-today (the options spread engine is SPY-hardwired); the **CSP/covered-call
-screener runs across multiple underlyings**. Multi-underlying options *spreads*
-remain a roadmap item.
+*Status:* the **equity** watchlist covers these. **Options spreads support SPY and QQQ**
+(bull-put, bear-call, iron-condor, bull-call-debit live on both); the **CSP/covered-call
+screener runs across multiple underlyings**. Further multi-underlying options *spread*
+expansion remains a roadmap item.
 
 ## Supported strategies
 Bull put spread · bull call (debit) spread · bear call spread · bear put spread ·

@@ -79,7 +79,7 @@ Until a model is trained, treat signal scores as heuristic, not ML-derived.
 | P2 | ML signal scorer running heuristic fallback — no trained model on disk | `signal_scorer.py`, `ml/train_signal_scorer.py` |
 | P3 | Vestigial `POST /api/equity/signals/{id}/approve` endpoint (dead) | `equity.py:107` |
 | P3 | `TRADING_POLICY.md:34-35` says "SPY-only options" — false since QQQ options shipped | `TRADING_POLICY.md` |
-| P3 | Frontend single bundle 477 kB / no code splitting | `frontend/` |
+| P3 | Frontend single bundle — split into vendor-react / vendor-charts / app chunks | `frontend/vite.config.ts` |
 
 **Already fixed (do not re-open):**
 - Position identity keyed on `(underlying, asset_class)` — `trade_identity.py`
@@ -90,6 +90,8 @@ Until a model is trained, treat signal scores as heuristic, not ML-derived.
 - API-key auth on all mutate routes (`deps.py::require_api_key`)
 - Broker-event streaming — 5 push-event hooks in `ibkr_client.py::connect()` (connectedEvent, disconnectedEvent, errorEvent, orderStatusEvent, execDetailsEvent); `_connected` now tracks real connection state
 - Margin / buying power surfaced — `ibkr_client.py::get_account_summary()` returns `buying_power`, `maintenance_margin`, `init_margin`
+- Dead `POST /api/equity/signals/{id}/approve` endpoint removed — `equity.py`
+- `TRADING_POLICY.md` corrected — options spreads support SPY **and QQQ** (not SPY-only)
 
 ---
 
