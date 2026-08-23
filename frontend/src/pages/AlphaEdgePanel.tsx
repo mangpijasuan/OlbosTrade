@@ -198,11 +198,11 @@ function AlphaEdgeDetail({ data }: { data: AlphaEdgeResponse }) {
           {data.current_action && (
             <SignalDirectionBadge
               action={data.current_action}
-              positionDirection={data.position.held ? data.position.direction : undefined}
+              showSide={false}
             />
           )}
           {!data.current_action && data.position.held && data.position.direction && (
-            <SignalDirectionBadge action={data.position.direction} />
+            <SignalDirectionBadge action={data.position.direction} showSide={false} />
           )}
           {data.position.held && data.position.quantity != null && (
             <span className="mono" style={{ fontSize: 10, color: "var(--ink-dim)" }}>
@@ -291,12 +291,12 @@ function CandidateCard({
             {(data?.current_action || candidate.scanAction) && (
               <SignalDirectionBadge
                 action={data?.current_action || candidate.scanAction}
-                positionDirection={data?.position.held ? data.position.direction : undefined}
                 size="sm"
+                showSide={false}
               />
             )}
             {!data?.current_action && !candidate.scanAction && data?.position.held && data.position.direction && (
-              <SignalDirectionBadge action={data.position.direction} size="sm" />
+              <SignalDirectionBadge action={data.position.direction} size="sm" showSide={false} />
             )}
           </div>
           {candidate.scanAction && !data?.current_action && (

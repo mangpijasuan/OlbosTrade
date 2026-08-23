@@ -14,11 +14,14 @@ export default function SignalDirectionBadge({
   action,
   positionDirection,
   size = "sm",
+  showSide: showSideProp = true,
 }: {
   action?: string | null;
   /** Held book direction when it differs from or supplements the scan action. */
   positionDirection?: string | null;
   size?: "sm" | "md";
+  /** When false, only the action chip is shown (e.g. Alpha Edge where BUY already implies LONG). */
+  showSide?: boolean;
 }) {
   const actionLabel = formatSignalAction(action);
   if (!action || actionLabel === "—") return null;
@@ -29,7 +32,7 @@ export default function SignalDirectionBadge({
   const fontSize = size === "md" ? 11 : 10;
   const pad = size === "md" ? "3px 10px" : "2px 8px";
   const actionUpper = (action || "").toUpperCase();
-  const showSide = side && side !== actionUpper;
+  const showSide = showSideProp && side && side !== actionUpper;
 
   const chip = (label: string, color: string, muted = false) => (
     <span
