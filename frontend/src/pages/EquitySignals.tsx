@@ -11,6 +11,7 @@ import SignalAttribution from "../components/SignalAttribution";
 import ConfidenceFloorLabel from "../components/ConfidenceFloorLabel";
 import WhyBlockedChip from "../components/WhyBlockedChip";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
+import BacktestButtons from "../components/BacktestButtons";
 import type { SignalAttributionData } from "../types/signal";
 import { useDeskBlockContext } from "../hooks/useDeskBlockContext";
 import { deriveSignalBlockReason } from "../utils/signalBlockReason";
@@ -251,6 +252,10 @@ function SignalCard({
           )}
         </div>
       )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <BacktestButtons ticker={sig.ticker} assetType="equity" />
+      </div>
     </div>
   );
 }

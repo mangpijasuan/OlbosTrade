@@ -57,6 +57,7 @@ export const api = {
 
   // ── Backtest ──────────────────────────────────────────────────────────────
   runBacktest: (body: object) => request("/api/backtest/run", { method: "POST", body: JSON.stringify(body) }),
+  runEquityBacktest: (body: object) => request("/api/backtest/run-equity", { method: "POST", body: JSON.stringify(body) }),
   getBacktestResults: (id: string) => request(`/api/backtest/${id}/results`),
   getBacktestHistory: (limit?: number) =>
     request(`/api/backtest/history${limit ? `?limit=${limit}` : ""}`),

@@ -38,6 +38,13 @@ class BacktestCompareRequest(BaseModel):
     starting_capital: float = 25000.0
 
 
+class EquityBacktestRunRequest(BaseModel):
+    ticker:            str
+    start_date:        str
+    end_date:          str
+    starting_capital:  float = 25000.0
+
+
 async def _persist_run(run_id: str, data: dict) -> None:
     """Save or update a backtest run in the DB."""
     try:
@@ -180,6 +187,108 @@ async def run_backtest(req: BacktestRunRequest):
     await _persist_run(run_id, initial)
 
     asyncio.create_task(_execute_backtest(run_id, req))
+    return {**_runs[run_id], "message": "Poll GET /api/backtest/{run_id}/results for status."}
+
+
+async def _execute_equity_backtest(run_id: str, req: EquityBacktestRunRequest) -> None:
+    """Background task — mirrors _execute_backtest but drives run_equity()
+    and the equity trade fields (direction/entry_price/exit_price/stop/target)
+    instead of the options-spread ones."""
+    _runs[run_id]["status"] = "running"
+    try:
+        from app.broker.broker_factory import get_broker
+        from app.services.data_fetcher import DataFetcher
+        from app.services.backtester import Backtester
+
+        broker  = get_broker()
+        fetcher = DataFetcher(broker)
+        bt      = Backtester(fetcher)
+
+        result = await bt.run_equity(
+            ticker=req.ticker,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            starting_capital=req.starting_capital,
+        )
+
+        m         = result.metrics
+        total_pnl = result.ending_capital - result.starting_capital
+        _runs[run_id].update({
+            "status":            "completed",
+            "completed_at":      datetime.now(timezone.utc).isoformat(),
+            "strategy":          result.strategy,
+            "ticker":            req.ticker.upper(),
+            "start_date":        str(result.start_date),
+            "end_date":          str(result.end_date),
+            "starting_capital":  result.starting_capital,
+            "ending_capital":    result.ending_capital,
+            "total_pnl":         round(total_pnl, 2),
+            "total_trades":      m.total_trades if m else len(result.trades),
+            "winning_trades":    m.winning_trades if m else 0,
+            "losing_trades":     m.losing_trades if m else 0,
+            "win_rate":          round(m.win_rate, 4) if m else 0.0,
+            "total_return_pct":  round(m.total_return_pct, 4) if m else 0.0,
+            "annualized_return": round(m.annualized_return_pct, 4) if m else 0.0,
+            "max_drawdown_pct":  round(m.max_drawdown_pct, 4) if m else 0.0,
+            "sharpe_ratio":      round(m.sharpe_ratio, 4) if m else 0.0,
+            "sortino_ratio":     round(m.sortino_ratio, 4) if m else 0.0,
+            "profit_factor":     round(m.profit_factor, 4) if m else 0.0,
+            "avg_hold_days":     round(m.avg_hold_days, 1) if m else 0.0,
+            "expectancy":        round(m.expectancy, 2) if m else 0.0,
+            "equity_curve":      result.equity_curve[:500],
+            "trades": [
+                {
+                    "id":           t.id,
+                    "entry_date":   str(t.entry_date),
+                    "exit_date":    str(t.exit_date),
+                    "strategy":     t.strategy,
+                    "direction":    t.direction,
+                    "entry_price":  t.entry_price,
+                    "exit_price":   t.exit_price,
+                    "stop_price":   t.stop_price,
+                    "target_price": t.target_price,
+                    "shares":       t.contracts,
+                    "pnl":          round(t.pnl, 2),
+                    "pnl_pct":      round(t.pnl_pct, 4),
+                    "exit_reason":  t.exit_reason,
+                    "signal_score": t.signal_score,
+                    "hold_days":    t.hold_days,
+                }
+                for t in (result.trades or [])
+            ],
+        })
+    except Exception as exc:
+        _runs[run_id].update({"status": "failed", "error": str(exc)})
+
+    await _persist_run(run_id, _runs[run_id])
+
+
+@router.post("/run-equity")
+async def run_equity_backtest(req: EquityBacktestRunRequest):
+    """
+    Kick off a walk-forward equity backtest for any ticker — reuses the
+    live equity_signal_engine scoring + GuardrailEngine, not a parallel
+    DSL. Poll GET /{run_id}/results for status; the run also lists in
+    GET /history since it's persisted through the same BacktestRun model
+    (strategy column stores "equity:{TICKER}").
+    """
+    if not req.ticker or not req.ticker.strip():
+        raise HTTPException(400, "ticker is required")
+
+    run_id = str(uuid.uuid4())
+    initial = {
+        "run_id":     run_id,
+        "status":     "queued",
+        "strategy":   f"equity:{req.ticker.upper()}",
+        "ticker":     req.ticker.upper(),
+        "start_date": req.start_date,
+        "end_date":   req.end_date,
+        "queued_at":  datetime.now(timezone.utc).isoformat(),
+    }
+    _runs[run_id] = initial
+    await _persist_run(run_id, initial)
+
+    asyncio.create_task(_execute_equity_backtest(run_id, req))
     return {**_runs[run_id], "message": "Poll GET /api/backtest/{run_id}/results for status."}
 
 

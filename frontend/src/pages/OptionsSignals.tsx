@@ -7,6 +7,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import SignalAttribution from "../components/SignalAttribution";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
+import BacktestButtons from "../components/BacktestButtons";
 import type { SignalAttributionData } from "../types/signal";
 
 export interface Spread {
@@ -252,6 +253,10 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
             </span>
           )}
         </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <BacktestButtons ticker={sig.ticker} assetType="options" strategy={sig.strategy} />
       </div>
     </div>
   );

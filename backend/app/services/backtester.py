@@ -21,6 +21,11 @@ import pandas as pd
 from app.broker.broker_interface import Greeks as GK, OptionContract, OptionsChain
 from app.broker.fill_simulator import FillSimulator, SpreadFillResult
 from app.services.data_fetcher import DataFetcher
+from app.services.equity_signal_engine import (
+    compute_indicators as compute_equity_indicators,
+    score_equity_signal,
+    compute_equity_trade_plan,
+)
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.options_pricer import BlackScholesPricer
 from app.services.risk_manager import PortfolioRiskState, RiskManager
@@ -40,6 +45,14 @@ RISK_FREE_RATE = 0.05
 # 8–15% of spread width as net credit.  The old 0.20 (20%) threshold was
 # rejecting every qualifying trade.  0.08 matches observed market pricing.
 MIN_CREDIT_TO_WIDTH = 0.08
+
+# Equity fills don't go through FillSimulator — its commission math assumes
+# a 100-share options-contract multiplier, which would misprice a 1-share
+# equity fill by 100x. IBKR's real per-share commission is ~$0.005/share
+# (min $1); 5bps slippage approximates a liquid large/mid-cap spread.
+EQUITY_COMMISSION_PER_SHARE = 0.005
+EQUITY_MIN_COMMISSION = 1.0
+EQUITY_SLIPPAGE_PCT = 0.0005
 
 
 @dataclass
@@ -73,6 +86,15 @@ class BacktestTrade:
     credit_received: float = 0.0        # entry_credit * 100 per contract (dollars)
     # FIX #5: Store what the model WOULD have scored (counterfactual)
     counterfactual_signal_score: Optional[float] = None
+    # Equity-trade fields (None/0 for the options-spread path; populated by
+    # Backtester.run_equity()). Kept on this dataclass rather than a parallel
+    # EquityBacktestTrade so both paths share one BacktestResult /
+    # calculate_all_metrics() pipeline — "contracts" doubles as share count.
+    direction: Optional[str] = None       # "BUY" | "SELL" — equity trades only
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    stop_price: Optional[float] = None
+    target_price: Optional[float] = None
     # Entry-time SignalFeatures snapshot — populated so ml/train_signal_scorer.py
     # can train on real historical conditions instead of hardcoded defaults.
     # Mirrors app.services.signal_scorer.FEATURE_NAMES.
@@ -661,4 +683,248 @@ class Backtester:
             metrics=metrics,
             equity_curve=equity_curve,
             partial_fill_count=partial_fill_count,
+        )
+
+    async def run_equity(
+        self,
+        ticker: str,
+        start_date: str,
+        end_date: str,
+        starting_capital: float = 25000.0,
+    ) -> BacktestResult:
+        """
+        Walk-forward equity backtest — reuses the exact live equity signal
+        logic (equity_signal_engine.compute_indicators/score_equity_signal/
+        compute_equity_trade_plan) and the live risk engine (GuardrailEngine
+        via check_all()/get_signal_threshold()), not a parallel DSL. Works
+        for any ticker, unlike run() which is SPY-only options spreads.
+
+        Look-ahead guard: at bar N, indicators are computed from an
+        expanding window covering bars [0, N) only — the prior bar's close
+        is the newest data point used, mirroring run()'s shift(1) invariant.
+        compute_indicators() returns only its input frame's latest-bar
+        values, so the window itself (not a vectorized shift) is what
+        enforces "no future data" here.
+
+        One position at a time (long or short); exits check the entry's
+        stop/target against each subsequent bar's high/low, same convention
+        as a live stop/target order. is_strategy_allowed() (options-strategy
+        allowlist) doesn't apply to equities and is intentionally not called
+        here — check_all()/get_signal_threshold() are the asset-agnostic
+        parts of GuardrailEngine and are what's reused.
+        """
+        logger.info("Equity backtest starting: %s %s → %s", ticker, start_date, end_date)
+        ticker = ticker.upper()
+
+        warmup_start = (
+            pd.Timestamp(start_date) - pd.Timedelta(days=250)
+        ).strftime("%Y-%m-%d")
+        df = await self.fetcher.fetch_ohlcv(ticker, warmup_start, end_date)
+        if df.empty:
+            raise ValueError(f"No OHLCV data returned for {ticker}")
+        df.columns = [c.lower() for c in df.columns]
+
+        backtest_start = pd.Timestamp(start_date)
+        bar_dates = df.index[df.index >= backtest_start]
+        if len(bar_dates) == 0:
+            raise ValueError(f"No bars for {ticker} in [{start_date}, {end_date}]")
+
+        portfolio_value = starting_capital
+        equity_curve: list[float] = [starting_capital]
+        trades: list[BacktestTrade] = []
+        open_trade: Optional[BacktestTrade] = None
+
+        daily_pnl = 0.0
+        weekly_pnl = 0.0
+        monthly_pnl = 0.0
+        consecutive_losses = 0
+        consecutive_loss_lockout_until: Optional[date] = None
+        trades_today = 0
+        last_date: Optional[date] = None
+        last_week: Optional[int] = None
+        last_month: Optional[int] = None
+
+        for ts in bar_dates:
+            idx = df.index.get_loc(ts)
+            if idx < 1:
+                continue
+            current_date = ts.date() if hasattr(ts, "date") else ts
+            bar = df.iloc[idx]
+            bar_open  = float(bar["open"])
+            bar_high  = float(bar["high"])
+            bar_low   = float(bar["low"])
+
+            # Reset P&L windows at boundary crossings
+            if last_date != current_date:
+                trades_today = 0
+                daily_pnl = 0.0
+                last_date = current_date
+            if (
+                consecutive_loss_lockout_until is not None
+                and current_date >= consecutive_loss_lockout_until
+            ):
+                consecutive_losses = 0
+                consecutive_loss_lockout_until = None
+            week_num = current_date.isocalendar()[1]
+            if last_week is not None and week_num != last_week:
+                weekly_pnl = 0.0
+            last_week = week_num
+            if last_month is not None and current_date.month != last_month:
+                monthly_pnl = 0.0
+            last_month = current_date.month
+
+            # ── Manage the open position (stop/target vs. this bar's H/L) ──
+            exited_this_bar = False
+            if open_trade is not None:
+                exit_price: Optional[float] = None
+                exit_reason: Optional[str] = None
+                if open_trade.direction == "BUY":
+                    if bar_low <= (open_trade.stop_price or 0):
+                        exit_price, exit_reason = open_trade.stop_price, "stop"
+                    elif bar_high >= (open_trade.target_price or float("inf")):
+                        exit_price, exit_reason = open_trade.target_price, "target"
+                else:  # SELL (short)
+                    if bar_high >= (open_trade.stop_price or float("inf")):
+                        exit_price, exit_reason = open_trade.stop_price, "stop"
+                    elif bar_low <= (open_trade.target_price or 0):
+                        exit_price, exit_reason = open_trade.target_price, "target"
+
+                if exit_price is not None:
+                    slip = exit_price * EQUITY_SLIPPAGE_PCT
+                    # Exiting a long = selling (fills below the level); exiting
+                    # a short = buying to cover (fills above the level).
+                    fill_price = exit_price - slip if open_trade.direction == "BUY" else exit_price + slip
+                    commission = max(EQUITY_COMMISSION_PER_SHARE * open_trade.contracts, EQUITY_MIN_COMMISSION)
+
+                    if open_trade.direction == "BUY":
+                        pnl = (fill_price - open_trade.entry_price) * open_trade.contracts - commission
+                    else:
+                        pnl = (open_trade.entry_price - fill_price) * open_trade.contracts - commission
+
+                    open_trade.exit_date = current_date
+                    open_trade.exit_price = fill_price
+                    open_trade.pnl = pnl
+                    open_trade.pnl_pct = pnl / starting_capital
+                    open_trade.exit_reason = exit_reason or "unknown"
+                    open_trade.commission_paid += commission
+                    open_trade.hold_days = (
+                        (current_date - open_trade.entry_date).days
+                        if open_trade.entry_date else 0
+                    )
+
+                    portfolio_value += pnl
+                    daily_pnl   += pnl
+                    weekly_pnl  += pnl
+                    monthly_pnl += pnl
+                    consecutive_losses = consecutive_losses + 1 if pnl < 0 else 0
+                    if consecutive_losses >= self.guardrails.max_consecutive_losses:
+                        consecutive_loss_lockout_until = current_date + timedelta(hours=48)
+                    else:
+                        consecutive_loss_lockout_until = None
+
+                    trades.append(open_trade)
+                    open_trade = None
+                    exited_this_bar = True
+
+            equity_curve.append(portfolio_value)
+
+            if open_trade is not None or exited_this_bar:
+                # One position at a time. A same-bar exit also skips entry:
+                # the exit was decided from this bar's intrabar high/low,
+                # which is chronologically after this bar's open — filling a
+                # new entry at that same open would predate the exit that
+                # freed up the position. Earliest re-entry is the next bar.
+                continue
+
+            # ── Entry evaluation (expanding window — bars [0, idx) only) ──
+            window = df.iloc[:idx]
+            if len(window) < 30:
+                continue
+            ind = compute_equity_indicators(window)
+            if not ind:
+                continue
+
+            portfolio_state = PortfolioState(
+                current_value=portfolio_value,
+                starting_capital=starting_capital,
+                daily_pnl=daily_pnl,
+                weekly_pnl=weekly_pnl,
+                monthly_pnl=monthly_pnl,
+                consecutive_losses=consecutive_losses,
+                trades_today=trades_today,
+            )
+            guardrail_status = self.guardrails.check_all(portfolio_state)
+            if not guardrail_status.trading_allowed:
+                continue
+
+            action, confidence, _reasons = score_equity_signal(ind)
+            if action == "HOLD":
+                continue
+            threshold = self.guardrails.get_signal_threshold(guardrail_status)
+            if confidence < threshold:
+                continue
+
+            plan = compute_equity_trade_plan(ind, action, portfolio_value=portfolio_value)
+            shares = int(plan.get("shares", 0) or 0)
+            if shares <= 0:
+                continue
+
+            # Fill at this bar's open — the first tradeable price after
+            # yesterday's close generated the signal.
+            slip = bar_open * EQUITY_SLIPPAGE_PCT
+            fill_entry = bar_open + slip if action == "BUY" else bar_open - slip
+            commission = max(EQUITY_COMMISSION_PER_SHARE * shares, EQUITY_MIN_COMMISSION)
+
+            open_trade = BacktestTrade(
+                strategy="equity",
+                underlying=ticker,
+                entry_date=current_date,
+                signal_score=confidence,
+                commission_paid=commission,
+                contracts=shares,   # share count, not options contracts
+                direction=action,
+                entry_price=round(fill_entry, 4),
+                stop_price=plan.get("stop_price"),
+                target_price=plan.get("target_price"),
+            )
+            trades_today += 1
+
+        # Force-close a remaining open position at end of backtest
+        if open_trade is not None:
+            open_trade.exit_date = date.fromisoformat(end_date)
+            open_trade.exit_reason = "backtest_end"
+            open_trade.pnl = 0.0
+            open_trade.hold_days = (
+                (open_trade.exit_date - open_trade.entry_date).days
+                if open_trade.entry_date else 0
+            )
+            trades.append(open_trade)
+
+        closed = [t for t in trades if t.exit_reason != "backtest_end"]
+        pnl_list  = [t.pnl for t in closed]
+        hold_list = [t.hold_days for t in closed]
+        total_commissions = sum(t.commission_paid for t in trades)
+
+        metrics = calculate_all_metrics(
+            pnl_series=pnl_list,
+            hold_days=hold_list,
+            starting_capital=starting_capital,
+            total_commissions=total_commissions,
+            equity_curve=pd.Series(equity_curve),
+        )
+
+        logger.info(
+            "Equity backtest complete: %s %d trades, return=%.2f%%, Sharpe=%.2f",
+            ticker, len(closed), metrics.total_return_pct * 100, metrics.sharpe_ratio,
+        )
+
+        return BacktestResult(
+            strategy=f"equity:{ticker}",
+            start_date=date.fromisoformat(start_date),
+            end_date=date.fromisoformat(end_date),
+            starting_capital=starting_capital,
+            ending_capital=portfolio_value,
+            trades=trades,
+            metrics=metrics,
+            equity_curve=equity_curve,
         )
