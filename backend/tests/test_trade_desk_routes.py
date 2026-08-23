@@ -673,3 +673,96 @@ async def test_0dte_gate_does_not_apply_to_equity_signals():
                new=AsyncMock(return_value="trade-eq-0dte")):
         res = await _execute_signal(sig, approved_by="autopilot")
     assert res["result"] == "submitted"
+
+
+# ── Liquidity / gamma / close-proximity gates (Stage 1b3) ────────────────────
+def _options_signal_liquidity(**spread_overrides):
+    sig = _options_signal()
+    sig["spread"].update(spread_overrides)
+    return sig
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_blocks_wide_spread():
+    sig = _options_signal_liquidity(bid_ask_width_pct=0.20)
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "blocked"
+    assert "spread_too_wide" in res["reason"]
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_blocks_low_open_interest():
+    sig = _options_signal_liquidity(open_interest=10)
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "blocked"
+    assert "open_interest_too_low" in res["reason"]
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_blocks_0dte_near_close():
+    sig = _options_signal_liquidity(dte=0)
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.utils.market_hours.minutes_to_close", return_value=10.0), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "blocked"
+    assert "0dte_near_close" in res["reason"]
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_0dte_check_skipped_when_not_0dte():
+    """minutes_to_close < 30 must not block a >1 DTE signal — the close-
+    proximity check is scoped to dte<=1 only."""
+    sig = _options_signal_liquidity(dte=5)
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-NOT0DTE", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.utils.market_hours.minutes_to_close", return_value=10.0), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-not0dte")):
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_fails_open_on_missing_data():
+    """The base _options_signal() fixture has no bid_ask_width_pct/
+    open_interest/gamma keys at all (the yfinance/Black-Scholes fallback
+    shape) — must reach broker submission, not be blocked for missing
+    fields that were never fabricated."""
+    sig = _options_signal()
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-NODATA", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-nodata")):
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_passes_healthy_spread():
+    sig = _options_signal_liquidity(bid_ask_width_pct=0.05, open_interest=500, gamma=0.01)
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-HEALTHY", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-healthy")):
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "submitted"

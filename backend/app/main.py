@@ -954,11 +954,23 @@ async def _live_spread_quote(
         return None  # not a credit at these strikes — let BS / strike selection handle it
 
     short_delta = abs(float(short_c.greeks.delta)) if short_c.greeks and short_c.greeks.delta else None
+    short_gamma = float(short_c.greeks.gamma) if short_c.greeks and short_c.greeks.gamma is not None else None
     return {
         "net_credit":   round(net_credit_ps * 100, 2),
         "short_delta":  short_delta,
         "short_strike": float(short_c.strike),
         "long_strike":  float(long_c.strike),
+        # Real per-leg liquidity/gamma data — already fetched above, just not
+        # previously surfaced. Consumed by the liquidity/gamma gates in
+        # _execute_signal(); the yfinance/Black-Scholes fallback quote paths
+        # (below) have no equivalent and must not fabricate these.
+        "short_bid":            float(short_c.bid),
+        "short_ask":            float(short_c.ask),
+        "long_bid":             float(long_c.bid),
+        "long_ask":             float(long_c.ask),
+        "short_open_interest":  int(short_c.open_interest),
+        "long_open_interest":   int(long_c.open_interest),
+        "short_gamma":          short_gamma,
     }
 
 
@@ -1363,6 +1375,10 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         # Black-Scholes estimate above instead of risking a sign mixup reusing
         # credit-only helpers for a debit trade.
         credit_source = "black_scholes"
+        # Real per-leg bid/ask/OI/gamma, only ever populated on the live-chain
+        # path (below) — the liquidity/gamma gates in _execute_signal() must
+        # see None on every other path rather than a fabricated value.
+        liquidity_data: Optional[dict] = None
         broker = get_broker()
         if not is_debit:
             live = await _live_spread_quote(
@@ -1376,6 +1392,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 if live["short_delta"] is not None:
                     best_short_delta = live["short_delta"]
                 credit_source = "live_chain"
+                liquidity_data = live
             else:
                 yq = await _yf_options_quote(
                     symbol, target_exp.isoformat(), short_strike, long_strike, opt_type,
@@ -1577,6 +1594,26 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         else:
             breakeven = round(short_strike - credit_per_share, 2)
 
+        # Derived liquidity/gamma fields — None unless liquidity_data was
+        # populated on the live-chain path above. Never fabricated on the
+        # yfinance/Black-Scholes fallback paths; downstream gates in
+        # _execute_signal() must treat None as "skip the check."
+        bid_ask_width_pct: Optional[float] = None
+        spread_open_interest: Optional[int] = None
+        spread_gamma: Optional[float] = None
+        if liquidity_data:
+            short_bid = liquidity_data["short_bid"]
+            short_ask = liquidity_data["short_ask"]
+            short_mid = (short_bid + short_ask) / 2.0
+            if short_mid > 0:
+                bid_ask_width_pct = round((short_ask - short_bid) / short_mid, 4)
+            # The illiquid leg governs whether the whole spread can actually
+            # fill — take the thinner of the two.
+            spread_open_interest = min(
+                liquidity_data["short_open_interest"], liquidity_data["long_open_interest"],
+            )
+            spread_gamma = liquidity_data["short_gamma"]
+
         signal = {
             "id":           str(uuid.uuid4()),
             "ticker":       symbol,
@@ -1612,6 +1649,12 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "net_credit":    round(net_amount, 2),
                 "max_loss":      max_loss_dollars,
                 "breakeven":     breakeven,
+                # Real per-leg liquidity/gamma — only populated on the live
+                # IBKR chain path; None on yfinance/Black-Scholes fallback.
+                "bid_ask_width_pct": bid_ask_width_pct,
+                "open_interest":     spread_open_interest,
+                "gamma":             spread_gamma,
+                "quote_source":      credit_source,
             },
             "sigma":         round(sigma, 4),
             "vix_used":      round(vix_est * 100, 1),
@@ -1619,6 +1662,29 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         }
         from app.services.opportunity_score import compute_opportunity_score
         signal["opportunity_score"] = compute_opportunity_score(signal)
+
+        # Wire the alert rule-evaluation engine — options signals had no
+        # caller into evaluate_symbol() at all (unlike equity, wired in
+        # Phase 1). alpha_edge_entry_score mirrors the real Alpha Edge
+        # options orchestrator's own "no position/history yet" formula
+        # (round(signal_score * 100)) rather than re-deriving it a third
+        # way; alpha_edge_risk_score reuses the exact same pure-math
+        # function (trade_frequency_controller.risk_score) that
+        # orchestrator itself calls — no re-fetch of its I/O-bound flow.
+        try:
+            from app.services.trade_frequency_controller import risk_score as _ae_risk_score
+            alert_snapshot = {
+                "price":                  spot,
+                "iv_rank":                round(iv_rank, 2),
+                "vix_used":               round(vix_est * 100, 1),
+                "alpha_edge_entry_score": round(signal_score * 100),
+                "alpha_edge_risk_score":  _ae_risk_score(signal),
+                "opportunity_score":      signal["opportunity_score"]["score"],
+            }
+            from app.services.alerts.service import evaluate_symbol
+            await evaluate_symbol(symbol, alert_snapshot)
+        except Exception as exc:
+            logger.warning("Alert evaluation failed for %s: %s", symbol, exc)
 
         logger.info(
             "Options signal: %s %s %s %s/%s exp %s %s $%.2f (%s) score=%.3f qty=%d",

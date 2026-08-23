@@ -844,6 +844,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
       1. Kill switch
       1b. Market hours
       1b2. 0DTE autopilot gate (options + approved_by=="autopilot" only)
+      1b3. Liquidity / gamma / close-proximity gates (options only, fail-open on missing data)
       1c. Frequency controller (non-manual)
       1d. Strategy health (non-manual; fail-open on error)
       2. Guardrail risk check (fail closed — DB error = refused)
@@ -920,6 +921,46 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 ticker, _dte,
             )
             return _blocked("0dte_autopilot_disabled")
+
+    # ── Stage 1b3: Liquidity / gamma / close-proximity gates ────────────────────
+    # Real per-leg bid/ask/OI/gamma only exists on the live IBKR chain path
+    # (main.py's _live_spread_quote()) — the yfinance/Black-Scholes fallback
+    # paths set these to None rather than fabricate a value. Every check here
+    # is fail-open on None: a signal is never blocked because live market
+    # data merely wasn't available, only because a real reading failed it.
+    if asset_type == "options":
+        spread = signal.get("spread") or {}
+
+        width_pct = spread.get("bid_ask_width_pct")
+        if width_pct is not None and width_pct > 0.15:
+            logger.warning(
+                "Order blocked for %s — spread too wide (%.1f%% of mid)",
+                ticker, width_pct * 100,
+            )
+            return _blocked(f"liquidity_gate: spread_too_wide ({width_pct:.1%})")
+
+        open_interest = spread.get("open_interest")
+        if open_interest is not None and open_interest < 50:
+            logger.warning(
+                "Order blocked for %s — open interest too low (%s)",
+                ticker, open_interest,
+            )
+            return _blocked(f"liquidity_gate: open_interest_too_low ({open_interest})")
+
+        # 0DTE-specific: no new same-day-expiry entries in the last 30
+        # minutes of RTH — a position opened that late has no time left to
+        # be managed. Additive to Stage 1b2 above: this one also covers
+        # Copilot/manual approval, which 1b2 intentionally doesn't touch.
+        dte = spread.get("dte")
+        if dte is not None and dte <= 1:
+            from app.utils.market_hours import minutes_to_close
+            mins_left = minutes_to_close()
+            if mins_left is not None and mins_left < 30:
+                logger.warning(
+                    "Order blocked for %s — 0DTE entry too close to the close (%.0f min left)",
+                    ticker, mins_left,
+                )
+                return _blocked(f"liquidity_gate: 0dte_near_close ({mins_left:.0f}min left)")
 
     # ── Stage 2: Guardrail risk check (fail closed) ────────────────────────────
     try:

@@ -1,19 +1,24 @@
-"""Confirms evaluate_symbol() is wired into the live equity scan path,
-with the correct metric-key mapping — the actual regression this closes
-(alert rules previously had no automatic caller anywhere in the app)."""
+"""Confirms evaluate_symbol() is wired into the live equity AND options scan
+paths, with the correct metric-key mapping — the actual regression this
+closes (alert rules previously had no automatic caller anywhere in the app
+for equity; options alert wiring is Phase 2 track 2A.1)."""
 
 from __future__ import annotations
 
 import inspect
 
 
+def _source_block(fn, start_marker: str) -> str:
+    src = inspect.getsource(fn)
+    start = src.index(start_marker)
+    end = src.index("}", start)
+    return src[start:end + 1]
+
+
 def _alert_snapshot_block() -> str:
     import app.main as main_mod
 
-    src = inspect.getsource(main_mod._run_equity_scan)
-    start = src.index("alert_snapshot = {")
-    end = src.index("}", start)
-    return src[start:end + 1]
+    return _source_block(main_mod._run_equity_scan, "alert_snapshot = {")
 
 
 def test_evaluate_symbol_called_after_indicators_computed():
@@ -95,3 +100,69 @@ def test_opportunity_score_computed_before_alert_snapshot():
     opp_score_idx = src.index('signal["opportunity_score"] = compute_opportunity_score(signal)')
     snapshot_idx = src.index("alert_snapshot = {")
     assert opp_score_idx < snapshot_idx
+
+
+# ── Options scan alert wiring (Phase 2 track 2A.1) ────────────────────────────
+
+def _options_alert_snapshot_block() -> str:
+    import app.main as main_mod
+
+    return _source_block(main_mod._run_options_scan, "alert_snapshot = {")
+
+
+def test_options_scan_calls_evaluate_symbol():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._run_options_scan)
+    assert "evaluate_symbol" in src
+    assert "await evaluate_symbol(" in src
+
+
+def test_options_alert_snapshot_includes_alpha_edge_and_opportunity_score():
+    block = _options_alert_snapshot_block()
+    assert '"alpha_edge_entry_score"' in block
+    assert '"alpha_edge_risk_score"' in block
+    assert '"opportunity_score"' in block
+
+
+def test_options_alert_evaluation_failure_is_isolated_from_the_scan():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._run_options_scan)
+    call_idx = src.index("await evaluate_symbol(")
+    preceding = src[:call_idx]
+    try_idx = preceding.rindex("try:")
+    except_idx = src.index("except Exception as exc:", call_idx)
+    assert try_idx < call_idx < except_idx
+
+
+def test_options_alert_computed_after_opportunity_score():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._run_options_scan)
+    opp_score_idx = src.index('signal["opportunity_score"] = compute_opportunity_score(signal)')
+    snapshot_idx = src.index("alert_snapshot = {")
+    assert opp_score_idx < snapshot_idx
+
+
+# ── Liquidity/gamma field threading (Phase 2 track 2A.2) ──────────────────────
+
+def test_live_spread_quote_returns_bid_ask_oi_gamma():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._live_spread_quote)
+    for key in ("short_bid", "short_ask", "long_bid", "long_ask",
+                "short_open_interest", "long_open_interest", "short_gamma"):
+        assert f'"{key}"' in src
+
+
+def test_signal_spread_never_fabricates_liquidity_on_fallback_paths():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._run_options_scan)
+    # liquidity_data must default to None and only be set on the live_chain
+    # branch — never on the yfinance/Black-Scholes fallback paths.
+    init_idx = src.index("liquidity_data: Optional[dict] = None")
+    live_chain_idx = src.index('credit_source = "live_chain"')
+    set_idx = src.index("liquidity_data = live")
+    assert init_idx < live_chain_idx < set_idx

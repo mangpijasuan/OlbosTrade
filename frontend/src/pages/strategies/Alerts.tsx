@@ -16,6 +16,7 @@ import { Button } from "../../components/ui";
 const METRICS = [
   "price", "change_pct", "rsi_14", "volume",
   "alpha_edge_entry_score", "alpha_edge_risk_score", "opportunity_score",
+  "iv_rank", "vix_used",
 ];
 const OPS = ["gt", "gte", "lt", "lte", "eq", "ne"] as const;
 
