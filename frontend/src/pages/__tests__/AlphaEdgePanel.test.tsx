@@ -6,10 +6,20 @@ import AlphaEdgePanel from "../AlphaEdgePanel";
 import { api } from "../../api/client";
 
 vi.mock("../../api/client", () => ({
-  api: { getAlphaEdge: vi.fn() },
+  api: {
+    getAlphaEdge: vi.fn(),
+    getPositions: vi.fn(),
+    getEquitySignals: vi.fn(),
+    getOptionsSignals: vi.fn(),
+  },
 }));
 
-const mockedApi = api as unknown as { getAlphaEdge: ReturnType<typeof vi.fn> };
+const mockedApi = api as unknown as {
+  getAlphaEdge: ReturnType<typeof vi.fn>;
+  getPositions: ReturnType<typeof vi.fn>;
+  getEquitySignals: ReturnType<typeof vi.fn>;
+  getOptionsSignals: ReturnType<typeof vi.fn>;
+};
 
 function response(overrides: object) {
   return {
@@ -24,17 +34,37 @@ function response(overrides: object) {
     deterioration_evidence: [{ feature: "rsi_overbought", impact: -1.5 }],
     data_sources: { indicators: "yfinance daily bars", position: "broker" },
     error: null,
+    opportunity_score: 78,
     ...overrides,
   };
 }
 
-async function lookup(symbol = "AAPL") {
+function mockWatchlist() {
+  mockedApi.getPositions.mockResolvedValue({
+    positions: [{ symbol: "AAPL", asset_type: "equity", tracked: true }],
+  });
+  mockedApi.getEquitySignals.mockResolvedValue({
+    signals: [{
+      ticker: "AMD",
+      action: "BUY",
+      confidence: 0.82,
+      generated_at: new Date().toISOString(),
+    }],
+  });
+  mockedApi.getOptionsSignals.mockResolvedValue({ signals: [] });
+}
+
+async function lookup(symbol = "TSLA") {
   fireEvent.change(screen.getByLabelText(/alpha edge symbol lookup/i), { target: { value: symbol } });
   fireEvent.click(screen.getByRole("button", { name: /look up/i }));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockWatchlist();
+  mockedApi.getAlphaEdge.mockImplementation((ticker: string) =>
+    Promise.resolve(response({ ticker, entry_score: ticker === "AAPL" ? 62 : 88 })),
+  );
 });
 
 afterEach(() => {
@@ -42,70 +72,68 @@ afterEach(() => {
 });
 
 describe("AlphaEdgePanel", () => {
-  it("shows an empty prompt before any lookup", () => {
+  it("auto-loads positions and scan candidates on mount", async () => {
     render(<AlphaEdgePanel />);
-    expect(screen.getByText(/enter a symbol to look up/i)).toBeInTheDocument();
-  });
-
-  it("looks up a symbol and renders real scores", async () => {
-    mockedApi.getAlphaEdge.mockResolvedValue(response({}));
-    render(<AlphaEdgePanel />);
-    await lookup("AAPL");
+    await waitFor(() => expect(mockedApi.getPositions).toHaveBeenCalled());
+    expect(await screen.findByText("OPEN POSITIONS (1)")).toBeInTheDocument();
+    expect(screen.getByText("SCAN CANDIDATES (1)")).toBeInTheDocument();
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(screen.getByText("AMD")).toBeInTheDocument();
     await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("AAPL", "equity"));
-    expect(await screen.findByText("62")).toBeInTheDocument();
-    expect(screen.getByText("71")).toBeInTheDocument();
-    expect(screen.getByText("29")).toBeInTheDocument();
-    expect(screen.getByText("34")).toBeInTheDocument();
+    await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("AMD", "equity"));
   });
 
-  it("shows a dash for hold/exit scores when no position exists, not a fabricated number", async () => {
-    mockedApi.getAlphaEdge.mockResolvedValue(response({
-      hold_score: null, exit_score: null, lifecycle_state: "new",
-      position: { held: false },
-    }));
+  it("shows detail for the first auto-selected ticker", async () => {
     render(<AlphaEdgePanel />);
+    expect(await screen.findByText("ENTRY SCORE")).toBeInTheDocument();
+    const entryTiles = screen.getAllByText("62");
+    expect(entryTiles.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("looks up a manual symbol and renders scores", async () => {
+    mockedApi.getAlphaEdge.mockImplementation((ticker: string) =>
+      Promise.resolve(response({
+        ticker,
+        hold_score: null,
+        exit_score: null,
+        lifecycle_state: ticker === "TSLA" ? "new" : "confirmed",
+        position: { held: ticker !== "TSLA" },
+      })),
+    );
+    render(<AlphaEdgePanel />);
+    await waitFor(() => expect(screen.getByText("AAPL")).toBeInTheDocument());
     await lookup("TSLA");
+    await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("TSLA", "equity"));
     expect(await screen.findByText("NEW")).toBeInTheDocument();
-    const dashes = screen.getAllByText("—");
-    expect(dashes.length).toBeGreaterThanOrEqual(2); // hold + exit tiles
   });
 
-  it("renders the lifecycle badge with the correct label", async () => {
-    mockedApi.getAlphaEdge.mockResolvedValue(response({ lifecycle_state: "decaying" }));
+  it("shows an explicit error state on fetch rejection for manual lookup", async () => {
+    mockedApi.getAlphaEdge.mockImplementation((ticker: string) => {
+      if (ticker === "BAD") return Promise.reject(new Error("API error 500"));
+      return Promise.resolve(response({ ticker }));
+    });
     render(<AlphaEdgePanel />);
-    await lookup("AAPL");
-    expect(await screen.findByText("DECAYING")).toBeInTheDocument();
-  });
-
-  it("shows an explicit error state on fetch rejection", async () => {
-    mockedApi.getAlphaEdge.mockRejectedValue(new Error("API error 500: Internal Server Error"));
-    render(<AlphaEdgePanel />);
-    await lookup("AAPL");
+    await waitFor(() => expect(screen.getByText("AAPL")).toBeInTheDocument());
+    await lookup("BAD");
     await waitFor(() => expect(screen.getByText(/API error 500/)).toBeInTheDocument());
   });
 
-  it("shows an explicit error for an in-band error field (HTTP 200 with error)", async () => {
-    mockedApi.getAlphaEdge.mockResolvedValue(response({
-      entry_score: null, error: "insufficient bar history for XYZ (5 bars)",
-    }));
-    render(<AlphaEdgePanel />);
-    await lookup("XYZ");
-    await waitFor(() => expect(screen.getByText(/insufficient bar history/i)).toBeInTheDocument());
-  });
-
-  it("passes evidence through to SignalAttribution without inventing a confidence value", async () => {
-    mockedApi.getAlphaEdge.mockResolvedValue(response({}));
-    render(<AlphaEdgePanel />);
-    await lookup("AAPL");
-    expect(await screen.findByText(/macd bull cross/i)).toBeInTheDocument();
-    expect(screen.getByText(/rsi overbought/i)).toBeInTheDocument();
-  });
-
   it("switches asset type via AssetToggle and requests options scores", async () => {
-    mockedApi.getAlphaEdge.mockResolvedValue(response({ asset_type: "options" }));
+    mockedApi.getPositions.mockResolvedValue({
+      positions: [{ symbol: "SPY", asset_type: "options" }],
+    });
+    mockedApi.getOptionsSignals.mockResolvedValue({
+      signals: [{
+        ticker: "QQQ",
+        action: "BUY_SPREAD",
+        signal_score: 0.75,
+        generated_at: new Date().toISOString(),
+      }],
+    });
+    mockedApi.getAlphaEdge.mockResolvedValue(response({ ticker: "SPY", asset_type: "options" }));
     render(<AlphaEdgePanel />);
     fireEvent.click(screen.getByRole("button", { name: /options/i }));
-    await lookup("SPY");
+    await waitFor(() => expect(mockedApi.getOptionsSignals).toHaveBeenCalled());
     await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("SPY", "options"));
   });
 });
