@@ -595,3 +595,81 @@ async def test_scan_signal_low_confidence_still_blocked_when_approved_by_user():
         res = await _execute_signal(sig, approved_by="user")
     assert res["result"] == "blocked"
     assert "below_min_confidence" in res["reason"]
+
+
+# ── 0DTE autopilot gate ──────────────────────────────────────────────────────
+def _options_signal_dte(dte: int):
+    sig = _options_signal()
+    sig["spread"]["dte"] = dte
+    return sig
+
+
+@pytest.mark.asyncio
+async def test_0dte_autopilot_signal_blocked_before_broker():
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(_options_signal_dte(0), approved_by="autopilot")
+    assert res["result"] == "blocked"
+    assert res["reason"] == "0dte_autopilot_disabled"
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_1dte_autopilot_signal_also_blocked():
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False):
+        res = await _execute_signal(_options_signal_dte(1), approved_by="autopilot")
+    assert res["result"] == "blocked"
+    assert res["reason"] == "0dte_autopilot_disabled"
+
+
+@pytest.mark.asyncio
+async def test_2dte_autopilot_signal_not_blocked_by_0dte_gate():
+    """2 DTE clears the hard gate — must reach broker submission, not be
+    silently swallowed by an off-by-one in the dte<=1 comparison."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-2DTE", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-2dte")):
+        res = await _execute_signal(_options_signal_dte(2), approved_by="autopilot")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_0dte_manual_approval_not_blocked_by_autopilot_gate():
+    """0DTE stays available with a human in the loop — the gate only fires
+    for approved_by=="autopilot", matching the UI's "Copilot or manual
+    only" language."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-MANUAL-0DTE", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-manual-0dte")):
+        res = await _execute_signal(_options_signal_dte(0), approved_by="manual")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_0dte_gate_does_not_apply_to_equity_signals():
+    """Equity signals have no spread.dte at all — the gate must be a no-op
+    for asset_type != "options", not raise on a missing key."""
+    sig = _equity_signal(source="equity_desk_composer", confidence=0.05, action="BUY")
+    broker = MagicMock()
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(order_id="ORD-EQ", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-eq-0dte")):
+        res = await _execute_signal(sig, approved_by="autopilot")
+    assert res["result"] == "submitted"

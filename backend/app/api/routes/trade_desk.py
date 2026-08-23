@@ -843,6 +843,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     Stages (in order — no stage may be skipped):
       1. Kill switch
       1b. Market hours
+      1b2. 0DTE autopilot gate (options + approved_by=="autopilot" only)
       1c. Frequency controller (non-manual)
       1d. Strategy health (non-manual; fail-open on error)
       2. Guardrail risk check (fail closed — DB error = refused)
@@ -902,6 +903,23 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 ticker, status["reason"], status["now_et"],
             )
             return _blocked(f"market_closed: {status['reason']}")
+
+    # ── Stage 1b2: 0DTE Autopilot Gate ──────────────────────────────────────────
+    # "0DTE Autopilot disabled" is documented UI-facing language (see
+    # evaluate_options()'s advisory warning) but was never enforced in this,
+    # the one authoritative order pipeline every signal source funnels
+    # through — a genuinely 0DTE/1DTE options signal approved by AUTOPILOT
+    # could previously reach the broker with no DTE-specific stop. COPILOT
+    # approval and manual entry are unaffected — 0DTE stays available with a
+    # human in the loop, matching the UI's own "Copilot or manual only" text.
+    if asset_type == "options" and approved_by == "autopilot":
+        _dte = (signal.get("spread") or {}).get("dte")
+        if _dte is not None and _dte <= 1:
+            logger.warning(
+                "Order blocked for %s — 0DTE/1DTE autopilot disabled (dte=%s)",
+                ticker, _dte,
+            )
+            return _blocked("0dte_autopilot_disabled")
 
     # ── Stage 2: Guardrail risk check (fail closed) ────────────────────────────
     try:
