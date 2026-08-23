@@ -276,6 +276,15 @@ export const api = {
     return request<{ count: number; results: any[] }>(`/api/options-flow${q}`);
   },
   getOptionsFlowSummary: () => request<any>("/api/options-flow/summary"),
+
+  // ── Quant Research & Strategy Lab ───────────────────────────────────────────
+  listQuantStrategies: () => request<any>("/api/quant/strategies"),
+  createQuantStrategy: (body: object) =>
+    request<any>("/api/quant/strategies", { method: "POST", body: JSON.stringify(body) }),
+  runQuantBacktest: (body: object) =>
+    request<any>("/api/quant/backtest", { method: "POST", body: JSON.stringify(body) }),
+  getQuantBacktestResult: (runId: string) => request<any>(`/api/quant/backtest/${runId}`),
+  exportQuantBacktestTrades: (runId: string) => request<any>(`/api/quant/backtest/${runId}/export`),
 };
 
 /** Build the absolute WebSocket URL for the options-flow live stream. */

@@ -38,10 +38,10 @@ export default function StrategyList({ onSelectForBacktest }: Props) {
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const res = await api.get("/api/quant/strategies");
-      setStrategies(res.data.strategies || []);
+      const res: any = await api.listQuantStrategies();
+      setStrategies(res.strategies || []);
     } catch (e: any) {
-      setError(e?.response?.data?.detail ?? String(e));
+      setError(e?.message ?? String(e));
     } finally {
       setLoading(false);
     }

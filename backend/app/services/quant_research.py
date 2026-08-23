@@ -334,6 +334,27 @@ def _eval_condition(cond: dict, df: pd.DataFrame) -> pd.Series:
     return result.fillna(False)
 
 
+# direction="BOTH" mirrors the entry layer: a strategy's bullish condition
+# set (e.g. "EMA_20 crosses_above EMA_50") implies its bearish counterpart
+# by inverting each operator ("crosses_below" instead of "crosses_above"),
+# rather than requiring a second, separately-authored short entry layer.
+_OPERATOR_INVERSE = {
+    ">": "<", "<": ">", ">=": "<=", "<=": ">=",
+    "==": "==",
+    "crosses_above": "crosses_below", "crosses_below": "crosses_above",
+}
+
+
+def _invert_conditions(conditions: list[dict]) -> list[dict]:
+    """Flip every condition's operator to its bearish mirror (for BOTH-direction entries)."""
+    inverted = []
+    for c in conditions:
+        c2 = dict(c)
+        c2["operator"] = _OPERATOR_INVERSE.get(c.get("operator", ">"), c.get("operator", ">"))
+        inverted.append(c2)
+    return inverted
+
+
 def _eval_layer(conditions: list[dict], logic: str, df: pd.DataFrame) -> pd.Series:
     """Combine a list of conditions with AND or OR logic."""
     if not conditions:
@@ -594,15 +615,27 @@ class BacktestEngine:
         exec_sim = ExecutionSimulator(cfg)
         trades: list[QuantTrade] = []
         equity = starting_capital
+        peak_equity = starting_capital
         equity_ts: list[tuple[date, float]] = []
         daily_loss = 0.0
+        current_day: Optional[date] = None
         open_position: Optional[dict] = None
         open_count = 0
 
         bars = df.index.tolist()
 
-        # Pre-compute layer signals on shifted data for all bars at once (vectorised)
-        entry_signal  = _eval_layer(cfg.entry,        cfg.entry_logic,        sig_df)
+        # Pre-compute layer signals on shifted data for all bars at once (vectorised).
+        # direction="BOTH" evaluates the entry layer twice — once as authored
+        # (bullish) and once with every operator mirrored (bearish) — since a
+        # single boolean signal can't otherwise carry which side to take.
+        entry_signal_long = _eval_layer(cfg.entry, cfg.entry_logic, sig_df)
+        if cfg.direction == "BOTH":
+            entry_signal_short = _eval_layer(_invert_conditions(cfg.entry), cfg.entry_logic, sig_df)
+        elif cfg.direction == "SHORT":
+            entry_signal_short = entry_signal_long
+            entry_signal_long = pd.Series(False, index=sig_df.index)
+        else:
+            entry_signal_short = pd.Series(False, index=sig_df.index)
         filter_signal = _eval_layer(cfg.filter,       cfg.filter_logic,       sig_df)
         confirm_sig   = _eval_layer(cfg.confirmation, cfg.confirmation_logic, sig_df)
         exit_signal   = _eval_layer(cfg.exit,         cfg.exit_logic,         sig_df)
@@ -611,15 +644,25 @@ class BacktestEngine:
             bar = df.loc[ts]
             bar_date = ts.date() if hasattr(ts, "date") else ts
 
+            # max_daily_loss_pct means what it says — reset the accumulator
+            # on every new calendar day, not once for the whole backtest.
+            if bar_date != current_day:
+                current_day = bar_date
+                daily_loss = 0.0
+
             # Track equity at each bar
             if open_position:
                 bar_equity = equity + open_position["unrealised_pnl_fn"](float(bar["Close"]))
             else:
                 bar_equity = equity
             equity_ts.append((bar_date, bar_equity))
+            peak_equity = max(peak_equity, bar_equity)
 
-            # Risk limits
-            dd_pct = 100 * (1 - equity / starting_capital)
+            # Risk limits — drawdown from the rolling equity peak, not the
+            # starting balance, so this matches the reported drawdown curve
+            # below (eq_series.cummax()) instead of silently under-triggering
+            # once equity has ever grown past its starting value.
+            dd_pct = 100 * (1 - bar_equity / peak_equity) if peak_equity > 0 else 0.0
             if dd_pct >= cfg.max_drawdown_pct:
                 if open_position:
                     trades.append(self._close_trade(open_position, float(bar["Open"]), bar_date, exec_sim, "MAX_DRAWDOWN"))
@@ -675,8 +718,10 @@ class BacktestEngine:
                     open_count -= 1
 
             # ── ENTRY ──────────────────────────────────────────────────────────
+            long_fires  = entry_signal_long.loc[ts]
+            short_fires = entry_signal_short.loc[ts]
             if (open_count < cfg.max_concurrent_positions
-                    and entry_signal.loc[ts]
+                    and (long_fires or short_fires)
                     and filter_signal.loc[ts]
                     and confirm_sig.loc[ts]
                     and abs(daily_loss / equity) * 100 < cfg.max_daily_loss_pct):
@@ -685,7 +730,10 @@ class BacktestEngine:
                 if pd.isna(atr14) or atr14 == 0:
                     continue
 
-                direction = "LONG" if cfg.direction in ("LONG", "BOTH") else "SHORT"
+                # Both mirrored signals can fire on the same bar (e.g. a
+                # symmetric oscillator condition) — long takes priority,
+                # an arbitrary but deterministic tie-break.
+                direction = "LONG" if long_fires else "SHORT"
                 entry_price_raw = float(bar["Open"])
                 position_value  = equity * (cfg.position_size_pct / 100)
                 shares = max(1, int(position_value / entry_price_raw))

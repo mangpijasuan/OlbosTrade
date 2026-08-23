@@ -58,8 +58,8 @@ export default function BacktestLab({ preselectedStrategyId }: { preselectedStra
 
   // Load saved strategies for the strategy picker
   useEffect(() => {
-    api.get("/api/quant/strategies")
-      .then(r => setStrategies(r.data.strategies ?? []))
+    api.listQuantStrategies()
+      .then((r: any) => setStrategies(r.strategies ?? []))
       .catch(() => {});
   }, []);
 
@@ -73,8 +73,7 @@ export default function BacktestLab({ preselectedStrategyId }: { preselectedStra
 
     const poll = async () => {
       try {
-        const res = await api.get(`/api/quant/backtest/${runId}`);
-        const data = res.data;
+        const data: any = await api.getQuantBacktestResult(runId);
         if (data.status === "completed" || data.status === "failed") {
           setResults(data);
           setLoading(false);
@@ -102,21 +101,21 @@ export default function BacktestLab({ preselectedStrategyId }: { preselectedStra
     setResults(null);
     setRunId(null);
     try {
-      const res = await api.post("/api/quant/backtest", {
+      const res: any = await api.runQuantBacktest({
         strategy_id: selectedStratId,
         ...form,
       });
-      setRunId(res.data.run_id);
+      setRunId(res.run_id);
     } catch (e: any) {
       setLoading(false);
-      setError(e?.response?.data?.detail ?? String(e));
+      setError(e?.message ?? String(e));
     }
   };
 
   const handleExport = async () => {
     if (!runId) return;
-    const res = await api.get(`/api/quant/backtest/${runId}/export`);
-    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
+    const res = await api.exportQuantBacktestTrades(runId);
+    const blob = new Blob([JSON.stringify(res, null, 2)], { type: "application/json" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url; a.download = `backtest-${runId.slice(0, 8)}.json`;

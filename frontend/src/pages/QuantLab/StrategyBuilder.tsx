@@ -90,10 +90,10 @@ export default function StrategyBuilderPage() {
     if (!form.entry.length) { setError("At least one entry condition is required"); return; }
     setSaving(true); setError(null); setResult(null);
     try {
-      const res = await api.post("/api/quant/strategies", form);
-      setResult({ id: res.data.strategy_id, version: res.data.version });
+      const res: any = await api.createQuantStrategy(form);
+      setResult({ id: res.strategy_id, version: res.version });
     } catch (e: any) {
-      setError(e?.response?.data?.detail ?? String(e));
+      setError(e?.message ?? String(e));
     } finally {
       setSaving(false);
     }

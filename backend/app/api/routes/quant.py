@@ -21,10 +21,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, desc
 
+from app.api.deps import require_api_key
+from app.api.rate_limit import rate_limit
 from app.core.database import AsyncSessionLocal
 from app.models.quant_models import QuantStrategy, QuantStrategyVersion, QuantBacktestRun
 from app.services.quant_research import BacktestEngine, StrategyBuilder, StrategyConfig
@@ -94,7 +96,7 @@ class BacktestRequest(BaseModel):
 
 # ── Strategy CRUD ─────────────────────────────────────────────────────────────
 
-@router.post("/strategies")
+@router.post("/strategies", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def create_strategy(req: StrategyCreateRequest):
     """Create a new strategy and save version 1."""
     try:
@@ -183,7 +185,7 @@ async def get_strategy(strategy_id: str):
     }
 
 
-@router.put("/strategies/{strategy_id}")
+@router.put("/strategies/{strategy_id}", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def update_strategy(strategy_id: str, req: StrategyCreateRequest):
     """Update a strategy — creates a new immutable version snapshot."""
     try:
@@ -346,7 +348,7 @@ async def _run_backtest_task(run_id: str, req: BacktestRequest) -> None:
             pass
 
 
-@router.post("/backtest")
+@router.post("/backtest", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def run_backtest(req: BacktestRequest):
     """Kick off a quant backtest. Poll GET /api/quant/backtest/{id} for status."""
     if not req.strategy_id and not req.strategy_config:
