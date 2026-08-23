@@ -77,8 +77,6 @@ Until a model is trained, treat signal scores as heuristic, not ML-derived.
 |-----|------|----------|
 | P1 | Kill-switch *engage* unauthenticated at FastAPI (by design; nginx handles it) | `trade_desk.py` |
 | P2 | ML signal scorer running heuristic fallback — no trained model on disk | `signal_scorer.py`, `ml/train_signal_scorer.py` |
-| P2 | No broker-event streaming (everything polls) — hard blocker for live capital | `ibkr_client.py`, `ibkr_coordinator.py` |
-| P2 | Margin / buying power not surfaced operationally | `broker_interface.py` |
 | P3 | Vestigial `POST /api/equity/signals/{id}/approve` endpoint (dead) | `equity.py:107` |
 | P3 | `TRADING_POLICY.md:34-35` says "SPY-only options" — false since QQQ options shipped | `TRADING_POLICY.md` |
 | P3 | Frontend single bundle 477 kB / no code splitting | `frontend/` |
@@ -90,6 +88,8 @@ Until a model is trained, treat signal scores as heuristic, not ML-derived.
 - Execution mode persisted to DB (not `/tmp`)
 - Capital base single source: `account_state.py::get_account_value()`
 - API-key auth on all mutate routes (`deps.py::require_api_key`)
+- Broker-event streaming — 5 push-event hooks in `ibkr_client.py::connect()` (connectedEvent, disconnectedEvent, errorEvent, orderStatusEvent, execDetailsEvent); `_connected` now tracks real connection state
+- Margin / buying power surfaced — `ibkr_client.py::get_account_summary()` returns `buying_power`, `maintenance_margin`, `init_margin`
 
 ---
 

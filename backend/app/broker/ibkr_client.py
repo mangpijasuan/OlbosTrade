@@ -125,6 +125,69 @@ class IBKRClient(BrokerInterface):
         self.ib = IB()
         self._connected = False
 
+    # ── Persistent event handlers ────────────────────────────────────────────
+
+    def _on_connected(self) -> None:
+        """ib.connectedEvent — fired on reconnect by ib_insync."""
+        self._connected = True
+        logger.info("IBKR reconnected (connectedEvent)")
+
+    def _on_disconnected(self) -> None:
+        """ib.disconnectedEvent — fired on silent disconnect or gateway restart."""
+        self._connected = False
+        logger.warning("IBKR disconnected (disconnectedEvent) — _require_connection() will catch next call")
+
+    # IBKR info codes that are routine connection-health notices, not errors.
+    _BENIGN_CODES = frozenset({2104, 2106, 2158})
+
+    def _on_error(self, req_id: int, code: int, message: str, contract=None) -> None:
+        """ib.errorEvent — global broker error/info callback."""
+        if code in self._BENIGN_CODES:
+            logger.debug("IBKR info [reqId=%s code=%s]: %s", req_id, code, message)
+        else:
+            logger.error("IBKR error [reqId=%s code=%s]: %s", req_id, code, message)
+
+    def _on_order_status(self, trade) -> None:
+        """ib.orderStatusEvent — fired on any order state change."""
+        order = trade.order
+        status = trade.orderStatus
+        logger.info(
+            "IBKR order status [orderId=%s status=%s filled=%s avgFillPrice=%s]",
+            order.orderId,
+            status.status,
+            status.filled,
+            status.avgFillPrice,
+        )
+
+    def _on_exec_details(self, trade, fill) -> None:
+        """ib.execDetailsEvent — fired immediately when any execution arrives."""
+        exec_ = fill.execution
+        logger.info(
+            "IBKR execution [execId=%s orderId=%s symbol=%s side=%s qty=%s price=%s time=%s]",
+            exec_.execId,
+            exec_.orderId,
+            fill.contract.symbol,
+            exec_.side,
+            exec_.shares,
+            exec_.price,
+            exec_.time,
+        )
+
+    def _subscribe_events(self) -> None:
+        """Attach persistent push-event listeners to the IB object.
+
+        Called once after a successful connect.  Safe to call multiple times —
+        ib_insync's Event uses a set internally, so duplicate subscriptions are
+        ignored.
+        """
+        self.ib.connectedEvent += self._on_connected
+        self.ib.disconnectedEvent += self._on_disconnected
+        self.ib.errorEvent += self._on_error
+        self.ib.orderStatusEvent += self._on_order_status
+        self.ib.execDetailsEvent += self._on_exec_details
+
+    # ── Connection lifecycle ─────────────────────────────────────────────────
+
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
         for attempt in range(1, MAX_RETRIES + 1):
@@ -152,6 +215,7 @@ class IBKRClient(BrokerInterface):
                 #   4 = delayed-frozen (free, works outside market hours)
                 self.ib.reqMarketDataType(4)
                 logger.info("IBKR market data type set to 4 (delayed-frozen, free)")
+                self._subscribe_events()
                 return
             except Exception as exc:
                 logger.warning(

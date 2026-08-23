@@ -30,6 +30,9 @@ design / nginx).
 |-----|--------|--------|
 | P1 | Kill engage unauthenticated at FastAPI | `trade_desk.py` (by design; nginx) |
 | ~~P2~~ | ~~Duplicated delta/vega constants~~ | **Closed 2026-08-23** — `risk_limits.py` |
+| ~~P2~~ | ~~No broker-event streaming (everything polls)~~ | **Closed 2026-08-23** — `ibkr_client.py` 5 push-event hooks |
+| ~~P2~~ | ~~Margin / buying power not surfaced operationally~~ | **Closed 2026-08-23** — `get_account_summary()` in `ibkr_client.py` |
+| P2 | ML signal scorer running heuristic fallback — no trained model on disk | `signal_scorer.py`, `ml/train_signal_scorer.py` |
 | P3 | Vestigial equity approve; TRADING_POLICY SPY-only; App bundle | cleanup |
 
 ### Next
