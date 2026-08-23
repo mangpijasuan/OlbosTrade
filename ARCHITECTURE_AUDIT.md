@@ -29,7 +29,7 @@ design / nginx).
 | Sev | Issue | Where |
 |-----|--------|--------|
 | P1 | Kill engage unauthenticated at FastAPI | `trade_desk.py` (by design; nginx) |
-| P2 | Duplicated delta/vega constants | `risk_manager` vs `portfolio_greeks` |
+| ~~P2~~ | ~~Duplicated delta/vega constants~~ | **Closed 2026-08-23** — `risk_limits.py` |
 | P3 | Vestigial equity approve; TRADING_POLICY SPY-only; App bundle | cleanup |
 
 ### Next

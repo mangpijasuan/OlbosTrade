@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from app.services.risk_limits import MAX_PORTFOLIO_DELTA, MAX_PORTFOLIO_VEGA
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +36,8 @@ class PortfolioGreeksTracker:
       max |vega|  = 0.15
     """
 
-    MAX_DELTA = 0.30
-    MAX_VEGA  = 0.15
+    MAX_DELTA = MAX_PORTFOLIO_DELTA
+    MAX_VEGA  = MAX_PORTFOLIO_VEGA
 
     def __init__(self) -> None:
         self._positions: dict[str, PositionGreeks] = {}
