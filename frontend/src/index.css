@@ -30,6 +30,8 @@
   --orange:    #f97316;
   --mono:      "JetBrains Mono", monospace;
   --sans:      "IBM Plex Sans", system-ui, sans-serif;
+  /* Brand wordmark uses the same sans stack — no serif/manuscript faces. */
+  --brand-font: var(--sans);
 
   /* Instrument console (skeuomorphic-lite) — crisp bezels, not soft/glass UI.
      Highlight = top edge catching light; shade = bottom/right recess. */
@@ -95,6 +97,13 @@ body {
 
 /* Typography */
 .mono { font-family: var(--mono); }
+.brand-wordmark {
+  font-family: var(--brand-font);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--brand);
+  text-shadow: 0 0 10px rgba(212, 175, 55, 0.3);
+}
 /* tabular-nums: proportional sans with monospaced digits — for ALL P&L,
    prices, percentages, and metrics so columns align without using --mono. */
 .tnum { font-family: var(--sans); font-variant-numeric: tabular-nums; }
