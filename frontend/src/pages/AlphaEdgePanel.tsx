@@ -249,7 +249,7 @@ function CandidateRow({
         <span className="mono" style={{ fontSize: 10, color: "var(--red)" }}>{scoreState.message}</span>
       )}
       {data && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <MiniScore label="OPP" value={data.opportunity_score} />
           <MiniScore label="ENTRY" value={data.entry_score} />
           <MiniScore label="HOLD" value={data.hold_score} />
@@ -409,7 +409,11 @@ export default function AlphaEdgePanel() {
               <div className="kicker" style={{ marginBottom: 8 }}>
                 OPEN POSITIONS ({held.length})
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 8,
+              }}>
                 {held.map(c => (
                   <CandidateRow
                     key={c.ticker}
@@ -428,7 +432,11 @@ export default function AlphaEdgePanel() {
               <div className="kicker" style={{ marginBottom: 8 }}>
                 SCAN CANDIDATES ({scan.length})
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 8,
+              }}>
                 {scan.map(c => (
                   <CandidateRow
                     key={c.ticker}
