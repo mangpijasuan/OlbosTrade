@@ -83,7 +83,9 @@ def test_alert_snapshot_reuses_alpha_edge_pure_functions_not_reimplemented():
     assert "from app.services.trade_frequency_controller import risk_score" in src
     # And not the full I/O-bound Alpha Edge orchestrator, which would
     # re-fetch bars/hit the DB for every ticker on every scan cycle.
-    assert "compute_equity_alpha_edge" not in src
+    # (Checked as an actual call, not a bare substring — this file's own
+    # comment legitimately mentions the orchestrator's name for context.)
+    assert "compute_equity_alpha_edge(" not in src
 
 
 def test_opportunity_score_computed_before_alert_snapshot():

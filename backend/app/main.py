@@ -833,10 +833,10 @@ async def _run_equity_scan() -> None:
                     # need options/vol-surface data this scan doesn't fetch and
                     # stay unwired — separate, larger, explicitly deferred scope.
                     # alpha_edge_entry_score/alpha_edge_risk_score reuse the same
-                    # pure-math functions alpha_edge_engine.compute_equity_alpha_edge()
-                    # itself calls — not a re-fetch of Alpha Edge's full I/O-bound
-                    # orchestration (which would re-hit yfinance/DB per ticker on
-                    # every scan cycle).
+                    # pure-math functions the Alpha Edge equity orchestrator (see
+                    # alpha_edge_engine.py) itself calls — not a re-fetch of its
+                    # full I/O-bound flow, which would re-hit yfinance/DB per
+                    # ticker on every scan cycle.
                     try:
                         prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else 0.0
                         change_pct = (
