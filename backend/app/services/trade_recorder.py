@@ -180,13 +180,20 @@ class TradeRecorder:
             return None
 
     async def confirm_fill(self, *, trade_id: str,
-                           net_fill_price: Optional[float] = None) -> bool:
+                           net_fill_price: Optional[float] = None,
+                           quantity: Optional[float] = None) -> bool:
         """
         Promote a ``pending`` trade to ``open`` once the broker confirms a fill.
 
         Called by the fill reconciler when a pending order's position appears at
         the broker (or an execution fill is found). Optionally corrects the
-        recorded entry credit to the real net fill price. Returns True on
+        recorded entry credit to the real net fill price, and — just as
+        important — the recorded quantity to what the broker actually holds.
+        Without this, a trade promoted from `pending` keeps whatever quantity
+        was planned at signal time forever, even when the real fill (or
+        residual shares from prior activity on the same ticker) came in
+        different — confirmed in production via a real MU/SNDK/MRVL quantity
+        drift (DB under-reporting broker holdings by 2-7x). Returns True on
         success, False if the trade is missing or not pending.
         """
         try:
@@ -204,8 +211,10 @@ class TradeRecorder:
                     trade.status = "open"
                     if net_fill_price is not None:
                         trade.credit_received = Decimal(str(round(net_fill_price, 4)))
-            logger.info("Pending trade %s confirmed filled → open (fill=%s)",
-                        trade_id, net_fill_price)
+                    if quantity is not None and quantity > 0:
+                        trade.quantity = int(round(quantity))
+            logger.info("Pending trade %s confirmed filled → open (fill=%s, qty=%s)",
+                        trade_id, net_fill_price, quantity)
             return True
         except Exception as exc:
             logger.warning("confirm_fill failed for %s: %s", trade_id, exc)

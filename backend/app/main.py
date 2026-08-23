@@ -1816,6 +1816,18 @@ async def _poll_fills() -> None:
             if sym and upnl is not None:
                 live_upnl[sym] = live_upnl.get(sym, 0.0) + float(upnl)
 
+        # Sum live quantity per underlying — confirm_fill() needs this to
+        # correct Trade.quantity to what the broker actually holds. Without
+        # it, a pending trade promoted to open keeps whatever quantity was
+        # planned at signal time forever, even if the real fill (or residual
+        # shares from prior activity on the same ticker) came in different.
+        live_qty: dict[str, float] = {}
+        for p in live_positions:
+            sym = getattr(p, "symbol", getattr(p, "underlying", "")).upper()
+            qty = getattr(p, "quantity", None)
+            if sym and qty is not None:
+                live_qty[sym] = live_qty.get(sym, 0.0) + abs(float(qty))
+
         # Load all open + pending trades from DB
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -1883,7 +1895,9 @@ async def _poll_fills() -> None:
                 continue
             filled = underlying in live_symbols or bool(fills_by_symbol.get(underlying))
             if filled:
-                await trade_recorder.confirm_fill(trade_id=tid)
+                await trade_recorder.confirm_fill(
+                    trade_id=tid, quantity=live_qty.get(underlying),
+                )
                 continue
             entry_dt = trade.entry_date
             if entry_dt.tzinfo is None:

@@ -107,7 +107,12 @@ async def test_pending_trade_with_live_position_confirmed_not_cancelled():
         seconds=m.FILL_GRACE_SECONDS + 60
     )
     trade = _pending_trade(stale_entry)
-    live_position = MagicMock(symbol="NVDA", underlying="NVDA", unrealized_pnl=None)
+    # quantity=100 (not the trade's originally-planned size) — proves
+    # confirm_fill() receives the broker's real quantity, not whatever the
+    # signal planned. This is the exact bug that let a promoted trade's
+    # quantity silently drift from the broker's true holding (MU/SNDK/MRVL
+    # in production, DB under-reporting by 2-7x).
+    live_position = MagicMock(symbol="NVDA", underlying="NVDA", unrealized_pnl=None, quantity=100)
 
     with patch("app.broker.broker_factory.get_broker",
                return_value=_fake_broker(positions=[live_position])), \
@@ -116,7 +121,7 @@ async def test_pending_trade_with_live_position_confirmed_not_cancelled():
          patch.object(trade_recorder, "confirm_fill", new=AsyncMock()) as confirm:
         await m._poll_fills()
 
-    confirm.assert_awaited_once_with(trade_id=trade.id)
+    confirm.assert_awaited_once_with(trade_id=trade.id, quantity=100.0)
     cancel.assert_not_called()
 
 

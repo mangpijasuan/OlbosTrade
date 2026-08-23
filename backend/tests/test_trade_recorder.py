@@ -209,6 +209,32 @@ async def test_confirm_fill_overwrites_credit_with_real_fill():
 
 
 @pytest.mark.asyncio
+async def test_confirm_fill_corrects_quantity_to_broker_reality():
+    """The exact bug this covers: a pending trade's quantity used to stay
+    frozen at whatever was planned at signal time forever, even once the
+    real fill (or a broker holding built from prior activity) differed —
+    confirmed in production as MU/SNDK/MRVL each under-reporting their
+    broker quantity by 2-7x. confirm_fill() must now correct it, the same
+    way it already corrects credit_received from net_fill_price."""
+    t = _Trade(status="pending", credit_received=Decimal("2.98"), quantity=21)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()), quantity=63.0)
+    assert ok and t.status == "open" and t.quantity == 63
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_without_quantity_leaves_it_unchanged():
+    """No quantity passed (e.g. the underlying wasn't found in live_qty) —
+    don't clobber a legitimate value with None."""
+    t = _Trade(status="pending", credit_received=Decimal("2.98"), quantity=21)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()))
+    assert ok and t.quantity == 21
+
+
+@pytest.mark.asyncio
 async def test_confirm_fill_ignores_non_pending():
     t = _Trade(status="open")
     rec = TradeRecorder()
