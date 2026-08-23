@@ -649,6 +649,7 @@ async def test_0dte_manual_approval_not_blocked_by_autopilot_gate():
     broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-MANUAL-0DTE", status="submitted"))
     with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
          patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.utils.market_hours.minutes_to_close", return_value=None), \
          patch("app.broker.broker_factory.get_broker", return_value=broker), \
          patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
          patch("app.services.trade_recorder.trade_recorder.record_fill",

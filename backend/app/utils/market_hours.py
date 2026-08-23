@@ -68,7 +68,11 @@ def minutes_to_close(now: datetime | None = None) -> Optional[float]:
     if not is_market_open(et):
         return None
     close_dt = et.replace(hour=RTH_CLOSE.hour, minute=RTH_CLOSE.minute, second=0, microsecond=0)
-    return (close_dt - et).total_seconds() / 60.0
+    # Never negative — a caller with a stale/mocked is_market_open() that
+    # says "open" past the real close would otherwise get a nonsensical
+    # negative "minutes left," which reads as a false positive wherever
+    # it's compared against a floor (e.g. "< 30 minutes to close").
+    return max((close_dt - et).total_seconds() / 60.0, 0.0)
 
 
 def market_status(now: datetime | None = None) -> dict:
