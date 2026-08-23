@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Optional
 
 from app.core.config import settings
-from app.services.risk_limits import MAX_PORTFOLIO_DELTA, MAX_PORTFOLIO_VEGA
+from app.services.risk_limits import MAX_PORTFOLIO_DELTA as _MAX_PORTFOLIO_DELTA, MAX_PORTFOLIO_VEGA as _MAX_PORTFOLIO_VEGA
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,8 +55,8 @@ class RiskManager:
     Called via approve_trade() before every order submission.
     """
 
-    MAX_PORTFOLIO_DELTA = MAX_PORTFOLIO_DELTA
-    MAX_VEGA_EXPOSURE = MAX_PORTFOLIO_VEGA
+    MAX_PORTFOLIO_DELTA = _MAX_PORTFOLIO_DELTA
+    MAX_VEGA_EXPOSURE = _MAX_PORTFOLIO_VEGA
     MAX_CONCURRENT_POSITIONS = 5
     MAX_SINGLE_UNDERLYING = 0.25       # 25% of portfolio in one underlying
     MAX_SECTOR_CONCENTRATION = 0.40    # 40% of portfolio in one sector
