@@ -65,18 +65,8 @@ export default function CopilotQueue() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--line-dim)",
-          background: "var(--bg-3)",
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <span className="panel-title">COPILOT QUEUE</span>
+      <div className="desk-tool-rail" style={{ padding: "10px 16px", alignItems: "center", flexWrap: "wrap" }}>
+        <span className="panel-title">Copilot Queue</span>
         <Badge kind="tag" tone="var(--amber)">{`MODE ${mode}`}</Badge>
         {pending.length > 0 && (
           <Badge kind="tag" tone="var(--orange)">{`${pending.length} PENDING`}</Badge>
@@ -84,7 +74,7 @@ export default function CopilotQueue() {
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
           Approve routes through existing OMS. Size edits require a new signal (no modify → re-eval yet).
         </span>
-        <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={refresh}>
+        <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={refresh}>
           Refresh
         </button>
       </div>

@@ -100,22 +100,13 @@ export default function OrdersWorkspace() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--line-dim)",
-          background: "var(--bg-3)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
+      <div className="desk-tool-rail" style={{ padding: "10px 16px", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span className="panel-title">ORDERS</span>
+          <span className="panel-title">Orders</span>
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
             Derived from Copilot queue + execution log. Broker ack / partial / cancel not modeled yet.
           </span>
-          <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={refresh}>
+          <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={refresh}>
             Refresh
           </button>
         </div>

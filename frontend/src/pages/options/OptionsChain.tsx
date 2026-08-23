@@ -4,7 +4,7 @@
  * shows the underlying error if the gateway is down.
  */
 import React, { useEffect, useState } from "react";
-import { Badge, Button } from "../../components/ui";
+import { Badge } from "../../components/ui";
 
 interface Contract {
   strike: number; bid: number; ask: number; last: number;
@@ -89,54 +89,53 @@ export default function OptionsChain({
   const cols = ["Strike", "Bid", "Ask", "Last", "Vol", "OI", "Delta", "Gamma", "Theta", "Vega", "IV"];
 
   return (
-    <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
-        <span className="panel-title">Options Chain</span>
+    <div className="page-shell" style={{ height: "100%", overflowY: "auto" }}>
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Options Chain</div>
+          <p className="page-header__sub">Live broker chain · calls & puts</p>
+        </div>
         <form onSubmit={submit} style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder="Symbol"
-            style={{
-              width: 90, fontFamily: "var(--mono)", fontSize: 12, textTransform: "uppercase",
-              background: "var(--bg-2)", border: "1px solid var(--line-dim)", color: "var(--ink)",
-              padding: "4px 8px",
-            }}
+            className="control-input"
+            style={{ width: 90, textTransform: "uppercase" }}
           />
-          <Button type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Load</Button>
+          <button type="submit" className="btn-primary" style={{ padding: "6px 12px" }}>Load</button>
         </form>
         {spot != null && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--cyan)" }}>
+          <span className="mono" style={{ fontSize: 12, color: "var(--accent)" }}>
             {data?.symbol} spot {spot.toFixed(2)}
           </span>
         )}
         {data?.expiry && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
+          <span className="mono" style={{ fontSize: 10, color: "var(--ink-faint)" }}>
             exp {data.expiry}
           </span>
         )}
         {data?.data_status && (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
-            <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
-              OPTIONS DATA
-            </span>
+            <span className="kicker">Options data</span>
             <Badge kind="tag" tone={DATA_STATUS_COLOR[data.data_status]}>{data.data_status}</Badge>
           </span>
         )}
       </div>
 
       {loading ? (
-        <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-faint)", padding: 24 }}>
-          Loading chain…
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">Loading chain…</p>
         </div>
       ) : data?.error ? (
-        <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)", padding: 24 }}>
-          ⚠ {data.error} — check the broker connection in Data & Integrations → Broker Gateway.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title" style={{ color: "var(--red)" }}>{data.error}</p>
+          <p className="empty-chassis__hint">Check broker connection in Data & Integrations → Broker Gateway.</p>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 340 }}>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em", color: "var(--green)", marginBottom: 6 }}>CALLS</div>
+          <div className="instrument-card" style={{ flex: 1, minWidth: 340, padding: 12 }}>
+            <div className="kicker" style={{ color: "var(--green)", marginBottom: 8, letterSpacing: "0.1em", textTransform: "uppercase" }}>Calls</div>
             <table className="t-table">
               <thead><tr>{cols.map(h => <th key={h}>{h}</th>)}</tr></thead>
               <tbody>
@@ -144,8 +143,8 @@ export default function OptionsChain({
               </tbody>
             </table>
           </div>
-          <div style={{ flex: 1, minWidth: 340 }}>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em", color: "var(--red)", marginBottom: 6 }}>PUTS</div>
+          <div className="instrument-card" style={{ flex: 1, minWidth: 340, padding: 12 }}>
+            <div className="kicker" style={{ color: "var(--red)", marginBottom: 8, letterSpacing: "0.1em", textTransform: "uppercase" }}>Puts</div>
             <table className="t-table">
               <thead><tr>{cols.map(h => <th key={h}>{h}</th>)}</tr></thead>
               <tbody>

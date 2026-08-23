@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api, getOperatorApiKey, setOperatorApiKey } from "../api/client";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
-import { Panel, Button } from "../components/ui";
+import { Panel, Button, StatTile } from "../components/ui";
 
 interface MarginInfo {
   available: boolean;
@@ -268,14 +268,7 @@ export default function RiskMonitor() {
   };
 
   const Stat = ({ label, value, color }: any) => (
-    <div style={{
-      padding: "16px 18px",
-      borderRight: "1px solid var(--line-dim)",
-      borderBottom: "1px solid var(--line-dim)",
-    }}>
-      <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
-      <div className="data-val" style={{ color: color || "var(--ink)" }}>{value}</div>
-    </div>
+    <StatTile variant="divider" size="default" label={label} value={value} tone={color} />
   );
 
   // daily/weekly/monthly_loss_pct are signed P&L ratios (positive on a gain

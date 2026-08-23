@@ -12,6 +12,7 @@ import ConfidenceFloorLabel from "../components/ConfidenceFloorLabel";
 import WhyBlockedChip from "../components/WhyBlockedChip";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
 import BacktestButtons from "../components/BacktestButtons";
+import { StatTile } from "../components/ui";
 import type { SignalAttributionData } from "../types/signal";
 import { useDeskBlockContext } from "../hooks/useDeskBlockContext";
 import { deriveSignalBlockReason } from "../utils/signalBlockReason";
@@ -230,10 +231,7 @@ function SignalCard({
 
       {/* Trade plan */}
       {tp.entry_price && (
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 8, background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
-        }}>
+        <div className="trade-plan-well" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <PriceCell label="ENTRY" value={tp.entry_price} color="var(--ink)" />
           <PriceCell label="STOP"  value={tp.stop_price}  color="var(--red)" />
           <PriceCell label="TARGET" value={tp.target_price} color="var(--green)" />
@@ -301,34 +299,17 @@ function PriceCell({ label, value, color, suffix }: { label: string; value?: num
 }
 
 export function AssetToggle({ tab, onChange }: { tab: AssetTab; onChange: (t: AssetTab) => void }) {
-  const btn = (id: AssetTab, label: string) => {
-    const active = tab === id;
-    return (
-      <button
-        type="button"
-        onClick={() => onChange(id)}
-        style={{
-          background: active ? "var(--bg-3)" : "transparent",
-          color: active ? "var(--ink)" : "var(--ink-faint)",
-          border: active ? "1px solid var(--line)" : "1px solid transparent",
-          borderRadius: 4,
-          padding: "6px 14px",
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          letterSpacing: "0.1em",
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
-        {label}
-      </button>
-    );
-  };
+  const btn = (id: AssetTab, label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(id)}
+      className={`asset-toggle__btn${tab === id ? " asset-toggle__btn--active" : ""}`}
+    >
+      {label}
+    </button>
+  );
   return (
-    <div style={{
-      display: "inline-flex", gap: 4, padding: 3,
-      background: "var(--bg-2)", border: "1px solid var(--line-dim)", borderRadius: 6,
-    }}>
+    <div className="asset-toggle">
       {btn("options", "OPTIONS")}
       {btn("equities", "EQUITIES")}
     </div>
@@ -551,20 +532,15 @@ function EquitySignalsGrid() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div className="instrument-card page-header">
         <div>
-          <h2 style={{ margin: 0, color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16 }}>
-            EQUITY SIGNALS
-          </h2>
-          <p style={{ margin: "4px 0 0", color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11 }}>
-            {actionableCount} actionable ({buySignals.length} buy · {sellSignals.length} sell) · {signals.length} total
+          <div className="page-header__title">Equity Signals</div>
+          <p className="page-header__sub">
+            Live scanner feed · confidence vs trading-style floor
           </p>
         </div>
-        <div style={{ flex: 1 }} />
-        <label style={{
-          display: "flex", alignItems: "center", gap: 6,
-          fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)",
-        }}>
+        <span style={{ flex: 1 }} />
+        <label className="kicker" style={{ display: "flex", alignItems: "center", gap: 6 }}>
           Min move %
           <input
             type="number"
@@ -574,34 +550,26 @@ function EquitySignalsGrid() {
             onChange={(e) => setMinMovePct(e.target.value ? parseFloat(e.target.value) : 0)}
             placeholder="0"
             title="Only show signals whose target price implies at least this % move from entry"
-            style={{
-              width: 56, background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-              borderRadius: 4, padding: "5px 8px", color: "var(--ink)", fontFamily: "var(--mono)",
-              fontSize: 11,
-            }}
+            className="control-input"
+            style={{ width: 56 }}
           />
         </label>
-        <button
-          onClick={runScan}
-          disabled={scanning}
-          style={{
-            background: scanning ? "var(--bg-3)" : "var(--cyan)",
-            color: scanning ? "var(--ink-faint)" : "var(--bg)",
-            border: "none", borderRadius: 4,
-            padding: "8px 16px",
-            fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.08em",
-            cursor: scanning ? "default" : "pointer",
-            fontWeight: 600,
-          }}
-        >
-          {scanning ? "SCANNING..." : "RUN SCAN"}
+        <button onClick={runScan} disabled={scanning} className="btn-primary">
+          {scanning ? "SCANNING…" : "RUN SCAN"}
         </button>
+      </div>
+
+      <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <StatTile variant="divider" size="sm" label="Actionable" value={actionableCount} tone="var(--accent)" />
+        <StatTile variant="divider" size="sm" label="Buy" value={buySignals.length} tone="var(--green)" />
+        <StatTile variant="divider" size="sm" label="Sell" value={sellSignals.length} tone="var(--red)" />
+        <StatTile variant="divider" size="sm" label="Total" value={signals.length} />
       </div>
 
       {error && (
         <div style={{
           background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-          borderRadius: 4, padding: "10px 14px",
+          borderRadius: "var(--radius-control)", padding: "10px 14px",
           fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)",
         }}>
           {error}
@@ -609,11 +577,9 @@ function EquitySignalsGrid() {
       )}
 
       {signals.length === 0 ? (
-        <div style={{
-          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
-          textAlign: "center", padding: 40,
-        }}>
-          No signals yet. Click RUN SCAN to generate equity signals.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">No equity signals yet</p>
+          <p className="empty-chassis__hint">Click <strong style={{ color: "var(--ink)" }}>RUN SCAN</strong> to score the watchlist.</p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -634,7 +600,7 @@ export default function EquitySignals() {
   const [tab, setTab] = useState<AssetTab>("equities");
 
   return (
-    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16, maxWidth: 1200 }}>
+    <div className="page-shell" style={{ maxWidth: 1200 }}>
       <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
         <AssetToggle tab={tab} onChange={setTab} />
         <div style={{ flex: 1, minWidth: 220 }}><BrokerStatus /></div>

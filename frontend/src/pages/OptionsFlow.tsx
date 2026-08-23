@@ -185,62 +185,55 @@ export default function OptionsFlow() {
   const topPuts  = topByTicker("PUT");
 
   return (
-    <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>
-      {/* Header / summary */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
-        <span className="panel-title">Unusual Options Activity</span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
-          free snapshot · volume ≫ open interest · not a real-time OPRA tape
-        </span>
-
+    <div className="page-shell" style={{ height: "100%", overflowY: "auto" }}>
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Unusual Options Activity</div>
+          <p className="page-header__sub">Free snapshot · volume ≫ open interest · not a real-time OPRA tape</p>
+        </div>
         {totalCount > 0 && (
           <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 11 }}>
             <span style={{ color: "var(--green)" }}>CALLS {callCount} · {callPct}% · {usd(callPremium)}</span>
             <span style={{ color: "var(--red)" }}>PUTS {putCount} · {putPct}% · {usd(putPremium)}</span>
           </div>
         )}
-
-        <div style={{ flex: 1 }} />
-
-        <div style={{ display: "flex", gap: 4 }} role="group" aria-label="View mode">
-          <Button
-            active={view === "cards"}
-            style={{ padding: "4px 10px", fontSize: 10 }}
+        <span style={{ flex: 1 }} />
+        <div className="asset-toggle" role="group" aria-label="View mode">
+          <button
+            type="button"
+            className={`asset-toggle__btn${view === "cards" ? " asset-toggle__btn--active" : ""}`}
             aria-pressed={view === "cards"}
             onClick={() => setView("cards")}
           >
             CARDS
-          </Button>
-          <Button
-            active={view === "table"}
-            style={{ padding: "4px 10px", fontSize: 10 }}
+          </button>
+          <button
+            type="button"
+            className={`asset-toggle__btn${view === "table" ? " asset-toggle__btn--active" : ""}`}
             aria-pressed={view === "table"}
             onClick={() => setView("table")}
           >
             TABLE
-          </Button>
+          </button>
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <form onSubmit={submitTicker} style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input
             value={tickerInput}
             onChange={e => setTickerInput(e.target.value)}
             placeholder="Ticker"
             aria-label="Filter by ticker"
-            style={{
-              width: 80, fontFamily: "var(--mono)", fontSize: 12, textTransform: "uppercase",
-              background: "var(--bg-2)", border: "1px solid var(--line-dim)", color: "var(--ink)",
-              padding: "4px 8px",
-            }}
+            className="control-input"
+            style={{ width: 80, textTransform: "uppercase" }}
           />
-          <Button type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Go</Button>
+          <button type="submit" className="btn-primary" style={{ padding: "6px 12px" }}>Go</button>
           {ticker && (
-            <Button type="button" style={{ padding: "4px 10px", fontSize: 10 }}
+            <button type="button" className="btn-ghost" style={{ padding: "6px 12px" }}
               onClick={() => { setTicker(""); setTickerInput(""); }}>
               Clear
-            </Button>
+            </button>
           )}
         </form>
 

@@ -75,9 +75,9 @@ describe("AlphaEdgePanel", () => {
   it("auto-loads positions and scan candidates on mount", async () => {
     render(<AlphaEdgePanel />);
     await waitFor(() => expect(mockedApi.getPositions).toHaveBeenCalled());
-    expect(await screen.findByText("OPEN POSITIONS (1)")).toBeInTheDocument();
-    expect(screen.getByText("SCAN CANDIDATES (1)")).toBeInTheDocument();
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(await screen.findByText("AAPL")).toBeInTheDocument();
+    expect(screen.getAllByText(/open positions/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/scan candidates/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("AMD")).toBeInTheDocument();
     await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("AAPL", "equity"));
     await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("AMD", "equity"));
@@ -85,7 +85,7 @@ describe("AlphaEdgePanel", () => {
 
   it("shows detail for the first auto-selected ticker", async () => {
     render(<AlphaEdgePanel />);
-    expect(await screen.findByText("ENTRY SCORE")).toBeInTheDocument();
+    expect(await screen.findByText("Entry")).toBeInTheDocument();
     const entryTiles = screen.getAllByText("62");
     expect(entryTiles.length).toBeGreaterThanOrEqual(1);
   });

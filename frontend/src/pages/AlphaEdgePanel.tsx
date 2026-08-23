@@ -1,11 +1,9 @@
 /**
  * Alpha Edge Signal — portfolio watchlist + scan candidates with live scores.
- * Auto-loads open positions and latest actionable scan tickers; manual lookup
- * remains for symbols outside the watchlist.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import { Panel } from "../components/ui";
+import { Panel, StatTile } from "../components/ui";
 import { AssetToggle, type AssetTab } from "./EquitySignals";
 import SignalAttribution from "../components/SignalAttribution";
 import type { SignalAttributionData } from "../types/signal";
@@ -56,35 +54,39 @@ function scoreColor(score: number): string {
   return score >= 70 ? "var(--green)" : score >= 45 ? "var(--amber)" : "var(--red)";
 }
 
-function ScoreTile({ label, value, sublabel }: { label: string; value: number | null; sublabel?: string }) {
-  return (
-    <div className="instrument-card" style={{
-      padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4,
-    }}>
-      <span style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em" }}>
-        {label}
-      </span>
-      <span style={{
-        color: value != null ? scoreColor(value) : "var(--ink-faint)",
-        fontFamily: "var(--mono)", fontSize: 20, fontWeight: 700,
-      }}>
-        {value != null ? value.toFixed(0) : "—"}
-      </span>
-      {sublabel && (
-        <span style={{ color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 9 }}>{sublabel}</span>
-      )}
-    </div>
-  );
+function tickerColor(ticker: string): string {
+  let hash = 0;
+  for (let i = 0; i < ticker.length; i++) {
+    hash = ticker.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return `hsl(${Math.abs(hash) % 360}, 55%, 42%)`;
 }
 
-function MiniScore({ label, value }: { label: string; value: number | null }) {
+function TickerLogo({ ticker, size = 32 }: { ticker: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: 6,
+        background: tickerColor(ticker),
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "var(--mono)", fontSize: size * 0.34, fontWeight: 700, color: "#fff",
+        flexShrink: 0,
+      }}>
+        {ticker.slice(0, 2)}
+      </div>
+    );
+  }
   return (
-    <span className="mono" style={{ fontSize: 9, color: "var(--ink-dim)" }}>
-      {label}{" "}
-      <b style={{ color: value != null ? scoreColor(value) : "var(--ink-faint)" }}>
-        {value != null ? value.toFixed(0) : "—"}
-      </b>
-    </span>
+    <img
+      src={`https://companiesmarketcap.com/img/company-logos/64/${ticker}.png`}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      style={{ borderRadius: 6, objectFit: "contain", background: "var(--bg-3)", flexShrink: 0 }}
+    />
   );
 }
 
@@ -123,15 +125,45 @@ async function fetchScoresConcurrent(
 }
 
 function SourceBadge({ source }: { source: AlphaEdgeCandidate["source"] }) {
-  const color = source === "held" ? "var(--cyan)" : "var(--ink-dim)";
+  const isHeld = source === "held";
   return (
     <span className="mono" style={{
       fontSize: 8, fontWeight: 700, letterSpacing: "0.08em",
-      padding: "2px 6px", borderRadius: 3,
-      border: `1px solid ${color}50`, color,
+      padding: "2px 7px", borderRadius: 10,
+      background: isHeld ? "rgba(59,130,246,0.12)" : "var(--bg-4)",
+      border: `1px solid ${isHeld ? "rgba(59,130,246,0.35)" : "var(--line-dim)"}`,
+      color: isHeld ? "var(--accent)" : "var(--ink-dim)",
     }}>
-      {source === "held" ? "HELD" : "SCAN"}
+      {isHeld ? "HELD" : "SCAN"}
     </span>
+  );
+}
+
+function ScoreBar({ label, value }: { label: string; value: number | null }) {
+  const pct = value != null ? Math.min(100, Math.max(0, value)) : 0;
+  const color = value != null ? scoreColor(value) : "var(--ink-faint)";
+  return (
+    <div className="alpha-edge-score-bar">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span className="mono" style={{ fontSize: 8, letterSpacing: "0.06em", color: "var(--ink-dim)" }}>{label}</span>
+        <span className="tnum" style={{ fontSize: 10, fontWeight: 600, color }}>{value != null ? value.toFixed(0) : "—"}</span>
+      </div>
+      <div className="alpha-edge-score-bar__track">
+        <div className="alpha-edge-score-bar__fill" style={{ width: `${pct}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
+function ScoreTile({ label, value, sublabel }: { label: string; value: number | null; sublabel?: string }) {
+  return (
+    <div className="instrument-card instrument-card--flat" style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
+      <span className="kicker">{label}</span>
+      <span className="data-val sm" style={{ color: value != null ? scoreColor(value) : "var(--ink-faint)" }}>
+        {value != null ? value.toFixed(0) : "—"}
+      </span>
+      {sublabel && <span className="mono" style={{ fontSize: 9, color: "var(--ink-faint)" }}>{sublabel}</span>}
+    </div>
   );
 }
 
@@ -147,19 +179,32 @@ function AlphaEdgeDetail({ data }: { data: AlphaEdgeResponse }) {
   };
 
   return (
-    <Panel padding={0} title={data.ticker}>
+    <Panel padding={0} title={
+      <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <TickerLogo ticker={data.ticker} size={24} />
+        <span className="mono" style={{ fontWeight: 700 }}>{data.ticker}</span>
+      </span>
+    }>
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{
-            fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-            padding: "3px 10px", color: LIFECYCLE_COLOR[data.lifecycle_state],
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="pill" style={{
+            color: LIFECYCLE_COLOR[data.lifecycle_state],
             border: `1px solid ${LIFECYCLE_COLOR[data.lifecycle_state]}60`,
+            background: `${LIFECYCLE_COLOR[data.lifecycle_state]}15`,
           }}>
             {LIFECYCLE_LABEL[data.lifecycle_state] || data.lifecycle_state.toUpperCase()}
           </span>
+          {data.current_action && (
+            <span className="mono" style={{
+              fontSize: 10, fontWeight: 700,
+              color: data.current_action === "BUY" || data.current_action === "BUY_SPREAD" ? "var(--green)" : "var(--red)",
+            }}>
+              {data.current_action}
+            </span>
+          )}
           {data.position.held && (
             <span className="mono" style={{ fontSize: 10, color: "var(--ink-dim)" }}>
-              Position: {data.position.direction} {data.position.quantity}
+              {data.position.direction} × {data.position.quantity}
             </span>
           )}
           <span style={{ flex: 1 }} />
@@ -169,17 +214,17 @@ function AlphaEdgeDetail({ data }: { data: AlphaEdgeResponse }) {
               : data.score_trend.direction === "declining" ? "var(--red)"
                 : "var(--ink-faint)",
           }}>
-            Trend: {data.score_trend.direction === "not_tracked" ? "not tracked" : data.score_trend.direction}
-            {data.score_trend.delta != null ? ` (${data.score_trend.delta >= 0 ? "+" : ""}${data.score_trend.delta.toFixed(1)})` : ""}
+            {data.score_trend.direction === "not_tracked" ? "Trend n/a" : data.score_trend.direction}
+            {data.score_trend.delta != null ? ` ${data.score_trend.delta >= 0 ? "+" : ""}${data.score_trend.delta.toFixed(1)}` : ""}
           </span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
-          <ScoreTile label="OPPORTUNITY SCORE" value={data.opportunity_score} sublabel="confidence + EV + R:R + liquidity + regime" />
-          <ScoreTile label="ENTRY SCORE" value={data.entry_score} />
-          <ScoreTile label="HOLD SCORE" value={data.hold_score} sublabel={data.hold_score == null ? "no position" : undefined} />
-          <ScoreTile label="EXIT SCORE" value={data.exit_score} sublabel={data.exit_score != null ? data.exit_score_basis.replace(/_/g, " ") : undefined} />
-          <ScoreTile label="RISK SCORE" value={data.risk_score} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8 }}>
+          <ScoreTile label="Opportunity" value={data.opportunity_score} />
+          <ScoreTile label="Entry" value={data.entry_score} />
+          <ScoreTile label="Hold" value={data.hold_score} sublabel={data.hold_score == null ? "no position" : undefined} />
+          <ScoreTile label="Exit" value={data.exit_score} />
+          <ScoreTile label="Risk" value={data.risk_score} />
         </div>
 
         <div>
@@ -195,7 +240,7 @@ function AlphaEdgeDetail({ data }: { data: AlphaEdgeResponse }) {
   );
 }
 
-function CandidateRow({
+function CandidateCard({
   candidate,
   scoreState,
   selected,
@@ -207,58 +252,100 @@ function CandidateRow({
   onSelect: () => void;
 }) {
   const data = scoreState.status === "ready" ? scoreState.data : null;
+  const loading = scoreState.status === "loading" || scoreState.status === "idle";
+
+  if (loading && !data) {
+    return (
+      <div className="alpha-edge-card" style={{ cursor: "default" }} aria-label={`Loading ${candidate.ticker}`}>
+        <div className="alpha-edge-card__hero">
+          <TickerLogo ticker={candidate.ticker} size={34} />
+          <div>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)" }}>{candidate.ticker}</span>
+            <SourceBadge source={candidate.source} />
+          </div>
+        </div>
+        <div className="alpha-edge-skeleton" style={{ height: 52 }} />
+      </div>
+    );
+  }
+
+  const opp = data?.opportunity_score ?? null;
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className="instrument-card"
-      style={{
-        width: "100%", textAlign: "left", cursor: "pointer",
-        padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8,
-        border: selected ? "1px solid var(--cyan)60" : undefined,
-        background: selected ? "var(--bg-3)" : undefined,
-      }}
+      className={`alpha-edge-card${selected ? " alpha-edge-card--selected" : ""}`}
+      aria-pressed={selected}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", minWidth: 52 }}>
-          {candidate.ticker}
-        </span>
-        <SourceBadge source={candidate.source} />
-        {candidate.scanAction && (
-          <span className="mono" style={{ fontSize: 10, color: "var(--ink-dim)" }}>
-            {candidate.scanAction}
-            {candidate.scanConfidence != null ? ` · ${Math.round(candidate.scanConfidence * 100)}%` : ""}
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        {data && (
-          <span className="mono" style={{
-            fontSize: 9, fontWeight: 700,
-            color: LIFECYCLE_COLOR[data.lifecycle_state] || "var(--ink-faint)",
-          }}>
-            {LIFECYCLE_LABEL[data.lifecycle_state] || data.lifecycle_state.toUpperCase()}
-          </span>
+      <div className="alpha-edge-card__hero">
+        <TickerLogo ticker={candidate.ticker} size={34} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)" }}>
+              {candidate.ticker}
+            </span>
+            <SourceBadge source={candidate.source} />
+          </div>
+          {candidate.scanAction && (
+            <span className="mono" style={{ fontSize: 9, color: "var(--ink-dim)", display: "block", marginTop: 2 }}>
+              {candidate.scanAction.replace("_", " ")}
+              {candidate.scanConfidence != null ? ` · ${Math.round(candidate.scanConfidence * 100)}%` : ""}
+            </span>
+          )}
+          {data && (
+            <span className="pill" style={{
+              marginTop: 4, display: "inline-block",
+              color: LIFECYCLE_COLOR[data.lifecycle_state],
+              border: `1px solid ${LIFECYCLE_COLOR[data.lifecycle_state]}50`,
+            }}>
+              {LIFECYCLE_LABEL[data.lifecycle_state]}
+            </span>
+          )}
+        </div>
+        {opp != null && (
+          <div className="alpha-edge-card__opp">
+            <span className="kicker" style={{ fontSize: 8, marginBottom: 2 }}>OPP</span>
+            <div className="data-val sm" style={{ color: scoreColor(opp), lineHeight: 1 }}>{opp.toFixed(0)}</div>
+          </div>
         )}
       </div>
 
-      {scoreState.status === "loading" && (
-        <span className="mono" style={{ fontSize: 10, color: "var(--ink-faint)" }}>Loading scores…</span>
-      )}
       {scoreState.status === "error" && (
-        <span className="mono" style={{ fontSize: 10, color: "var(--red)" }}>{scoreState.message}</span>
+        <span className="mono" style={{ fontSize: 9, color: "var(--red)" }}>{scoreState.message}</span>
       )}
+
       {data && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <MiniScore label="OPP" value={data.opportunity_score} />
-          <MiniScore label="ENTRY" value={data.entry_score} />
-          <MiniScore label="HOLD" value={data.hold_score} />
-          <MiniScore label="EXIT" value={data.exit_score} />
-          <MiniScore label="RISK" value={data.risk_score} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          <ScoreBar label="ENTRY" value={data.entry_score} />
+          <ScoreBar label="HOLD" value={data.hold_score} />
+          <ScoreBar label="RISK" value={data.risk_score} />
         </div>
       )}
     </button>
   );
+}
+
+function SectionHeader({ title, count, hint }: { title: string; count: number; hint?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span className="panel-title">{title}</span>
+        <span className="mono" style={{ fontSize: 11, color: "var(--accent)", fontWeight: 700 }}>{count}</span>
+      </div>
+      {hint && <span className="mono" style={{ fontSize: 9, color: "var(--ink-faint)" }}>{hint}</span>}
+    </div>
+  );
+}
+
+function oppFromScores(scores: Record<string, ScoreState>, ticker: string): number {
+  const st = scores[ticker];
+  if (st?.status === "ready") return st.data.opportunity_score ?? -1;
+  return -1;
+}
+
+function sortByOpportunity(list: AlphaEdgeCandidate[], scores: Record<string, ScoreState>): AlphaEdgeCandidate[] {
+  return [...list].sort((a, b) => oppFromScores(scores, b.ticker) - oppFromScores(scores, a.ticker));
 }
 
 export default function AlphaEdgePanel() {
@@ -274,7 +361,25 @@ export default function AlphaEdgePanel() {
   const fetchGen = useRef(0);
 
   const held = useMemo(() => candidates.filter(c => c.source === "held"), [candidates]);
-  const scan = useMemo(() => candidates.filter(c => c.source === "scan"), [candidates]);
+  const scan = useMemo(
+    () => sortByOpportunity(candidates.filter(c => c.source === "scan"), scores),
+    [candidates, scores],
+  );
+
+  const scoreStats = useMemo(() => {
+    const total = candidates.length;
+    let ready = 0;
+    let topOpp = -1;
+    for (const c of candidates) {
+      const st = scores[c.ticker];
+      if (st?.status === "ready") {
+        ready += 1;
+        const o = st.data.opportunity_score;
+        if (o != null && o > topOpp) topOpp = o;
+      }
+    }
+    return { total, ready, topOpp: topOpp >= 0 ? topOpp : null };
+  }, [candidates, scores]);
 
   const setScore = useCallback((ticker: string, state: ScoreState) => {
     setScores(prev => ({ ...prev, [ticker]: state }));
@@ -333,46 +438,112 @@ export default function AlphaEdgePanel() {
     setSymbolInput("");
   };
 
+  const watchlistBody = (held.length > 0 || scan.length > 0) ? (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {held.length > 0 && (
+        <section>
+          <SectionHeader title="Open positions" count={held.length} hint="Live book" />
+          <div className="alpha-edge-grid">
+            {held.map(c => (
+              <CandidateCard
+                key={c.ticker}
+                candidate={c}
+                scoreState={scores[c.ticker] || { status: "idle" }}
+                selected={selectedTicker === c.ticker}
+                onSelect={() => setSelectedTicker(c.ticker)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      {scan.length > 0 && (
+        <section>
+          <SectionHeader title="Scan candidates" count={scan.length} hint="Sorted by opportunity" />
+          <div className="alpha-edge-grid">
+            {scan.map(c => (
+              <CandidateCard
+                key={c.ticker}
+                candidate={c}
+                scoreState={scores[c.ticker] || { status: "idle" }}
+                selected={selectedTicker === c.ticker}
+                onSelect={() => setSelectedTicker(c.ticker)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  ) : !loading ? (
+    <div className="instrument-card instrument-card--flat" style={{ padding: 28, textAlign: "center" }}>
+      <p className="mono" style={{ fontSize: 12, color: "var(--ink-dim)", marginBottom: 8 }}>
+        No {assetType} positions or recent scan hits
+      </p>
+      <p className="kicker">
+        Run a scan on <strong style={{ color: "var(--ink)" }}>Live Signals</strong>, or look up a symbol above.
+      </p>
+    </div>
+  ) : null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
-      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
-        <span className="panel-title" style={{ marginRight: 12 }}>ALPHA EDGE SIGNAL</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-dim)" }}>
-          Auto-loads open positions and latest scan candidates · scores computed live per symbol.
-        </span>
+      <div className="instrument-card" style={{
+        padding: "12px 16px",
+        borderLeft: "2px solid var(--accent)",
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12,
+      }}>
+        <div>
+          <div className="panel-title">Alpha Edge Signal</div>
+          <p className="kicker" style={{ marginTop: 4 }}>
+            Portfolio watchlist · live Entry / Hold / Exit / Risk per symbol
+          </p>
+        </div>
+        <span style={{ flex: 1 }} />
+        <AssetToggle tab={assetTab} onChange={onTabChange} />
       </div>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <AssetToggle tab={assetTab} onChange={onTabChange} />
+      <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <StatTile variant="divider" size="sm" label="Open positions" value={held.length} />
+        <StatTile variant="divider" size="sm" label="Scan candidates" value={scan.length} />
+        <StatTile
+          variant="divider"
+          size="sm"
+          label="Top opportunity"
+          value={scoreStats.topOpp != null ? scoreStats.topOpp.toFixed(0) : "—"}
+          tone={scoreStats.topOpp != null ? scoreColor(scoreStats.topOpp) : undefined}
+        />
+        <StatTile
+          variant="divider"
+          size="sm"
+          label="Scores loaded"
+          value={`${scoreStats.ready}/${scoreStats.total}`}
+          sub={lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : undefined}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <button
           type="button"
           onClick={() => refresh()}
           disabled={loading}
-          className="mono"
+          className="mono instrument-card--flat"
           style={{
-            padding: "8px 12px", background: "var(--bg-3)", color: "var(--ink-dim)",
-            border: "1px solid var(--line)", borderRadius: 4, fontSize: 10,
-            cursor: loading ? "wait" : "pointer",
+            padding: "8px 14px", color: "var(--ink-dim)", fontSize: 10,
+            cursor: loading ? "wait" : "pointer", border: "1px solid var(--line-dim)",
           }}
         >
-          {loading ? "REFRESHING…" : "REFRESH"}
+          {loading ? "Refreshing…" : "Refresh watchlist"}
         </button>
-        {lastRefresh && (
-          <span className="mono" style={{ fontSize: 9, color: "var(--ink-faint)" }}>
-            Updated {lastRefresh.toLocaleTimeString()}
-          </span>
-        )}
         <span style={{ flex: 1 }} />
         <input
           value={symbolInput}
           onChange={e => setSymbolInput(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") lookup(); }}
-          placeholder="Other symbol…"
+          placeholder="Symbol lookup…"
           aria-label="Alpha Edge symbol lookup"
+          className="mono instrument-card--flat"
           style={{
-            fontFamily: "var(--mono)", fontSize: 12, padding: "8px 10px",
-            background: "var(--bg-3)", color: "var(--ink)", border: "1px solid var(--line)", borderRadius: 4,
-            width: 140,
+            fontSize: 11, padding: "8px 12px", color: "var(--ink)",
+            border: "1px solid var(--line-dim)", width: 140,
           }}
         />
         <button
@@ -380,79 +551,33 @@ export default function AlphaEdgePanel() {
           disabled={manualLoading || !symbolInput.trim()}
           className="mono"
           style={{
-            padding: "8px 16px", background: "var(--cyan)", color: "var(--bg-0)",
-            border: "none", borderRadius: 4, fontWeight: 700, fontSize: 11,
+            padding: "8px 16px", background: "var(--accent)", color: "var(--bg-0)",
+            border: "none", borderRadius: "var(--radius-control)", fontWeight: 700, fontSize: 11,
             cursor: manualLoading ? "wait" : "pointer", opacity: manualLoading ? 0.6 : 1,
           }}
         >
-          {manualLoading ? "…" : "LOOK UP"}
+          {manualLoading ? "…" : "Look up"}
         </button>
       </div>
 
       {(error || manualError) && (
-        <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-          padding: "10px 14px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+        <div style={{
+          background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
+          borderRadius: "var(--radius-control)", padding: "10px 14px",
+          fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)",
+        }}>
           {error || manualError}
         </div>
       )}
 
-      {!loading && candidates.length === 0 && !manualLookup && (
-        <div style={{ padding: 20, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-          No open {assetType} positions or recent scan candidates — run a scan on Live Signals or look up a symbol.
-        </div>
-      )}
-
-      {(held.length > 0 || scan.length > 0) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {held.length > 0 && (
-            <section>
-              <div className="kicker" style={{ marginBottom: 8 }}>
-                OPEN POSITIONS ({held.length})
-              </div>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: 8,
-              }}>
-                {held.map(c => (
-                  <CandidateRow
-                    key={c.ticker}
-                    candidate={c}
-                    scoreState={scores[c.ticker] || { status: "idle" }}
-                    selected={selectedTicker === c.ticker}
-                    onSelect={() => setSelectedTicker(c.ticker)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {scan.length > 0 && (
-            <section>
-              <div className="kicker" style={{ marginBottom: 8 }}>
-                SCAN CANDIDATES ({scan.length})
-              </div>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: 8,
-              }}>
-                {scan.map(c => (
-                  <CandidateRow
-                    key={c.ticker}
-                    candidate={c}
-                    scoreState={scores[c.ticker] || { status: "idle" }}
-                    selected={selectedTicker === c.ticker}
-                    onSelect={() => setSelectedTicker(c.ticker)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
-      )}
-
-      {selectedData && <AlphaEdgeDetail data={selectedData} />}
+      <div className="alpha-edge-layout">
+        <div className="alpha-edge-main">{watchlistBody}</div>
+        {selectedData && (
+          <div className="alpha-edge-detail-pane">
+            <AlphaEdgeDetail data={selectedData} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

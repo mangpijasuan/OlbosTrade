@@ -72,23 +72,14 @@ export default function ExecutionMonitor() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--line-dim)",
-          background: "var(--bg-3)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
+      <div className="desk-tool-rail" style={{ padding: "10px 16px", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span className="panel-title">EXECUTION MONITOR</span>
+          <span className="panel-title">Execution Monitor</span>
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
             {total} events persisted · showing last {log.length}
           </span>
           <div style={{ flex: 1 }} />
-          <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={refresh}>
+          <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={refresh}>
             Refresh
           </button>
         </div>

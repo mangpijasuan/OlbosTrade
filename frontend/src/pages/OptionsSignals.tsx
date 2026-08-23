@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import SignalAttribution from "../components/SignalAttribution";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
 import BacktestButtons from "../components/BacktestButtons";
+import { StatTile } from "../components/ui";
 import type { SignalAttributionData } from "../types/signal";
 
 export interface Spread {
@@ -329,50 +330,32 @@ export default function OptionsSignals() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div className="instrument-card page-header">
         <div>
-          <h2 style={{ margin: 0, color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16 }}>
-            OPTIONS SIGNALS
-          </h2>
-          <p style={{ margin: "4px 0 0", color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11 }}>
-            {actionable.length} actionable · {notQualified.length} not qualified · {signals.length} total
-          </p>
+          <div className="page-header__title">Options Signals</div>
+          <p className="page-header__sub">Spread scanner · POP, credit, and eligibility</p>
         </div>
-        <div style={{ flex: 1 }} />
+        <span style={{ flex: 1 }} />
         {notQualified.length > 0 && (
-          <button
-            onClick={() => setShowReasons(v => !v)}
-            style={{
-              background: "var(--bg-3)", color: "var(--ink)",
-              border: "1px solid var(--line-dim)", borderRadius: 4,
-              padding: "8px 14px", fontFamily: "var(--mono)", fontSize: 11,
-              letterSpacing: "0.06em", cursor: "pointer", fontWeight: 600,
-            }}
-          >
-            {showReasons ? "HIDE REASONS" : "SHOW REASONS"} ({notQualified.length})
+          <button onClick={() => setShowReasons(v => !v)} className="btn-ghost">
+            {showReasons ? "Hide reasons" : "Show reasons"} ({notQualified.length})
           </button>
         )}
-        <button
-          onClick={runScan}
-          disabled={scanning}
-          style={{
-            background: scanning ? "var(--bg-3)" : "var(--cyan)",
-            color: scanning ? "var(--ink-faint)" : "var(--bg)",
-            border: "none", borderRadius: 4,
-            padding: "8px 16px",
-            fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.08em",
-            cursor: scanning ? "default" : "pointer",
-            fontWeight: 600,
-          }}
-        >
-          {scanning ? "SCANNING..." : "RUN SCAN"}
+        <button onClick={runScan} disabled={scanning} className="btn-primary">
+          {scanning ? "SCANNING…" : "RUN SCAN"}
         </button>
+      </div>
+
+      <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+        <StatTile variant="divider" size="sm" label="Actionable" value={actionable.length} tone="var(--accent)" />
+        <StatTile variant="divider" size="sm" label="Not qualified" value={notQualified.length} tone="var(--amber)" />
+        <StatTile variant="divider" size="sm" label="Total" value={signals.length} />
       </div>
 
       {error && (
         <div style={{
           background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-          borderRadius: 4, padding: "10px 14px",
+          borderRadius: "var(--radius-control)", padding: "10px 14px",
           fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)",
         }}>
           {error}
@@ -380,11 +363,9 @@ export default function OptionsSignals() {
       )}
 
       {signals.length === 0 ? (
-        <div style={{
-          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
-          textAlign: "center", padding: 40,
-        }}>
-          No options signals yet. Click RUN SCAN to generate spread signals across the watchlist.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">No options signals yet</p>
+          <p className="empty-chassis__hint">Click <strong style={{ color: "var(--ink)" }}>RUN SCAN</strong> to score spreads across the watchlist.</p>
         </div>
       ) : (
         <>
@@ -394,23 +375,17 @@ export default function OptionsSignals() {
             </div>
           )}
           {actionable.length === 0 && (
-            <div style={{
-              color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 12,
-              textAlign: "center", padding: 24,
-            }}>
-              Nothing qualified this scan — {notQualified.length} ticker{notQualified.length === 1 ? "" : "s"} scanned,
-              none passed. Click SHOW REASONS to see why, per ticker.
+            <div className="instrument-card instrument-card--flat empty-chassis" style={{ padding: 24 }}>
+              <p className="empty-chassis__title">Nothing qualified this scan</p>
+              <p className="empty-chassis__hint">
+                {notQualified.length} ticker{notQualified.length === 1 ? "" : "s"} scanned — use Show reasons for why.
+              </p>
             </div>
           )}
           {showReasons && notQualified.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{
-                  color: "var(--ink-dim)", fontFamily: "var(--mono)", fontSize: 11,
-                  fontWeight: 700, letterSpacing: "0.1em",
-                }}>
-                  NOT QUALIFIED
-                </span>
+                <span className="panel-title">Not qualified</span>
                 <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
               </div>
               {notQualified.map(sig => <RejectionRow key={sig.id} sig={sig} />)}

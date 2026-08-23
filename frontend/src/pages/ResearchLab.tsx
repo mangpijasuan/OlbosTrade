@@ -162,24 +162,23 @@ export default function ResearchLab() {
   };
 
   return (
-    <div style={{ padding: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <span style={{ width: 3, height: 17, background: "var(--cyan)", boxShadow: "0 0 10px var(--cyan-glow)" }} />
-        <span className="mono" style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.16em", color: "var(--ink)" }}>
-          RESEARCH LAB
-        </span>
-        <span className="kicker" style={{ marginLeft: 8 }}>hypothesis → backtest → paper → promoted</span>
+    <div className="page-shell">
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Research Lab</div>
+          <p className="page-header__sub">Hypothesis → backtest → paper → promoted</p>
+        </div>
       </div>
 
       {/* AI Research Assistant */}
-      <div className="exec-card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="instrument-card" style={{ padding: 16 }}>
         <div className="panel-title" style={{ marginBottom: 12 }}>AI Research Assistant</div>
         <div style={{ display: "flex", gap: 10 }}>
           <input value={question} onChange={e => setQuestion(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") ask(); }}
             placeholder="e.g. Which strategy performs best in high IV? Why is bull put declining?"
-            className="mono" style={inp} />
-          <button onClick={ask} disabled={asking} className="mono" style={btn}>
+            className="mono control-input" style={{ flex: 1 }} />
+          <button onClick={ask} disabled={asking} className="btn-primary">
             {asking ? "…" : "Ask"}
           </button>
         </div>
@@ -196,7 +195,7 @@ export default function ResearchLab() {
       </div>
 
       {/* New experiment */}
-      <div className="exec-card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="instrument-card" style={{ padding: 16 }}>
         <div className="panel-title" style={{ marginBottom: 12 }}>New Experiment</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <label style={{ flex: 2, minWidth: 180 }}>
@@ -237,9 +236,12 @@ export default function ResearchLab() {
         </div>
       )}
       {exps.length === 0
-        ? <div className="mono" style={{ color: "var(--ink-faint)", fontSize: 12 }}>No experiments yet.</div>
+        ? <div className="instrument-card instrument-card--flat empty-chassis">
+            <p className="empty-chassis__title">No experiments yet</p>
+            <p className="empty-chassis__hint">Create a hypothesis above to start the promotion funnel.</p>
+          </div>
         : exps.map(e => (
-          <div key={e.id} className="exec-card" style={{ padding: 14, marginBottom: 10 }}>
+          <div key={e.id} className="instrument-card" style={{ padding: 14, marginBottom: 10 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
                 <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{e.name}</span>
