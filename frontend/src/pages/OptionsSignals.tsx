@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import SignalAttribution from "../components/SignalAttribution";
+import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
 import type { SignalAttributionData } from "../types/signal";
 
 export interface Spread {
@@ -55,6 +56,7 @@ interface OptionsSignal {
   // AI-scorer-rejected entries, absent on entries rejected for other
   // reasons (insufficient history, zero-sized position, etc.).
   evidence?: SignalEvidence | null;
+  opportunity_score?: { score: number; components: Record<string, number> } | null;
 }
 
 function ConfidenceBar({ value }: { value: number }) {
@@ -195,13 +197,18 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
       </div>
 
       {/* Greeks / IV pills */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {sig.opportunity_score != null && (
+          <OpportunityScorePill value={sig.opportunity_score.score} />
+        )}
         {sig.iv_rank !== undefined && <StatPill label="IV RANK" value={sig.iv_rank.toFixed(0)} />}
         {sig.signal_score !== undefined && <StatPill label="SCORE" value={sig.signal_score.toFixed(3)} />}
         {intel.delta_short !== undefined && <StatPill label="Δ" value={intel.delta_short.toFixed(2)} />}
         {intel.vega_short !== undefined && <StatPill label="V" value={intel.vega_short.toFixed(3)} />}
         {intel.theta_short !== undefined && <StatPill label="θ" value={intel.theta_short.toFixed(3)} />}
         {sig.kelly_fraction != null && <StatPill label="KELLY" value={`${(sig.kelly_fraction * 100).toFixed(0)}%`} />}
+        <span style={{ flex: 1 }} />
+        <AlphaEdgeInline ticker={sig.ticker} assetType="options" />
       </div>
 
       {/* Spread levels */}

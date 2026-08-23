@@ -10,6 +10,7 @@ import PortfolioGreeks from "../components/PortfolioGreeks";
 import SignalAttribution from "../components/SignalAttribution";
 import ConfidenceFloorLabel from "../components/ConfidenceFloorLabel";
 import WhyBlockedChip from "../components/WhyBlockedChip";
+import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
 import type { SignalAttributionData } from "../types/signal";
 import { useDeskBlockContext } from "../hooks/useDeskBlockContext";
 import { deriveSignalBlockReason } from "../utils/signalBlockReason";
@@ -46,6 +47,7 @@ interface Signal {
     atr?: number;
     volume_ratio?: number;
   };
+  opportunity_score?: { score: number; components: Record<string, number> } | null;
 }
 
 // Signals from the same scan cycle land within a few seconds of each other
@@ -212,12 +214,17 @@ function SignalCard({
       )}
 
       {/* Score pills */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {sig.opportunity_score != null && (
+          <OpportunityScorePill value={sig.opportunity_score.score} />
+        )}
         <ScorePill label="ORDERFLOW" value={sig.orderflow_score} />
         <ScorePill label="IV BOOST" value={sig.iv_overlay_boost} />
         {ind.rsi !== undefined && <StatPill label="RSI" value={ind.rsi.toFixed(1)} />}
         {ind.volume_ratio !== undefined && <StatPill label="VOL×" value={ind.volume_ratio.toFixed(1)} />}
         {ind.bb_pct_b !== undefined && <StatPill label="BB%B" value={ind.bb_pct_b.toFixed(2)} />}
+        <span style={{ flex: 1 }} />
+        <AlphaEdgeInline ticker={sig.ticker} assetType="equity" />
       </div>
 
       {/* Trade plan */}

@@ -29,6 +29,7 @@ interface AlphaEdgeResponse {
   deterioration_evidence: { feature: string; impact: number }[];
   data_sources: Record<string, string>;
   error: string | null;
+  opportunity_score: number | null;
 }
 
 const LIFECYCLE_COLOR: Record<string, string> = {
@@ -179,6 +180,7 @@ export default function AlphaEdgePanel() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+              <ScoreTile label="OPPORTUNITY SCORE" value={data.opportunity_score} sublabel="confidence + EV + R:R + liquidity + regime" />
               <ScoreTile label="ENTRY SCORE" value={data.entry_score} />
               <ScoreTile label="HOLD SCORE" value={data.hold_score} sublabel={data.hold_score == null ? "no position" : undefined} />
               <ScoreTile label="EXIT SCORE" value={data.exit_score} sublabel={data.exit_score != null ? data.exit_score_basis.replace(/_/g, " ") : undefined} />
