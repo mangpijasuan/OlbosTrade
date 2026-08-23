@@ -665,18 +665,84 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   box-shadow: var(--raised-bezel), inset 0 0 0 1px rgba(212,175,55,0.12);
 }
 .instrument-halt {
-  border: 1px solid rgba(239,68,68,0.45) !important;
-  border-top-color: rgba(255,180,180,0.25) !important;
-  background: linear-gradient(180deg, #2a1518 0%, #1a0e10 100%) !important;
-  box-shadow: var(--raised-bezel) !important;
+  appearance: none;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-top-color: rgba(255, 160, 160, 0.22);
+  background: linear-gradient(180deg, #2c1418 0%, #160a0c 100%);
+  box-shadow: var(--raised-bezel);
   border-radius: var(--radius-control);
-  font-family: var(--mono) !important;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: #fca5a5;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast),
+    color var(--motion-fast);
+}
+.instrument-halt:hover:not(:disabled):not(.is-engaged) {
+  border-color: rgba(239, 68, 68, 0.72);
+  background: linear-gradient(180deg, #3a181c 0%, #1c0c0e 100%);
+  color: #fecaca;
+  box-shadow: var(--raised-bezel), 0 0 0 1px rgba(239, 68, 68, 0.12);
+}
+.instrument-halt:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.65);
+  outline-offset: 2px;
+}
+.instrument-halt:disabled {
+  opacity: 0.7;
+  cursor: default;
 }
 .instrument-halt.is-engaged {
-  background: linear-gradient(180deg, #5a1818 0%, #2a0c0c 100%) !important;
-  box-shadow: var(--raised-bezel), var(--glow-neg) !important;
+  border-color: rgba(239, 68, 68, 0.85);
+  background: linear-gradient(180deg, #7f1d1d 0%, #450a0a 100%);
+  color: #fee2e2;
+  box-shadow: var(--raised-bezel), var(--glow-neg);
+  cursor: default;
+}
+.instrument-halt__icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: inherit;
+}
+.instrument-halt.is-engaged .instrument-halt__icon {
+  background: rgba(254, 226, 226, 0.16);
+  border-color: rgba(254, 226, 226, 0.45);
+}
+.instrument-halt__label {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.instrument-halt__badge {
+  flex-shrink: 0;
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+.instrument-halt.is-engaged .instrument-halt__badge {
+  color: #450a0a;
+  background: #fecaca;
+  border-color: #fecaca;
 }
 
 /* ── Chart Workstation layout ─────────────────────────────────────────────

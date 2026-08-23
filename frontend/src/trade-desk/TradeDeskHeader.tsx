@@ -172,7 +172,8 @@ export default function TradeDeskHeader() {
       <div style={{ flex: 1, minWidth: 8 }} />
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "stretch",
-        gap: 4, padding: "4px 8px", maxWidth: 220,
+        justifyContent: "center", gap: 4, padding: "4px 8px",
+        minWidth: 168, maxWidth: 200, flex: "0 1 200px",
       }}>
         <KillSwitchButton variant="panel" />
       </div>

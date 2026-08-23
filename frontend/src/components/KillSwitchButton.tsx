@@ -4,6 +4,22 @@ import { Button } from "./ui";
 
 type Variant = "sidebar" | "panel";
 
+function HaltIcon({ engaged }: { engaged: boolean }) {
+  return (
+    <span className="instrument-halt__icon" aria-hidden="true">
+      {engaged ? (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+          <circle cx="5" cy="5" r="4" />
+        </svg>
+      ) : (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+          <rect x="1.5" y="1.5" width="7" height="7" rx="1" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 export default function KillSwitchButton({
   variant = "panel",
   expanded = true,
@@ -57,52 +73,42 @@ export default function KillSwitchButton({
     }
   };
 
-  if (variant === "sidebar") {
-    return (
-      <>
-        <button
-          onClick={() => !engaged && setConfirming(true)}
-          aria-label={engaged ? "Kill switch engaged" : "Engage kill switch"}
-          disabled={busy}
-          title={engaged ? "Kill switch is engaged" : "Engage kill switch"}
-          className={`instrument-halt${engaged ? " is-engaged" : ""}`}
-          style={{
-            width: "100%",
-            minHeight: 32,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: expanded ? "space-between" : "center",
-            gap: 8,
-            color: "var(--red)",
-            cursor: engaged || busy ? "default" : "pointer",
-            padding: expanded ? "0 8px" : 0,
-          }}
-        >
-          {expanded && (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.08em" }}>
-              {engaged ? "Halted" : "Kill Switch"}
-            </span>
-          )}
-          <span aria-hidden="true" style={{ fontFamily: "var(--mono)", fontSize: 11, lineHeight: 1 }}>HALT</span>
-        </button>
-        {confirming && <KillConfirmModal busy={busy} message={message} onCancel={() => setConfirming(false)} onConfirm={engage} />}
-      </>
-    );
-  }
+  const label = engaged ? "Trading halted" : busy ? "Engaging…" : "Kill switch";
+  const badge = engaged ? "Active" : "Halt";
+  const showCopy = variant === "panel" || expanded;
+  const disabled = variant === "sidebar" ? busy : engaged || busy;
 
   return (
     <>
-      <Button
-        danger
+      <button
+        type="button"
         onClick={() => !engaged && setConfirming(true)}
         aria-label={engaged ? "Kill switch engaged" : "Engage kill switch"}
-        disabled={engaged || busy}
-        style={{ padding: "10px 0", justifyContent: "center", display: "flex", fontWeight: 600 }}
+        disabled={disabled}
+        title={engaged ? "Kill switch is engaged" : "Engage kill switch"}
+        className={`instrument-halt${engaged ? " is-engaged" : ""}`}
+        style={{
+          width: "100%",
+          minHeight: 36,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: showCopy ? "flex-start" : "center",
+          gap: showCopy ? 8 : 0,
+          padding: showCopy ? "6px 10px" : "6px 0",
+        }}
       >
-        {engaged ? "KILL SWITCH ENGAGED" : busy ? "ENGAGING..." : "ENGAGE KILL SWITCH"}
-      </Button>
-      {message && !confirming && (
-        <div style={{ fontSize: 11, color: engaged ? "var(--red)" : "var(--ink-dim)", lineHeight: 1.6 }}>
+        <HaltIcon engaged={engaged} />
+        {showCopy && (
+          <>
+            <span className="instrument-halt__label" style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
+              {label}
+            </span>
+            <span className="instrument-halt__badge">{badge}</span>
+          </>
+        )}
+      </button>
+      {variant === "panel" && message && !confirming && (
+        <div style={{ fontFamily: "var(--sans)", fontSize: 11, color: engaged ? "var(--red)" : "var(--ink-dim)", lineHeight: 1.5 }}>
           {message}
         </div>
       )}
@@ -139,14 +145,14 @@ function KillConfirmModal({
       }}
     >
       <div className="glass-surface" style={{ width: "100%", maxWidth: 440, border: "1px solid rgba(239,68,68,0.48)", padding: 20 }}>
-        <div id="kill-switch-title" style={{ fontSize: 15, color: "var(--red)", fontWeight: 700, marginBottom: 10 }}>
+        <div id="kill-switch-title" style={{ fontFamily: "var(--sans)", fontSize: 15, color: "var(--red)", fontWeight: 700, marginBottom: 10 }}>
           Engage kill switch?
         </div>
-        <div style={{ color: "var(--ink-dim)", fontSize: 12, lineHeight: 1.7, marginBottom: 16 }}>
+        <div style={{ fontFamily: "var(--sans)", color: "var(--ink-dim)", fontSize: 12, lineHeight: 1.7, marginBottom: 16 }}>
           This will halt new order submission and ask the broker layer to cancel open orders and flatten positions. Resume requires a manual reset.
         </div>
         {message && (
-          <div style={{ color: "var(--red)", fontSize: 11, marginBottom: 12 }}>
+          <div style={{ fontFamily: "var(--sans)", color: "var(--red)", fontSize: 11, marginBottom: 12 }}>
             {message}
           </div>
         )}
