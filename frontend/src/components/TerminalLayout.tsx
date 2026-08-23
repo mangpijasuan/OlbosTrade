@@ -116,9 +116,13 @@ function AccountMenuItem({ icon, label, onClick, danger = false }: {
 function ExecutionModeControl({
   mode,
   onChange,
+  busy = false,
+  error = null,
 }: {
   mode: "manual" | "copilot" | "autopilot";
   onChange: (m: "manual" | "copilot" | "autopilot") => void;
+  busy?: boolean;
+  error?: string | null;
 }) {
   const options: { key: "manual" | "copilot" | "autopilot"; label: string; onColor: string }[] = [
     { key: "manual", label: "MANUAL", onColor: "var(--ink-dim)" },
@@ -126,39 +130,55 @@ function ExecutionModeControl({
     { key: "autopilot", label: "AUTOPILOT", onColor: "var(--amber)" },
   ];
   return (
-    <div
-      role="group"
-      aria-label="Execution mode"
-      title="Execution mode: Manual (signals only) → Copilot (approve each trade) → Autopilot (auto within guardrails). Leaving Autopilot returns to Copilot; choose Manual to stop approvals."
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 2,
-        height: 22, padding: 2, borderRadius: 11,
-        border: "1px solid var(--line-dim)", background: "var(--bg-3)",
-      }}
-    >
-      {options.map((opt) => {
-        const on = mode === opt.key;
-        return (
-          <button
-            key={opt.key}
-            type="button"
-            onClick={() => onChange(opt.key)}
-            aria-pressed={on}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              height: 18, padding: "0 8px", borderRadius: 9,
-              background: on ? "var(--cyan-dim)" : "transparent",
-              border: `1px solid ${on ? opt.onColor : "transparent"}`,
-              color: on ? opt.onColor : "var(--ink-faint)",
-              fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
-              cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
-            }}
-          >
-            <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? opt.onColor : undefined }} />
-            {opt.label}
-          </button>
-        );
-      })}
+    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+      <div
+        role="group"
+        aria-label="Execution mode"
+        title="Execution mode: Manual (signals only) → Copilot (approve each trade) → Autopilot (auto within guardrails). Leaving Autopilot returns to Copilot; choose Manual to stop approvals."
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 2,
+          height: 22, padding: 2, borderRadius: 11,
+          border: `1px solid ${error ? "rgba(239,68,68,0.55)" : "var(--line-dim)"}`,
+          background: "var(--bg-3)",
+          opacity: busy ? 0.7 : 1,
+        }}
+      >
+        {options.map((opt) => {
+          const on = mode === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => onChange(opt.key)}
+              aria-pressed={on}
+              disabled={busy}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                height: 18, padding: "0 8px", borderRadius: 9,
+                background: on ? "var(--cyan-dim)" : "transparent",
+                border: `1px solid ${on ? opt.onColor : "transparent"}`,
+                color: on ? opt.onColor : "var(--ink-faint)",
+                fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
+                cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
+              }}
+            >
+              <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? opt.onColor : undefined }} />
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      {error && (
+        <span
+          role="status"
+          style={{
+            fontFamily: "var(--sans)", fontSize: 9, color: "var(--red)",
+            maxWidth: 280, textAlign: "right", lineHeight: 1.3,
+          }}
+        >
+          {error}
+        </span>
+      )}
     </div>
   );
 }
@@ -190,12 +210,28 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
   // Execution mode (manual / copilot / autopilot) — the real backend tri-state.
   // Header shows a single three-way control so the state machine is visible.
   const [execMode, setExecMode] = useState<"manual" | "copilot" | "autopilot">("manual");
+  const [execBusy, setExecBusy] = useState(false);
+  const [execError, setExecError] = useState<string | null>(null);
 
   const setExec = (m: "manual" | "copilot" | "autopilot") => {
+    const prev = execMode;
     setExecMode(m); // optimistic
+    setExecBusy(true);
+    setExecError(null);
     api.setExecutionMode(m)
-      .then((d: any) => { if (d.mode) setExecMode(d.mode); })
-      .catch(() => {});
+      .then((d: any) => {
+        if (d.mode) setExecMode(d.mode);
+      })
+      .catch((err: any) => {
+        setExecMode(prev);
+        const msg = String(err?.message || err || "");
+        if (msg.includes("403") || msg.toLowerCase().includes("forbidden")) {
+          setExecError("Mode change needs Operator API Key — Risk → paste SECRET_KEY → Save");
+        } else {
+          setExecError(msg || "Could not change execution mode");
+        }
+      })
+      .finally(() => setExecBusy(false));
   };
   const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
 
@@ -414,7 +450,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
         padding: "0 12px", borderLeft: "1px solid var(--line-dim)",
       }}>
-        <ExecutionModeControl mode={execMode} onChange={setExec} />
+        <ExecutionModeControl mode={execMode} onChange={setExec} busy={execBusy} error={execError} />
         <TradingStyleControl mode={mode} onChanged={(m) => setMode(m)} />
       </div>
 
