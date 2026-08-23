@@ -13,6 +13,7 @@ from app.services.trade_frequency_controller import (
     expected_value,
     risk_score,
     rule_for,
+    score_components,
     weighted_score,
     _confidence,
     _regime_score,
@@ -72,6 +73,19 @@ def test_weighted_score_in_range_and_monotonic():
 
 def test_risk_score_inverse_confidence():
     assert risk_score(_equity(0.95)) < risk_score(_equity(0.50))
+
+
+def test_score_components_matches_weighted_score_formula():
+    """score_components() must be the single source of truth weighted_score()
+    is built from — not a second, driftable copy of the same weights."""
+    sig = _equity(0.82, rr=2.5, vol_ratio=1.4)
+    c = score_components(sig)
+    assert set(c) == {"confidence", "ev", "reward_risk", "liquidity", "regime"}
+    for v in c.values():
+        assert 0.0 <= v <= 1.0
+    manual = round(0.35 * c["confidence"] + 0.25 * c["ev"] + 0.15 * c["reward_risk"]
+                   + 0.15 * c["liquidity"] + 0.10 * c["regime"], 4)
+    assert manual == weighted_score(sig)
     assert 0 <= risk_score(_equity(0.5)) <= 100
     # sub-1:1 reward:risk adds risk
     assert risk_score(_equity(0.8, rr=0.5)) > risk_score(_equity(0.8, rr=2.0))

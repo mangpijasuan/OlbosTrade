@@ -62,6 +62,7 @@ class AlphaEdgeResult:
     deterioration_evidence: list = field(default_factory=list)
     data_sources: dict = field(default_factory=dict)
     error: Optional[str] = None
+    opportunity_score: Optional[int] = None
 
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -185,6 +186,7 @@ async def compute_equity_alpha_edge(ticker: str, broker=None) -> AlphaEdgeResult
         compute_indicators, compute_equity_trade_plan, score_equity_signal,
     )
     from app.services.trade_frequency_controller import risk_score as _risk_score
+    from app.services.opportunity_score import compute_opportunity_score
     from sqlalchemy import select
 
     ticker = ticker.upper()
@@ -262,12 +264,16 @@ async def compute_equity_alpha_edge(ticker: str, broker=None) -> AlphaEdgeResult
     score_trend = equity_score_trend(current_score_for_trend, anchor_confidence, anchor_generated_at)
 
     risk = None
+    opportunity = None
     try:
         trade_plan = compute_equity_trade_plan(ind, current_action, portfolio_value=100_000.0)
-        risk = _risk_score({
+        scoring_signal = {
             "confidence": current_confidence,
             "trade_plan": {"risk_reward": trade_plan.get("risk_reward")},
-        })
+            "indicators": ind,
+        }
+        risk = _risk_score(scoring_signal)
+        opportunity = compute_opportunity_score(scoring_signal)["score"]
     except Exception:
         pass
 
@@ -279,7 +285,7 @@ async def compute_equity_alpha_edge(ticker: str, broker=None) -> AlphaEdgeResult
         current_action=current_action, current_confidence=round(current_confidence, 4),
         position=position_info,
         supporting_evidence=supporting_evidence, deterioration_evidence=deterioration_evidence,
-        data_sources=data_sources,
+        data_sources=data_sources, opportunity_score=opportunity,
     )
 
 
@@ -288,6 +294,7 @@ async def compute_options_alpha_edge(ticker: str) -> AlphaEdgeResult:
     from app.models.trade import Trade
     from app.models.options_signal_history import OptionsSignalHistory
     from app.services.trade_frequency_controller import risk_score as _risk_score
+    from app.services.opportunity_score import compute_opportunity_score
     from sqlalchemy import select
     from datetime import timedelta
 
@@ -350,17 +357,22 @@ async def compute_options_alpha_edge(ticker: str) -> AlphaEdgeResult:
     score_trend = ScoreTrend("not_tracked", None, "no live-vs-entry comparison available for options in this slice")
 
     risk = None
+    opportunity = None
     try:
+        scoring_signal = None
         if trade is not None:
-            risk = _risk_score({
+            scoring_signal = {
                 "signal_score": float(trade.signal_score) if trade.signal_score is not None else 0.5,
                 "spread": {"net_credit": float(trade.credit_received or 0), "max_loss": max_loss_est or 0},
-            })
+            }
         elif history is not None:
-            risk = _risk_score({
+            scoring_signal = {
                 "signal_score": float(history.signal_score),
                 "spread": {"net_credit": float(history.net_credit), "max_loss": float(history.max_loss)},
-            })
+            }
+        if scoring_signal is not None:
+            risk = _risk_score(scoring_signal)
+            opportunity = compute_opportunity_score(scoring_signal)["score"]
     except Exception:
         pass
 
@@ -372,5 +384,5 @@ async def compute_options_alpha_edge(ticker: str) -> AlphaEdgeResult:
         current_action=None, current_confidence=None,
         position=position_info,
         supporting_evidence=supporting_evidence, deterioration_evidence=deterioration_evidence,
-        data_sources=data_sources,
+        data_sources=data_sources, opportunity_score=opportunity,
     )

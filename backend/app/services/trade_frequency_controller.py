@@ -164,10 +164,11 @@ def _regime_score(signal: dict) -> float:
     return 1.0 if strategy in allowed else 0.3
 
 
-def weighted_score(signal: dict) -> float:
+def score_components(signal: dict) -> dict:
     """
-    Ranking score (0..1-ish): 0.35 confidence + 0.25 EV + 0.15 reward:risk
-    + 0.15 liquidity + 0.10 regime alignment. Higher ranks execute first.
+    The five normalized (0..1) sub-scores weighted_score() combines, exposed
+    individually so callers (e.g. opportunity_score.py) can show a breakdown
+    instead of just the final number. Single source of truth for both.
     """
     conf = _confidence(signal)
     ev = expected_value(signal)
@@ -175,8 +176,23 @@ def weighted_score(signal: dict) -> float:
     rr_score = max(0.0, min(1.0, _reward_risk(signal) / 3.0))  # 3:1 ⇒ 1.0
     liq = _liquidity(signal)
     reg = _regime_score(signal)
-    return round(0.35 * conf + 0.25 * ev_score + 0.15 * rr_score
-                 + 0.15 * liq + 0.10 * reg, 4)
+    return {
+        "confidence": conf,
+        "ev": ev_score,
+        "reward_risk": rr_score,
+        "liquidity": liq,
+        "regime": reg,
+    }
+
+
+def weighted_score(signal: dict) -> float:
+    """
+    Ranking score (0..1-ish): 0.35 confidence + 0.25 EV + 0.15 reward:risk
+    + 0.15 liquidity + 0.10 regime alignment. Higher ranks execute first.
+    """
+    c = score_components(signal)
+    return round(0.35 * c["confidence"] + 0.25 * c["ev"] + 0.15 * c["reward_risk"]
+                 + 0.15 * c["liquidity"] + 0.10 * c["regime"], 4)
 
 
 def risk_score(signal: dict) -> int:

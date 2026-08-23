@@ -731,6 +731,7 @@ async def _run_equity_scan() -> None:
         )
         from app.services.orderflow_engine import get_orderflow_score
         from app.services.account_state import get_account_value
+        from app.services.opportunity_score import compute_opportunity_score
         from app.api.routes.equity import _recent_signals   # shared in-memory store
 
         watchlist = settings.get_equity_watchlist()
@@ -846,6 +847,7 @@ async def _run_equity_scan() -> None:
                             "volume_ratio": ind.get("volume_ratio"),
                         },
                     }
+                    signal["opportunity_score"] = compute_opportunity_score(signal)
                     logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
                     if routable_signal:
                         # Track every routable signal's forward outcome, not
@@ -1605,6 +1607,8 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
             "vix_used":      round(vix_est * 100, 1),
             "credit_source": credit_source,
         }
+        from app.services.opportunity_score import compute_opportunity_score
+        signal["opportunity_score"] = compute_opportunity_score(signal)
 
         logger.info(
             "Options signal: %s %s %s %s/%s exp %s %s $%.2f (%s) score=%.3f qty=%d",
