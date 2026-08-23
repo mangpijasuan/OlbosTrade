@@ -13,7 +13,10 @@ import { Button } from "../../components/ui";
 // fetch — a separate, larger options-desk wiring slice, not silently faked
 // here. Existing rules referencing them keep safely never firing; this only
 // affects new rule creation.
-const METRICS = ["price", "change_pct", "rsi_14", "volume"];
+const METRICS = [
+  "price", "change_pct", "rsi_14", "volume",
+  "alpha_edge_entry_score", "alpha_edge_risk_score", "opportunity_score",
+];
 const OPS = ["gt", "gte", "lt", "lte", "eq", "ne"] as const;
 
 interface Predicate { metric: string; op: string; value: string }

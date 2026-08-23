@@ -774,28 +774,6 @@ async def _run_equity_scan() -> None:
                     if not ind:
                         return None
 
-                    # Wire the alert rule-evaluation engine using only metrics
-                    # already computed in this loop for free. iv_rank/
-                    # iv_percentile/vix need options/vol-surface data this scan
-                    # doesn't fetch and stay unwired — separate, larger,
-                    # explicitly deferred scope.
-                    try:
-                        prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else 0.0
-                        change_pct = (
-                            (float(df["close"].iloc[-1]) - prev_close) / prev_close * 100
-                            if prev_close else 0.0
-                        )
-                        alert_snapshot = {
-                            "price":      ind["close"],                  # ind's key is "close" — map explicitly
-                            "rsi_14":     ind["rsi"],                    # ind's key is "rsi" — map explicitly
-                            "change_pct": change_pct,                    # not in compute_indicators; computed here
-                            "volume":     float(df["volume"].iloc[-1]),  # raw latest volume, NOT volume_ratio
-                        }
-                        from app.services.alerts.service import evaluate_symbol
-                        await evaluate_symbol(ticker, alert_snapshot)
-                    except Exception as exc:
-                        logger.warning("Alert evaluation failed for %s: %s", ticker, exc)
-
                     from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
                     orderflow = await ibkr_coordinator.submit(
                         Priority.P2, lambda t=ticker: get_orderflow_score(t, broker),
@@ -849,6 +827,38 @@ async def _run_equity_scan() -> None:
                     }
                     signal["opportunity_score"] = compute_opportunity_score(signal)
                     logger.info("Equity scan: %s → %s (conf=%.2f)", ticker, action, confidence)
+
+                    # Wire the alert rule-evaluation engine using metrics already
+                    # computed in this loop for free. iv_rank/iv_percentile/vix
+                    # need options/vol-surface data this scan doesn't fetch and
+                    # stay unwired — separate, larger, explicitly deferred scope.
+                    # alpha_edge_entry_score/alpha_edge_risk_score reuse the same
+                    # pure-math functions alpha_edge_engine.compute_equity_alpha_edge()
+                    # itself calls — not a re-fetch of Alpha Edge's full I/O-bound
+                    # orchestration (which would re-hit yfinance/DB per ticker on
+                    # every scan cycle).
+                    try:
+                        prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else 0.0
+                        change_pct = (
+                            (float(df["close"].iloc[-1]) - prev_close) / prev_close * 100
+                            if prev_close else 0.0
+                        )
+                        from app.services.alpha_edge_engine import compute_equity_scores as _ae_equity_scores
+                        from app.services.trade_frequency_controller import risk_score as _ae_risk_score
+                        _alpha_entry, _, _ = _ae_equity_scores(action, confidence, position_direction=None)
+                        alert_snapshot = {
+                            "price":      ind["close"],                  # ind's key is "close" — map explicitly
+                            "rsi_14":     ind["rsi"],                    # ind's key is "rsi" — map explicitly
+                            "change_pct": change_pct,                    # not in compute_indicators; computed here
+                            "volume":     float(df["volume"].iloc[-1]),  # raw latest volume, NOT volume_ratio
+                            "alpha_edge_entry_score": _alpha_entry,
+                            "alpha_edge_risk_score":  _ae_risk_score(signal),
+                            "opportunity_score":      signal["opportunity_score"]["score"],
+                        }
+                        from app.services.alerts.service import evaluate_symbol
+                        await evaluate_symbol(ticker, alert_snapshot)
+                    except Exception as exc:
+                        logger.warning("Alert evaluation failed for %s: %s", ticker, exc)
                     if routable_signal:
                         # Track every routable signal's forward outcome, not
                         # just the handful that become actual trades — trades

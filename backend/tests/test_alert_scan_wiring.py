@@ -63,3 +63,33 @@ def test_alert_evaluation_failure_is_isolated_from_the_scan():
     try_idx = preceding.rindex("try:")
     except_idx = src.index("except Exception as exc:", call_idx)
     assert try_idx < call_idx < except_idx
+
+
+def test_alert_snapshot_includes_alpha_edge_and_opportunity_score():
+    block = _alert_snapshot_block()
+    assert '"alpha_edge_entry_score"' in block
+    assert '"alpha_edge_risk_score"' in block
+    assert '"opportunity_score"' in block
+
+
+def test_alert_snapshot_reuses_alpha_edge_pure_functions_not_reimplemented():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._run_equity_scan)
+    # Entry/risk scores must come from the same functions
+    # alpha_edge_engine.compute_equity_alpha_edge() itself calls — not a
+    # second, driftable copy of "round(confidence * 100)" etc.
+    assert "compute_equity_scores" in src
+    assert "from app.services.trade_frequency_controller import risk_score" in src
+    # And not the full I/O-bound Alpha Edge orchestrator, which would
+    # re-fetch bars/hit the DB for every ticker on every scan cycle.
+    assert "compute_equity_alpha_edge" not in src
+
+
+def test_opportunity_score_computed_before_alert_snapshot():
+    import app.main as main_mod
+
+    src = inspect.getsource(main_mod._run_equity_scan)
+    opp_score_idx = src.index('signal["opportunity_score"] = compute_opportunity_score(signal)')
+    snapshot_idx = src.index("alert_snapshot = {")
+    assert opp_score_idx < snapshot_idx
