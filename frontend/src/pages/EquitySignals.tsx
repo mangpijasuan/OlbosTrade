@@ -8,6 +8,7 @@ import React, { useEffect, useState } from "react";
 import BrokerStatus from "../components/BrokerStatus";
 import PortfolioGreeks from "../components/PortfolioGreeks";
 import SignalAttribution from "../components/SignalAttribution";
+import SignalDirectionBadge from "../components/SignalDirectionBadge";
 import ConfidenceFloorLabel from "../components/ConfidenceFloorLabel";
 import WhyBlockedChip from "../components/WhyBlockedChip";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
@@ -187,6 +188,7 @@ function SignalCard({
         }}>
           {sig.ticker}
         </span>
+        <SignalDirectionBadge action={sig.action} />
         <SignalAttribution data={toAttribution(sig)} size="sm" />
         <WhyBlockedChip reason={block} />
         {sig.earnings_gated && (

@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import SignalAttribution from "../components/SignalAttribution";
+import SignalDirectionBadge from "../components/SignalDirectionBadge";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
 import BacktestButtons from "../components/BacktestButtons";
 import { StatTile } from "../components/ui";
@@ -135,6 +136,40 @@ function toAttribution(sig: OptionsSignal): SignalAttributionData {
   };
 }
 
+const ACTION_GROUP_COLOR: Record<string, string> = {
+  BUY_SPREAD: "var(--green)",
+  SELL_SPREAD: "var(--red)",
+};
+
+function OptionsSignalGroup({
+  action,
+  signals,
+}: {
+  action: "BUY_SPREAD" | "SELL_SPREAD";
+  signals: OptionsSignal[];
+}) {
+  if (signals.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{
+          color: ACTION_GROUP_COLOR[action], fontFamily: "var(--mono)", fontSize: 12,
+          fontWeight: 700, letterSpacing: "0.1em",
+        }}>
+          {action.replace("_", " ")}
+        </span>
+        <span style={{ color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+          ({signals.length})
+        </span>
+        <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+        {signals.map(sig => <OptionsSignalCard key={sig.id} sig={sig} />)}
+      </div>
+    </div>
+  );
+}
+
 function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
   const spread = sig.spread || {};
   const intel = sig.intelligence || {};
@@ -181,6 +216,7 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
             </span>
           )}
         </div>
+        <SignalDirectionBadge action={sig.action} />
         <SignalAttribution data={toAttribution(sig)} size="sm" />
         <span style={{ flex: 1 }} />
         <span style={{
@@ -320,9 +356,9 @@ export default function OptionsSignals() {
     }
   };
 
-  const actionable = signals.filter(
-    s => s.action === "BUY_SPREAD" || s.action === "SELL_SPREAD",
-  );
+  const buySpreads = signals.filter(s => s.action === "BUY_SPREAD");
+  const sellSpreads = signals.filter(s => s.action === "SELL_SPREAD");
+  const actionable = [...buySpreads, ...sellSpreads];
   // Scanned-but-not-qualified tickers — previously these reasons only ever
   // reached a server log line, so "0 total" told you nothing about whether
   // the scanner was broken or genuinely found nothing, and why.
@@ -346,8 +382,10 @@ export default function OptionsSignals() {
         </button>
       </div>
 
-      <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+      <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}>
         <StatTile variant="divider" size="sm" label="Actionable" value={actionable.length} tone="var(--accent)" />
+        <StatTile variant="divider" size="sm" label="Buy spread" value={buySpreads.length} tone="var(--green)" />
+        <StatTile variant="divider" size="sm" label="Sell spread" value={sellSpreads.length} tone="var(--red)" />
         <StatTile variant="divider" size="sm" label="Not qualified" value={notQualified.length} tone="var(--amber)" />
         <StatTile variant="divider" size="sm" label="Total" value={signals.length} />
       </div>
@@ -370,8 +408,9 @@ export default function OptionsSignals() {
       ) : (
         <>
           {actionable.length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
-              {actionable.map(sig => <OptionsSignalCard key={sig.id} sig={sig} />)}
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              <OptionsSignalGroup action="BUY_SPREAD" signals={buySpreads} />
+              <OptionsSignalGroup action="SELL_SPREAD" signals={sellSpreads} />
             </div>
           )}
           {actionable.length === 0 && (

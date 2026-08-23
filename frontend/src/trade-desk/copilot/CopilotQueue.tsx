@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import SignalAttribution from "../../components/SignalAttribution";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
 import type { SignalAttributionData } from "../../types/signal";
 import MetricHint from "../../components/MetricHint";
 import { Badge } from "../../components/ui";
@@ -140,6 +141,7 @@ export default function CopilotQueue() {
                     {s.ticker}
                   </span>
                   <Badge kind="tag" tone="var(--ink-dim)">{s.asset_type?.toUpperCase() || "EQUITY"}</Badge>
+                  <SignalDirectionBadge action={s.action || s.strategy?.toUpperCase()} />
                   <SignalAttribution
                     data={
                       {

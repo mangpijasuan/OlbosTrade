@@ -424,7 +424,9 @@ export default function CommandOverview({
   const optionsCreditCount = optionsSignals.filter((s) => (s.spread?.net_credit ?? 0) > 0).length;
   const optionsDebitCount = optionsSignals.filter((s) => (s.spread?.net_credit ?? 0) < 0).length;
   const optionsLines = optionsSignals.slice(0, 5).map((s) => {
-    const strat = s.strategy ? s.strategy.replace(/_/g, " ") : s.action || "—";
+    const action = s.action ? s.action.replace(/_/g, " ") : "—";
+    const side = s.action === "BUY_SPREAD" ? "LONG" : s.action === "SELL_SPREAD" ? "SHORT" : "";
+    const strat = s.strategy ? s.strategy.replace(/_/g, " ") : "";
     const conf = formatConfidenceFloor(
       typeof s.confidence === "number" ? s.confidence : null,
       minConfidence,
@@ -434,7 +436,9 @@ export default function CommandOverview({
       blockCtx,
     );
     const suffix = block ? ` · blocked: ${block.label}` : "";
-    return `${s.ticker} ${strat} · ${conf}${suffix}`;
+    const sideLabel = side ? ` ${side}` : "";
+    const stratLabel = strat ? ` · ${strat}` : "";
+    return `${s.ticker} ${action}${sideLabel}${stratLabel} · ${conf}${suffix}`;
   });
 
   const openTone: "ok" | "warn" | "crit" | "muted" =

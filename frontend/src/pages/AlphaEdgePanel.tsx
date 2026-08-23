@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import { Panel, StatTile } from "../components/ui";
 import { AssetToggle, type AssetTab } from "./EquitySignals";
 import SignalAttribution from "../components/SignalAttribution";
+import SignalDirectionBadge from "../components/SignalDirectionBadge";
 import type { SignalAttributionData } from "../types/signal";
 import { useAlphaEdgeWatchlist } from "../hooks/useAlphaEdgeWatchlist";
 import type { AlphaEdgeCandidate } from "../utils/alphaEdgeCandidates";
@@ -195,16 +196,17 @@ function AlphaEdgeDetail({ data }: { data: AlphaEdgeResponse }) {
             {LIFECYCLE_LABEL[data.lifecycle_state] || data.lifecycle_state.toUpperCase()}
           </span>
           {data.current_action && (
-            <span className="mono" style={{
-              fontSize: 10, fontWeight: 700,
-              color: data.current_action === "BUY" || data.current_action === "BUY_SPREAD" ? "var(--green)" : "var(--red)",
-            }}>
-              {data.current_action}
-            </span>
+            <SignalDirectionBadge
+              action={data.current_action}
+              positionDirection={data.position.held ? data.position.direction : undefined}
+            />
           )}
-          {data.position.held && (
+          {!data.current_action && data.position.held && data.position.direction && (
+            <SignalDirectionBadge action={data.position.direction} />
+          )}
+          {data.position.held && data.position.quantity != null && (
             <span className="mono" style={{ fontSize: 10, color: "var(--ink-dim)" }}>
-              {data.position.direction} × {data.position.quantity}
+              × {data.position.quantity}
             </span>
           )}
           <span style={{ flex: 1 }} />
@@ -286,11 +288,20 @@ function CandidateCard({
               {candidate.ticker}
             </span>
             <SourceBadge source={candidate.source} />
+            {(data?.current_action || candidate.scanAction) && (
+              <SignalDirectionBadge
+                action={data?.current_action || candidate.scanAction}
+                positionDirection={data?.position.held ? data.position.direction : undefined}
+                size="sm"
+              />
+            )}
+            {!data?.current_action && !candidate.scanAction && data?.position.held && data.position.direction && (
+              <SignalDirectionBadge action={data.position.direction} size="sm" />
+            )}
           </div>
-          {candidate.scanAction && (
+          {candidate.scanAction && !data?.current_action && (
             <span className="mono" style={{ fontSize: 9, color: "var(--ink-dim)", display: "block", marginTop: 2 }}>
-              {candidate.scanAction.replace("_", " ")}
-              {candidate.scanConfidence != null ? ` · ${Math.round(candidate.scanConfidence * 100)}%` : ""}
+              {candidate.scanConfidence != null ? `${Math.round(candidate.scanConfidence * 100)}% scan confidence` : ""}
             </span>
           )}
           {data && (
