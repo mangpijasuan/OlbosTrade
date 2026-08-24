@@ -14,8 +14,12 @@ Among the eligible (non-winning) positions, closure order is:
 
   1. Lowest Position Quality Score (``compute_equity_hold_score`` —
      alpha_edge_engine.py's hold-score reused, not a new formula)
-  2. Lowest entry ``signal_score`` among ties / missing quality score
-  3. Oldest ``entry_date`` among ties / missing both
+  2. Positions in a flagged correlation cluster close before non-clustered
+     ties — a tiebreaker only, never overrides a real quality_score
+     difference. Neutral/no-op when the correlation cache
+     (rotation_correlation_cache.py) is stale or doesn't cover the ticker.
+  3. Lowest entry ``signal_score`` among ties / missing quality score
+  4. Oldest ``entry_date`` among ties / missing both
 
 Never closes the incoming ticker's underlying. Equity only (v1).
 """
@@ -41,17 +45,28 @@ class RotationCandidate:
     entry_date: Optional[datetime]
     spread_type: str
     quality_score: Optional[float] = None
+    in_flagged_cluster: Optional[bool] = None
 
 
 def _rank_key(c: RotationCandidate):
-    """Ascending sort key: quality_score (None-last) -> confidence
-    (None-last) -> oldest entry_date. Tuple-of-tuples so a missing field
-    always sorts after every real value at that tier, never interpolated
-    as if it were a real score."""
+    """Ascending sort key: quality_score (None-last) -> cluster membership
+    (flagged sorts before not-flagged/unknown) -> confidence (None-last) ->
+    oldest entry_date. Tuple-of-tuples so a missing field always sorts
+    after every real value at that tier, never interpolated as if it were
+    a real score.
+
+    Cluster membership is a tiebreaker only: it only changes the outcome
+    when two candidates already share the same quality_score tier.
+    `in_flagged_cluster` is None whenever the correlation cache is stale/
+    missing or doesn't cover this ticker — that must read identically to
+    "not flagged" (0 vs 1, not a 3-way split), so a dead cache degrades
+    this tier to a full no-op rather than biasing ranking in either
+    direction."""
     quality = (0, c.quality_score) if c.quality_score is not None else (1, 0.0)
+    clustered = 0 if c.in_flagged_cluster else 1   # True -> 0 (closed first); False/None -> 1 (tie)
     confidence = (0, c.confidence) if c.confidence is not None else (1, 0.0)
     entry = c.entry_date or datetime.min.replace(tzinfo=timezone.utc)
-    return (quality, confidence, entry)
+    return (quality, clustered, confidence, entry)
 
 
 def select_rotation_targets(
@@ -212,6 +227,11 @@ async def rotate_for_new_equity_entry(
         return []
 
     from app.services.alpha_edge_engine import compute_equity_hold_score
+    from app.services.rotation_correlation_cache import in_flagged_cluster
+
+    # Cache-only, synchronous, no I/O — safe to resolve once for every
+    # candidate up front rather than inside the per-ticker await loop below.
+    cluster_membership = {t.underlying: in_flagged_cluster(t.underlying) for t in equity_opens}
 
     candidates: list[RotationCandidate] = []
     for t in equity_opens:
@@ -234,6 +254,7 @@ async def rotate_for_new_equity_entry(
                 entry_date=t.entry_date,
                 spread_type=t.spread_type or "",
                 quality_score=quality,
+                in_flagged_cluster=cluster_membership.get(t.underlying),
             )
         )
 
@@ -261,9 +282,10 @@ async def rotate_for_new_equity_entry(
             if log_execution is not None:
                 await log_execution(receipt)
             logger.info(
-                "rotation closed %s trade_id=%s unrealized≈%.2f quality=%s confidence=%s",
+                "rotation closed %s trade_id=%s unrealized≈%.2f quality=%s cluster=%s confidence=%s",
                 target.underlying, target.trade_id,
-                target.unrealized_pnl, target.quality_score, target.confidence,
+                target.unrealized_pnl, target.quality_score,
+                target.in_flagged_cluster, target.confidence,
             )
         except Exception as exc:
             logger.error(

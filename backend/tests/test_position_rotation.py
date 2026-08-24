@@ -9,11 +9,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services import rotation_correlation_cache
 from app.services.position_rotation import (
     RotationCandidate,
     select_rotation_targets,
     rotate_for_new_equity_entry,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_correlation_cache():
+    rotation_correlation_cache.clear()
+    yield
+    rotation_correlation_cache.clear()
 
 
 def _c(
@@ -23,6 +31,7 @@ def _c(
     conf: Optional[float] = None,
     *,
     quality: Optional[float] = None,
+    in_cluster: Optional[bool] = None,
     days_ago: int = 0,
     spread: str = "equity_long",
 ) -> RotationCandidate:
@@ -38,6 +47,7 @@ def _c(
         entry_date=entry,
         spread_type=spread,
         quality_score=quality,
+        in_flagged_cluster=in_cluster,
     )
 
 
@@ -84,6 +94,52 @@ def test_prefers_worst_quality_score_among_eligible():
         count=2,
     )
     assert [p.trade_id for p in picks] == ["2", "3"]  # ascending quality
+
+
+def test_cluster_membership_breaks_quality_score_tie():
+    """Two candidates share the same quality_score — the one in a flagged
+    correlation cluster must be picked first (tiebreaker only)."""
+    picks = select_rotation_targets(
+        [
+            _c("1", "AAPL", pnl=-5, quality=50, in_cluster=True),
+            _c("2", "MSFT", pnl=-5, quality=50, in_cluster=False),
+            _c("3", "NVDA", pnl=-5, quality=90),  # clearly best quality, must survive
+        ],
+        incoming_ticker="TSLA",
+        count=1,
+    )
+    assert [p.trade_id for p in picks] == ["1"]
+
+
+def test_cluster_membership_never_overrides_real_quality_difference():
+    """AAPL is clustered but has the *better* quality score than MSFT
+    (not clustered) — quality_score must still win; the tiebreaker only
+    applies within a quality tier, never across one."""
+    picks = select_rotation_targets(
+        [
+            _c("1", "AAPL", pnl=-5, quality=80, in_cluster=True),
+            _c("2", "MSFT", pnl=-5, quality=20, in_cluster=False),
+        ],
+        incoming_ticker="TSLA",
+        count=1,
+    )
+    assert [p.trade_id for p in picks] == ["2"]  # worse quality wins despite not being clustered
+
+
+def test_cluster_membership_none_is_neutral_not_biased_either_way():
+    """Fail-open regression: with in_flagged_cluster left at its default
+    (None, i.e. cache stale/missing), ranking must fall straight through
+    to confidence/entry_date exactly as before this tiebreaker existed."""
+    picks = select_rotation_targets(
+        [
+            _c("1", "AAPL", pnl=-5, conf=0.9),
+            _c("2", "MSFT", pnl=-5, conf=0.2),
+            _c("3", "NVDA", pnl=-5, conf=0.5),
+        ],
+        incoming_ticker="TSLA",
+        count=2,
+    )
+    assert [p.trade_id for p in picks] == ["2", "3"]
 
 
 def test_quality_score_missing_falls_back_to_confidence():

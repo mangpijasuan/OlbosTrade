@@ -343,6 +343,10 @@ async def _background_scheduler() -> None:
     # few times a day just burns yfinance calls without new information.
     signal_outcomes_interval_s = 6 * 60 * 60   # 6 hours
     reconciliation_interval_s  = 5 * 60        # 5 minutes
+    # Daily-bar-derived like regime/options, but not gated on daily-close
+    # semantics — keeps position_rotation.py's correlation tiebreaker
+    # reasonably fresh without a live yfinance fetch in the money path.
+    correlation_interval_s     = 20 * 60       # 20 minutes
 
     import time as _time
     _now = _time.monotonic()
@@ -355,6 +359,9 @@ async def _background_scheduler() -> None:
     last_fills   = 0.0
     last_signal_outcomes = _now
     last_reconciliation  = 0.0   # cheap local-cache read — fine to run on first tick
+    # No startup counterpart (unlike equity/options/regime) and a stale/
+    # empty cache already fails open safely — fine to run on first tick.
+    last_correlation     = 0.0
 
     import time
 
@@ -445,6 +452,15 @@ async def _background_scheduler() -> None:
             if now - last_reconciliation >= reconciliation_interval_s:
                 await _guarded(_reconcile_positions(), "reconciliation", 30)
                 last_reconciliation = now
+
+            # Every 20 min: refresh the rotation-scoped correlation cluster
+            # cache (position_rotation.py's cluster-membership tiebreaker
+            # reads this synchronously — see rotation_correlation_cache.py).
+            # Deferred from Phase 3 Increment 1 so rotation never triggers
+            # a live yfinance fetch itself.
+            if now - last_correlation >= correlation_interval_s:
+                await _guarded(_refresh_rotation_correlation_cache(), "rotation_correlation", 60)
+                last_correlation = now
 
             # Every 6 hours: resolve pending signal outcomes against fresh
             # daily bars (hit target, hit stop, or expire past the hold
@@ -2141,6 +2157,15 @@ async def _reconcile_positions() -> None:
             phantom_in_db=result.phantom_in_db,
             warnings=result.warnings,
         )
+
+
+async def _refresh_rotation_correlation_cache() -> None:
+    """Periodic refresh of the rotation-scoped correlation cache — see
+    rotation_correlation_cache.py. Deferred from Phase 3 Increment 1
+    (Winner Protection) so rotate_for_new_equity_entry() never itself
+    triggers a live yfinance fetch."""
+    from app.services.rotation_correlation_cache import refresh
+    await refresh()
 
 
 # ── Health check ────────────────────────────────────────────────────────────
