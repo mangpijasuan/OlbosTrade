@@ -12,7 +12,7 @@ from app.api.routes import signal_research
 @pytest.mark.asyncio
 async def test_get_outcomes_empty_store():
     with patch("app.api.routes.signal_research._load_outcomes", return_value=[]):
-        result = await signal_research.get_signal_outcomes()
+        result = await signal_research.get_signal_outcomes(regime=None)
     assert result["total"] == 0
     assert "message" in result
 
@@ -24,10 +24,38 @@ async def test_get_outcomes_computes_stats_from_loaded_rows():
         {"ticker": "MSFT", "status": "stop_hit", "confidence": 0.68, "days_to_resolve": 2},
     ]
     with patch("app.api.routes.signal_research._load_outcomes", return_value=rows):
-        result = await signal_research.get_signal_outcomes()
+        result = await signal_research.get_signal_outcomes(regime=None)
     assert result["total"] == 2
     assert result["target_hit"] == 1
     assert result["stop_hit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_outcomes_regime_filter_scopes_before_stats():
+    rows = [
+        {"ticker": "AAPL", "status": "target_hit", "confidence": 0.75,
+         "days_to_resolve": 4, "regime": "low_vol_trending"},
+        {"ticker": "MSFT", "status": "stop_hit", "confidence": 0.68,
+         "days_to_resolve": 2, "regime": "high_vol"},
+    ]
+    with patch("app.api.routes.signal_research._load_outcomes", return_value=rows):
+        result = await signal_research.get_signal_outcomes(regime="low_vol_trending")
+    assert result["total"] == 1
+    assert result["target_hit"] == 1
+    assert result["stop_hit"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_outcomes_includes_by_regime_when_unfiltered():
+    rows = [
+        {"ticker": "AAPL", "status": "target_hit", "confidence": 0.75,
+         "days_to_resolve": 4, "regime": "low_vol_trending"},
+        {"ticker": "MSFT", "status": "stop_hit", "confidence": 0.68,
+         "days_to_resolve": 2, "regime": "high_vol"},
+    ]
+    with patch("app.api.routes.signal_research._load_outcomes", return_value=rows):
+        result = await signal_research.get_signal_outcomes(regime=None)
+    assert set(result["by_regime"].keys()) == {"low_vol_trending", "high_vol"}
 
 
 @pytest.mark.asyncio
