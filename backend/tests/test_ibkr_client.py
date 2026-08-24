@@ -248,6 +248,56 @@ async def test_get_options_chain_batches_and_maps_contracts_correctly(client):
     assert mock_tickers.call_count == 2
 
 
+@pytest.mark.asyncio
+async def test_get_bars_returns_parsed_bars(client):
+    """get_bars() should map ib_insync BarData into our Bar model."""
+    mock_bar = MagicMock(date="2026-08-20", open=440.0, high=442.0, low=439.0, close=441.5, volume=1_000_000)
+    client.ib.qualifyContractsAsync = AsyncMock(return_value=None)
+    client.ib.reqHistoricalDataAsync = AsyncMock(return_value=[mock_bar])
+
+    bars = await client.get_bars("SPY", limit=5)
+
+    assert len(bars) == 1
+    assert bars[0].close == Decimal("441.5")
+    assert bars[0].volume == 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_get_bars_raises_clear_timeout_when_ibkr_hangs(client):
+    """A stuck reqHistoricalDataAsync call must not hang forever — it should
+    raise a TimeoutError with a real message (not the blank default), so
+    DataFetcher.fetch_ohlcv()'s existing except-Exception fallback to
+    yfinance actually engages instead of the caller hanging indefinitely."""
+    import asyncio as _asyncio
+
+    async def _never_returns(*args, **kwargs):
+        await _asyncio.sleep(3600)
+
+    client.ib.qualifyContractsAsync = AsyncMock(return_value=None)
+    client.ib.reqHistoricalDataAsync = _never_returns
+
+    with patch("app.broker.ibkr_client.HISTORICAL_DATA_TIMEOUT_SECONDS", 0.05):
+        with pytest.raises(_asyncio.TimeoutError, match="SPY"):
+            await client.get_bars("SPY", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_get_index_bars_raises_clear_timeout_when_ibkr_hangs(client):
+    """Same fix applies to get_index_bars() (VIX etc.) — identical
+    unguarded reqHistoricalDataAsync call, same hang risk."""
+    import asyncio as _asyncio
+
+    async def _never_returns(*args, **kwargs):
+        await _asyncio.sleep(3600)
+
+    client.ib.qualifyContractsAsync = AsyncMock(return_value=None)
+    client.ib.reqHistoricalDataAsync = _never_returns
+
+    with patch("app.broker.ibkr_client.HISTORICAL_DATA_TIMEOUT_SECONDS", 0.05):
+        with pytest.raises(_asyncio.TimeoutError, match="VIX"):
+            await client.get_index_bars("VIX")
+
+
 def test_chunked_splits_into_bounded_groups():
     from app.broker.ibkr_client import _chunked
 
