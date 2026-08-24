@@ -29,6 +29,19 @@ def _bars(n, start_price=100.0, step=1.0, start=BASE):
     return [NS(timestamp=start + timedelta(days=i), close=start_price + step * i) for i in range(n)]
 
 
+def _zigzag_bars(n, start_price=100.0, amplitude=3.0, start=BASE):
+    """An oscillating price series — deliberately NOT a linear trend, since
+    two linear-in-price series (even with opposite-signed steps) turn out
+    to have highly correlated daily returns (both are smooth monotonic
+    curves of the same shape). This has near-zero correlation with a
+    linear trend, which is what "genuinely uncorrelated" actually needs."""
+    return [
+        NS(timestamp=start + timedelta(days=i),
+           close=start_price + (amplitude if i % 2 == 0 else -amplitude))
+        for i in range(n)
+    ]
+
+
 def _trades_session(trades):
     session = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
@@ -101,8 +114,8 @@ async def test_successful_refresh_populates_flagged_clusters_only():
             # Perfectly correlated, lockstep movement.
             return _bars(40, start_price=100.0 if ticker == "AAPL" else 300.0,
                          step=1.0 if ticker == "AAPL" else 2.0)
-        # TSLA moves independently (uncorrelated-ish random walk via alternating steps).
-        return _bars(40, start_price=50.0, step=-1.0)
+        # TSLA oscillates independently of AAPL/MSFT's shared linear trend.
+        return _zigzag_bars(40, start_price=50.0)
 
     with patch("app.core.database.AsyncSessionLocal", return_value=_trades_session(trades)), \
          patch("app.services.account_state.get_account_value", new=AsyncMock(return_value=20_000.0)), \
