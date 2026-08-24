@@ -12,6 +12,7 @@
 import React, { useState } from "react";
 import { useBacktest } from "../hooks/useBacktest";
 import { useTerminalNav } from "./TerminalNavContext";
+import BarReplayPanel from "./BarReplayPanel";
 
 function sixMonthsAgo(): string {
   const d = new Date();
@@ -101,7 +102,12 @@ export default function BacktestButtons({ ticker, assetType, strategy }: Backtes
           {error ? (
             <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--red)" }}>⚠ {error}</span>
           ) : (
-            <ResultsStrip results={results} />
+            <>
+              <ResultsStrip results={results} />
+              {assetType === "equity" && results?.bar_log?.length > 0 && (
+                <BarReplayPanel barLog={results.bar_log} trades={results.trades} />
+              )}
+            </>
           )}
         </div>
       )}

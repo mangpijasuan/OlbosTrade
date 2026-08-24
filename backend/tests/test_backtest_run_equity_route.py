@@ -47,10 +47,19 @@ def _fake_result(ticker: str):
         avg_win=400.0, avg_loss=0.0, avg_hold_days=7.0,
         commission_drag_pct=0.0001, expectancy=400.0,
     )
+    bar_log = [
+        {"date": "2024-01-03", "close": 100.0, "indicators": None, "action": "HOLD",
+         "confidence": None, "trade_fired": False, "position_open": False, "portfolio_value": 25000.0},
+        {"date": "2024-01-04", "close": 101.0,
+         "indicators": {"rsi": 55.0, "macd": 0.1, "bb_pct_b": 0.6, "atr": 1.2, "volume_ratio": 1.1},
+         "action": "BUY", "confidence": 0.8, "trade_fired": True, "position_open": True,
+         "portfolio_value": 25000.0},
+    ]
     return BacktestResult(
         strategy=f"equity:{ticker}", start_date=date(2024, 1, 1), end_date=date(2024, 6, 30),
         starting_capital=25000.0, ending_capital=25400.0,
         trades=[trade], metrics=metrics, equity_curve=[25000.0, 25400.0],
+        bar_log=bar_log,
     )
 
 
@@ -98,6 +107,50 @@ async def test_run_equity_route_queues_then_completes():
         assert t["entry_price"] == 100.0
         assert t["shares"] == 100
         assert t["exit_reason"] == "target"
+
+        assert len(completed["bar_log"]) == 2
+        assert completed["bar_log"][0]["action"] == "HOLD"
+        assert completed["bar_log"][1]["trade_fired"] is True
+        assert completed["bar_log"][1]["indicators"]["rsi"] == 55.0
+
+
+@pytest.mark.asyncio
+async def test_persist_run_excludes_bar_log_and_curve_data():
+    """bar_log follows the same existing, deliberate limitation as
+    trades/equity_curve: full detail lives in-memory only, not persisted to
+    the DB (lost on backend restart)."""
+    from app.api.routes.backtest import _persist_run
+
+    fake_session = AsyncMock()
+    fake_session.get = AsyncMock(return_value=None)
+    fake_session.commit = AsyncMock()
+    fake_session.add = lambda row: added.append(row)
+    added: list = []
+
+    class _FakeSessionCtx:
+        async def __aenter__(self):
+            return fake_session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    data = {
+        "status": "completed", "strategy": "equity:AAPL",
+        "start_date": "2024-01-01", "end_date": "2024-06-30", "starting_capital": 25000.0,
+        "trades": [{"id": "t1"}],
+        "equity_curve": [25000.0, 25400.0],
+        "bar_log": [{"date": "2024-01-03", "close": 100.0}],
+    }
+
+    with patch("app.api.routes.backtest.AsyncSessionLocal", return_value=_FakeSessionCtx()):
+        await _persist_run("11111111-1111-1111-1111-111111111111", data)
+
+    assert len(added) == 1
+    persisted_results = added[0].results
+    assert "bar_log" not in persisted_results
+    assert "trades" not in persisted_results
+    assert "equity_curve" not in persisted_results
+    assert persisted_results["status"] == "completed"
 
 
 @pytest.mark.asyncio

@@ -52,7 +52,7 @@ async def _persist_run(run_id: str, data: dict) -> None:
             existing = await session.get(BacktestRun, uuid.UUID(run_id))
             if existing:
                 existing.results = {k: v for k, v in data.items()
-                                    if k not in ("trades", "equity_curve")}
+                                    if k not in ("trades", "equity_curve", "bar_log")}
                 existing.metrics = {
                     "win_rate":          data.get("win_rate"),
                     "total_trades":      data.get("total_trades"),
@@ -75,7 +75,7 @@ async def _persist_run(run_id: str, data: dict) -> None:
                              if data.get("end_date") else datetime.now().date(),
                     starting_capital=data.get("starting_capital", 25000),
                     results={k: v for k, v in data.items()
-                             if k not in ("trades", "equity_curve")},
+                             if k not in ("trades", "equity_curve", "bar_log")},
                     metrics={
                         "win_rate":          data.get("win_rate"),
                         "total_trades":      data.get("total_trades"),
@@ -236,6 +236,7 @@ async def _execute_equity_backtest(run_id: str, req: EquityBacktestRunRequest) -
             "avg_hold_days":     round(m.avg_hold_days, 1) if m else 0.0,
             "expectancy":        round(m.expectancy, 2) if m else 0.0,
             "equity_curve":      result.equity_curve[:500],
+            "bar_log":           result.bar_log[:500],
             "trades": [
                 {
                     "id":           t.id,

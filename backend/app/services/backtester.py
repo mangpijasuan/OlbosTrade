@@ -122,6 +122,12 @@ class BacktestResult:
     equity_curve: list[float] = field(default_factory=list)
     partial_fill_count: int = 0
     look_ahead_bias_guard: str = "shift(1) applied — signals use prior bar close"
+    # Per-bar signal-decision log — populated by run_equity() only (options
+    # run() doesn't build one). One entry per bar: date, close, the
+    # indicators/action/confidence the model saw, whether a trade fired,
+    # whether a position was open, and running portfolio_value. Powers the
+    # bar-by-bar signal replay UI.
+    bar_log: list[dict] = field(default_factory=list)
 
 
 class Backtester:
@@ -731,6 +737,7 @@ class Backtester:
 
         portfolio_value = starting_capital
         equity_curve: list[float] = [starting_capital]
+        bar_log: list[dict] = []
         trades: list[BacktestTrade] = []
         open_trade: Optional[BacktestTrade] = None
 
@@ -772,6 +779,21 @@ class Backtester:
             if last_month is not None and current_date.month != last_month:
                 monthly_pnl = 0.0
             last_month = current_date.month
+
+            # ── Indicators/action/confidence — computed once per bar,
+            # unconditionally (expanding window [0, idx) only, same
+            # look-ahead guard as before), so every bar_log entry has
+            # uniform data including bars where a position is already
+            # open. The later entry-evaluation block below reuses these
+            # same locals instead of recomputing them.
+            window = df.iloc[:idx]
+            ind = compute_equity_indicators(window) if len(window) >= 30 else None
+            if ind:
+                action, confidence, _reasons = score_equity_signal(ind)
+            else:
+                action, confidence = "HOLD", None
+
+            trade_fired = False
 
             # ── Manage the open position (stop/target vs. this bar's H/L) ──
             exited_this_bar = False
@@ -828,66 +850,68 @@ class Backtester:
 
             equity_curve.append(portfolio_value)
 
-            if open_trade is not None or exited_this_bar:
-                # One position at a time. A same-bar exit also skips entry:
-                # the exit was decided from this bar's intrabar high/low,
-                # which is chronologically after this bar's open — filling a
-                # new entry at that same open would predate the exit that
-                # freed up the position. Earliest re-entry is the next bar.
-                continue
-
             # ── Entry evaluation (expanding window — bars [0, idx) only) ──
-            window = df.iloc[:idx]
-            if len(window) < 30:
-                continue
-            ind = compute_equity_indicators(window)
-            if not ind:
-                continue
+            # One position at a time. A same-bar exit also skips entry: the
+            # exit was decided from this bar's intrabar high/low, which is
+            # chronologically after this bar's open — filling a new entry
+            # at that same open would predate the exit that freed up the
+            # position. Earliest re-entry is the next bar. Each gate below
+            # mirrors the original early-continue chain (window size → ind
+            # availability → guardrails → action → confidence → shares),
+            # just as nested conditions so every bar still reaches the
+            # bar_log append at the bottom.
+            if open_trade is None and not exited_this_bar and ind is not None:
+                portfolio_state = PortfolioState(
+                    current_value=portfolio_value,
+                    starting_capital=starting_capital,
+                    daily_pnl=daily_pnl,
+                    weekly_pnl=weekly_pnl,
+                    monthly_pnl=monthly_pnl,
+                    consecutive_losses=consecutive_losses,
+                    trades_today=trades_today,
+                )
+                guardrail_status = self.guardrails.check_all(portfolio_state)
+                if guardrail_status.trading_allowed and action != "HOLD":
+                    threshold = self.guardrails.get_signal_threshold(guardrail_status)
+                    if confidence >= threshold:
+                        plan = compute_equity_trade_plan(ind, action, portfolio_value=portfolio_value)
+                        shares = int(plan.get("shares", 0) or 0)
+                        if shares > 0:
+                            # Fill at this bar's open — the first tradeable
+                            # price after yesterday's close generated the signal.
+                            slip = bar_open * EQUITY_SLIPPAGE_PCT
+                            fill_entry = bar_open + slip if action == "BUY" else bar_open - slip
+                            commission = max(EQUITY_COMMISSION_PER_SHARE * shares, EQUITY_MIN_COMMISSION)
 
-            portfolio_state = PortfolioState(
-                current_value=portfolio_value,
-                starting_capital=starting_capital,
-                daily_pnl=daily_pnl,
-                weekly_pnl=weekly_pnl,
-                monthly_pnl=monthly_pnl,
-                consecutive_losses=consecutive_losses,
-                trades_today=trades_today,
-            )
-            guardrail_status = self.guardrails.check_all(portfolio_state)
-            if not guardrail_status.trading_allowed:
-                continue
+                            open_trade = BacktestTrade(
+                                strategy="equity",
+                                underlying=ticker,
+                                entry_date=current_date,
+                                signal_score=confidence,
+                                commission_paid=commission,
+                                contracts=shares,   # share count, not options contracts
+                                direction=action,
+                                entry_price=round(fill_entry, 4),
+                                stop_price=plan.get("stop_price"),
+                                target_price=plan.get("target_price"),
+                            )
+                            trades_today += 1
+                            trade_fired = True
 
-            action, confidence, _reasons = score_equity_signal(ind)
-            if action == "HOLD":
-                continue
-            threshold = self.guardrails.get_signal_threshold(guardrail_status)
-            if confidence < threshold:
-                continue
-
-            plan = compute_equity_trade_plan(ind, action, portfolio_value=portfolio_value)
-            shares = int(plan.get("shares", 0) or 0)
-            if shares <= 0:
-                continue
-
-            # Fill at this bar's open — the first tradeable price after
-            # yesterday's close generated the signal.
-            slip = bar_open * EQUITY_SLIPPAGE_PCT
-            fill_entry = bar_open + slip if action == "BUY" else bar_open - slip
-            commission = max(EQUITY_COMMISSION_PER_SHARE * shares, EQUITY_MIN_COMMISSION)
-
-            open_trade = BacktestTrade(
-                strategy="equity",
-                underlying=ticker,
-                entry_date=current_date,
-                signal_score=confidence,
-                commission_paid=commission,
-                contracts=shares,   # share count, not options contracts
-                direction=action,
-                entry_price=round(fill_entry, 4),
-                stop_price=plan.get("stop_price"),
-                target_price=plan.get("target_price"),
-            )
-            trades_today += 1
+            bar_log.append({
+                "date": current_date.isoformat(),
+                "close": float(bar["close"]),
+                "indicators": {
+                    "rsi": ind.get("rsi"), "macd": ind.get("macd"),
+                    "bb_pct_b": ind.get("bb_pct_b"), "atr": ind.get("atr"),
+                    "volume_ratio": ind.get("volume_ratio"),
+                } if ind else None,
+                "action": action,
+                "confidence": round(confidence, 4) if confidence is not None else None,
+                "trade_fired": trade_fired,
+                "position_open": open_trade is not None,
+                "portfolio_value": round(portfolio_value, 2),
+            })
 
         # Force-close a remaining open position at end of backtest
         if open_trade is not None:
@@ -927,4 +951,5 @@ class Backtester:
             trades=trades,
             metrics=metrics,
             equity_curve=equity_curve,
+            bar_log=bar_log,
         )

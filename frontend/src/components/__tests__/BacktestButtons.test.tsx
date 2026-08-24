@@ -73,4 +73,32 @@ describe("BacktestButtons", () => {
     );
     await waitFor(() => expect(screen.getByText("TRADES")).toBeInTheDocument(), { timeout: 3000 });
   });
+
+  it("equity results with a bar_log render the bar replay panel", async () => {
+    mockedApi.runEquityBacktest.mockResolvedValue({ run_id: "r3", status: "queued" });
+    mockedApi.getBacktestResults.mockResolvedValue({
+      status: "completed", total_trades: 1,
+      bar_log: [
+        { date: "2024-01-03", close: 100, indicators: null, action: "HOLD",
+          confidence: null, trade_fired: false, position_open: false, portfolio_value: 25000 },
+      ],
+      trades: [],
+    });
+    render(<BacktestButtons ticker="AAPL" assetType="equity" />);
+    fireEvent.click(screen.getByRole("button", { name: /^backtest$/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^play$/i })).toBeInTheDocument(), { timeout: 3000 });
+  });
+
+  it("options results never render the bar replay panel even with a bar_log present", async () => {
+    mockedApi.runBacktest.mockResolvedValue({ run_id: "r4", status: "queued" });
+    mockedApi.getBacktestResults.mockResolvedValue({
+      status: "completed", total_trades: 1,
+      bar_log: [{ date: "2024-01-03", close: 100, indicators: null, action: "HOLD",
+        confidence: null, trade_fired: false, position_open: false, portfolio_value: 25000 }],
+    });
+    render(<BacktestButtons ticker="SPY" assetType="options" strategy="iron_condor" />);
+    fireEvent.click(screen.getByRole("button", { name: /^backtest$/i }));
+    await waitFor(() => expect(screen.getByText("TRADES")).toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.queryByRole("button", { name: /^play$/i })).not.toBeInTheDocument();
+  });
 });

@@ -107,6 +107,41 @@ async def test_run_equity_entry_never_after_exit(fetcher):
 
 
 @pytest.mark.asyncio
+async def test_run_equity_bar_log_has_one_entry_per_bar_with_expected_shape(fetcher):
+    bt = Backtester(fetcher)
+    result = await bt.run_equity("AAPL", "2023-06-01", "2023-12-29")
+
+    assert len(result.bar_log) > 0
+    for entry in result.bar_log:
+        assert set(entry.keys()) == {
+            "date", "close", "indicators", "action", "confidence",
+            "trade_fired", "position_open", "portfolio_value",
+        }
+        assert entry["action"] in ("BUY", "SELL", "HOLD")
+        if entry["indicators"] is not None:
+            assert set(entry["indicators"].keys()) == {
+                "rsi", "macd", "bb_pct_b", "atr", "volume_ratio",
+            }
+        else:
+            # No indicators (not enough warmup window) means nothing could
+            # have fired that bar.
+            assert entry["trade_fired"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_equity_bar_log_trade_fired_matches_an_actual_entry(fetcher):
+    """Every bar flagged trade_fired must correspond to a real trade whose
+    entry_date is that bar's date — the log must not claim a fill that
+    never happened."""
+    bt = Backtester(fetcher)
+    result = await bt.run_equity("AAPL", "2023-01-01", "2023-12-29")
+
+    entry_dates = {t.entry_date.isoformat() for t in result.trades}
+    fired_dates = {e["date"] for e in result.bar_log if e["trade_fired"]}
+    assert fired_dates.issubset(entry_dates)
+
+
+@pytest.mark.asyncio
 async def test_run_equity_raises_on_empty_data():
     empty_df = pd.DataFrame(
         columns=["Open", "High", "Low", "Close", "Volume"],
