@@ -14,16 +14,30 @@ truth here, matching the existing constraint for the rest of this suite.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from app.services.backtester import Backtester, BacktestResult
+from app.services.data_fetcher import DataFetcher
 from app.services.strategy_engine import StrategyExitParams
 
 
-class _FakeFetcher:
+class _SyntheticDataFetcher(DataFetcher):
+    """
+    Real DataFetcher subclass, not a duck-typed stand-in — Backtester.run()
+    (the options path) calls self.fetcher.calculate_rsi()/calculate_sma()/
+    calculate_realized_vol() directly (unlike run_equity(), which uses its
+    own indicator functions), so a fetch_ohlcv-only fake is insufficient
+    here. Only fetch_ohlcv is overridden, to avoid real network/broker
+    calls; the calculate_* methods are pure pandas math with no I/O, so
+    inheriting them is safe.
+    """
+
     def __init__(self, df: pd.DataFrame) -> None:
+        super().__init__(broker=MagicMock())
         self._df = df
 
     async def fetch_ohlcv(self, symbol: str, start: str, end: str) -> pd.DataFrame:
@@ -55,7 +69,7 @@ def _synthetic_vix(n_days: int = 400, seed: int = 12) -> pd.DataFrame:
 
 @pytest.fixture
 def fetcher():
-    return _FakeFetcher(_synthetic_ohlcv())
+    return _SyntheticDataFetcher(_synthetic_ohlcv())
 
 
 @pytest.fixture
