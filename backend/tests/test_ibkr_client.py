@@ -5,7 +5,7 @@ Run with: pytest tests/test_ibkr_client.py -v
 
 from datetime import date
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
@@ -83,22 +83,39 @@ async def test_get_account_summary_subscribes_once_not_every_call(client):
 
     assert first.net_liquidation == Decimal("25000.00")
     assert second.net_liquidation == Decimal("25500.00")  # proves the second call sees fresh data
-    client.ib.reqAccountUpdatesAsync.assert_called_once_with(True, "DU123456")
+    # ib_insync's real reqAccountUpdatesAsync(self, account: str) takes only
+    # one positional argument — a plain AsyncMock() doesn't enforce that
+    # signature, which is exactly how a 2-arg call (True, account_id) shipped
+    # to production and crashed with "takes 2 positional arguments but 3
+    # were given" on every account fetch. Pin the exact call shape so a
+    # regression back to the wrong signature fails here, not in prod.
+    client.ib.reqAccountUpdatesAsync.assert_called_once_with("DU123456")
 
 
 @pytest.mark.asyncio
-async def test_get_account_summary_never_unsubscribes(client):
-    """reqAccountUpdatesAsync(False, ...) must never be called from here —
-    that was the bug: unsubscribing immediately after the first snapshot
-    left accountValues() frozen for the rest of the connection's life."""
+async def test_get_account_summary_matches_real_ib_insync_signature(client):
+    """A plain AsyncMock() doesn't enforce the real method's signature —
+    that gap is exactly how a call passing 2 positional args into
+    ib_insync's 1-arg reqAccountUpdatesAsync(account: str) shipped to
+    production. Autospec the mock against client.ib's real bound method so
+    a wrong-arity call raises TypeError here instead of in prod."""
+    import asyncio as _asyncio
+
     client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
     client.ib.accountValues = MagicMock(return_value=[])
-    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
+    # The real reqAccountUpdatesAsync is a plain `def` returning an
+    # Awaitable[None] (an ib_insync Future), not an `async def` — autospec
+    # a synchronous mock and give it an already-resolved Future to return,
+    # matching what our code actually awaits.
+    done_future: "_asyncio.Future" = _asyncio.get_event_loop().create_future()
+    done_future.set_result(None)
+    client.ib.reqAccountUpdatesAsync = create_autospec(
+        client.ib.reqAccountUpdatesAsync, return_value=done_future
+    )
 
-    await client.get_account_summary()
+    await client.get_account_summary()  # would raise TypeError if the call shape were wrong
 
-    for call in client.ib.reqAccountUpdatesAsync.call_args_list:
-        assert call.args[0] is not False, "must never unsubscribe"
+    client.ib.reqAccountUpdatesAsync.assert_called_once_with("DU123456")
 
 
 @pytest.mark.asyncio

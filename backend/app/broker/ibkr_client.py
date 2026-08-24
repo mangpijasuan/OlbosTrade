@@ -1055,9 +1055,12 @@ class IBKRClient(BrokerInterface):
 
         accountValues() reads ib_insync's local cache, kept fresh by TWS's
         background account-update push — but only while subscribed via
-        reqAccountUpdatesAsync(True, ...). Subscribe exactly once per
-        connection (tracked by self._account_subscribed, reset in
-        connect()/disconnect()) and never unsubscribe: the previous
+        reqAccountUpdatesAsync(account). ib_insync's reqAccountUpdatesAsync
+        takes a single account-id argument and always subscribes (it wraps
+        client.reqAccountUpdates(True, account) internally — there is no
+        unsubscribe via this method). Subscribe exactly once per connection
+        (tracked by self._account_subscribed, reset in connect()/
+        disconnect()) and never call it again: the previous
         subscribe-then-immediately-unsubscribe-every-call pattern avoided
         IBKR error 322 (subscription accumulation from repeated subscribe
         calls) but meant the cache only ever reflected a single point-in-
@@ -1071,7 +1074,7 @@ class IBKRClient(BrokerInterface):
 
         if not self._account_subscribed:
             account_id_temp = (self.ib.managedAccounts() or [""])[0]
-            await self.ib.reqAccountUpdatesAsync(True, account_id_temp)
+            await self.ib.reqAccountUpdatesAsync(account_id_temp)
             self._account_subscribed = True
 
         account_values = self.ib.accountValues()
