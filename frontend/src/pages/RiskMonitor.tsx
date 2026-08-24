@@ -59,6 +59,23 @@ interface CorrelationResp {
   threshold: number;
 }
 
+interface RotationRow {
+  trade_id: string; ticker: string; pnl: number; regime: string | null;
+  entry_date: string | null; exit_date: string | null; hold_days: number | null;
+  exit_reason: string;
+}
+interface RotationPerformanceResp {
+  status: "ok" | "no_rotations_yet" | "error";
+  error?: string;
+  total: number;
+  total_pnl: number;
+  avg_pnl: number | null;
+  win_rate: number | null;
+  avg_hold_days: number | null;
+  by_regime: Record<string, { total: number; total_pnl: number; avg_pnl: number | null; win_rate: number | null; avg_hold_days: number | null }>;
+  recent: RotationRow[];
+}
+
 function ExposureBreakdown({ title, exposure, capital }: {
   title: string; exposure: Record<string, number> | undefined; capital: number;
 }) {
@@ -155,6 +172,7 @@ export default function RiskMonitor() {
   const [heat, setHeat] = useState<HeatInfo | null>(null);
   const [corr, setCorr] = useState<CorrelationResp | null>(null);
   const [corrError, setCorrError] = useState(false);
+  const [rotoPerf, setRotoPerf] = useState<RotationPerformanceResp | null>(null);
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
@@ -180,6 +198,7 @@ export default function RiskMonitor() {
         fetch("/api/risk/scenarios").then(r => r.json()).then(setScen),
         fetch("/api/risk/var").then(r => r.json()).then(setVarRep),
         fetch("/api/portfolio/heat").then(r => r.json()).then(setHeat),
+        fetch("/api/portfolio/rotation-performance").then(r => r.json()).then(setRotoPerf),
       ]).then(results => {
         setSectionsError(results.some(r => r.status === "rejected"));
       });
@@ -605,6 +624,62 @@ export default function RiskMonitor() {
         ) : (
           <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: corrError ? "var(--red)" : "var(--ink-faint)" }}>
             {corrError ? "Failed to load correlation data." : "Loading…"}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Rotation Ledger" action={rotoPerf && rotoPerf.status === "ok" && (
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+          {rotoPerf.total} close{rotoPerf.total === 1 ? "" : "s"}
+        </span>
+      )}>
+        {rotoPerf ? (
+          rotoPerf.status === "ok" ? (
+            <div style={{ padding: "14px 16px" }}>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14 }}>
+                <StatTile label="TOTAL P&L"
+                  value={`${rotoPerf.total_pnl >= 0 ? "+" : ""}$${Math.abs(rotoPerf.total_pnl).toFixed(0)}`}
+                  tone={rotoPerf.total_pnl >= 0 ? "var(--green)" : "var(--red)"} />
+                <StatTile label="AVG P&L"
+                  value={rotoPerf.avg_pnl != null ? `${rotoPerf.avg_pnl >= 0 ? "+" : ""}$${Math.abs(rotoPerf.avg_pnl).toFixed(0)}` : "—"}
+                  tone={rotoPerf.avg_pnl != null ? (rotoPerf.avg_pnl >= 0 ? "var(--green)" : "var(--red)") : "var(--ink-faint)"} />
+                <StatTile label="WIN RATE"
+                  value={rotoPerf.win_rate != null ? `${(rotoPerf.win_rate * 100).toFixed(0)}%` : "—"}
+                  tone="var(--ink)" />
+                <StatTile label="AVG HOLD"
+                  value={rotoPerf.avg_hold_days != null ? `${rotoPerf.avg_hold_days.toFixed(1)}d` : "—"}
+                  tone="var(--ink)" />
+              </div>
+              {rotoPerf.recent.length > 0 && (
+                <div className="mono" style={{ fontSize: 11 }}>
+                  {rotoPerf.recent.map(r => (
+                    <div key={r.trade_id} style={{
+                      display: "flex", justifyContent: "space-between", gap: 12,
+                      padding: "4px 0", borderBottom: "1px solid var(--line-dim)",
+                    }}>
+                      <span style={{ color: "var(--ink)" }}>{r.ticker}</span>
+                      <span style={{ color: "var(--ink-faint)" }}>{r.regime ?? "—"}</span>
+                      <span style={{ color: "var(--ink-faint)" }}>{r.exit_date ?? "—"}</span>
+                      <span style={{ color: r.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                        {r.pnl >= 0 ? "+" : ""}${Math.abs(r.pnl).toFixed(0)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : rotoPerf.status === "no_rotations_yet" ? (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              No capital rotations closed yet.
+            </div>
+          ) : (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+              Failed to load rotation ledger{rotoPerf.error ? `: ${rotoPerf.error}` : ""}.
+            </div>
+          )
+        ) : (
+          <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError ? "var(--red)" : "var(--ink-faint)" }}>
+            {sectionsError ? "Failed to load rotation ledger." : "Loading…"}
           </div>
         )}
       </Section>

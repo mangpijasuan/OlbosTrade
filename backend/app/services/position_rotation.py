@@ -278,6 +278,18 @@ async def rotate_for_new_equity_entry(
             receipt = await close_equity_trade(
                 trade, broker=broker, closed_by="position_rotation",
             )
+            # Decision-time ranking context — not on close_equity_trade()'s own
+            # return shape (its other caller, close_position()'s manual close,
+            # has no RotationCandidate) so it's added here, at the rotation call
+            # site only. Distinct key from realized fill-based P&L, which lands
+            # separately on Trade.pnl once trade_recorder.record_exit() runs.
+            receipt = {
+                **receipt,
+                "quality_score": target.quality_score,
+                "in_flagged_cluster": target.in_flagged_cluster,
+                "confidence": target.confidence,
+                "unrealized_pnl_at_decision": target.unrealized_pnl,
+            }
             receipts.append(receipt)
             if log_execution is not None:
                 await log_execution(receipt)

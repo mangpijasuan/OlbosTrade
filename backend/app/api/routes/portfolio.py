@@ -162,3 +162,59 @@ async def portfolio_correlation():
         "lookback_days": 60,
         "threshold": CORRELATION_THRESHOLD,
     }
+
+
+@router.get("/rotation-performance")
+async def portfolio_rotation_performance():
+    """
+    Rotation-performance ledger — aggregate stats on the closed side of
+    every position_rotation.py rotation close. Reports honestly on
+    whether closing that position was a good call in hindsight; does not
+    attempt to compare against whatever new position it enabled (no
+    structural link exists between a rotation close and the specific
+    entry it freed a slot for).
+    """
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.rotation_ledger import compute_rotation_ledger_stats
+
+    empty = {
+        "status": "no_rotations_yet",
+        "total": 0, "total_pnl": 0.0, "avg_pnl": None,
+        "win_rate": None, "avg_hold_days": None,
+        "by_regime": {}, "recent": [],
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(Trade).where(Trade.exit_reason == "position_rotation")
+            )).scalars().all()
+    except Exception as exc:
+        return {**empty, "status": "error", "error": str(exc)}
+
+    rotations: list[dict] = []
+    for t in rows:
+        # Skip closes with unknown P&L — counting them as $0 would pollute
+        # win rate and total_pnl with a fabricated flat trade, matching
+        # analytics.py's own convention for the same situation.
+        if t.pnl is None:
+            continue
+        entry = t.entry_date.date() if t.entry_date else None
+        exit_d = t.exit_date.date() if t.exit_date else None
+        rotations.append({
+            "trade_id": str(t.id),
+            "ticker": t.underlying,
+            "pnl": float(t.pnl),
+            "regime": t.regime,
+            "entry_date": str(entry) if entry else None,
+            "exit_date": str(exit_d) if exit_d else None,
+            "hold_days": (exit_d - entry).days if entry and exit_d else None,
+            "exit_reason": t.exit_reason,
+        })
+
+    if not rotations:
+        return empty
+
+    return {"status": "ok", **compute_rotation_ledger_stats(rotations)}

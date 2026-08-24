@@ -276,6 +276,15 @@ async def test_rotate_closes_selected_targets_and_protects_the_winner(monkeypatc
     assert closed == ["AAPL", "NVDA"]  # ascending quality among the eligible (losing) positions
     assert len(out) == 2
 
+    # The receipt (later persisted into ExecutionEvent.payload for the
+    # rotation-performance ledger) must carry the decision-time ranking
+    # signals, not just the close mechanics.
+    aapl_receipt = next(r for r in out if r["ticker"] == "AAPL")
+    assert aapl_receipt["quality_score"] == 30.0
+    assert aapl_receipt["confidence"] == 0.9
+    assert aapl_receipt["unrealized_pnl_at_decision"] == -100.0  # (90-100)*10
+    assert aapl_receipt["in_flagged_cluster"] is None  # no correlation cache populated in this test
+
 
 @pytest.mark.asyncio
 async def test_rotate_quality_lookup_failure_falls_back_to_confidence(monkeypatch):
