@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.execution_portfolio_gate import (
+    REGIME_CONCURRENCY_MULTIPLIER,
     PortfolioGateResult,
     estimate_proposed_risk_dollars,
     evaluate_portfolio_gates,
@@ -93,6 +94,132 @@ async def test_scalper_mode_tightens_max_concurrent_to_its_own_cap():
     r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=3))
     assert r.allowed
     await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+def _with_regime(regime):
+    sig = _equity()
+    sig["regime"] = regime
+    return sig
+
+
+def test_regime_multiplier_table_values_do_not_exceed_one():
+    """Tighten-only contract: regime must never be able to raise capacity
+    above the mode/global caps already computed above it."""
+    for value in REGIME_CONCURRENCY_MULTIPLIER.values():
+        assert value <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_low_vol_and_normal_regime_do_not_tighten_max_concurrent():
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    try:
+        for regime in ("low_vol_trending", "normal_mean_revert"):
+            r = evaluate_portfolio_gates(_with_regime(regime), _portfolio(open_count=3))
+            assert not r.allowed  # identical to the pre-increment baseline at mode cap
+            assert "max_positions" in r.flags
+            assert "regime_tightened_capacity" not in r.flags
+
+            r = evaluate_portfolio_gates(_with_regime(regime), _portfolio(open_count=2))
+            assert r.allowed
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+@pytest.mark.asyncio
+async def test_high_vol_trending_regime_tightens_max_concurrent():
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    try:
+        # Balanced max_concurrent=3 -> floor(3*0.75)=2
+        r = evaluate_portfolio_gates(_with_regime("high_vol_trending"), _portfolio(open_count=2))
+        assert not r.allowed
+        assert "regime_tightened_capacity" in r.flags
+        assert "regime-tightened" in r.reason
+
+        r = evaluate_portfolio_gates(_with_regime("high_vol_trending"), _portfolio(open_count=1))
+        assert r.allowed
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+@pytest.mark.asyncio
+async def test_unknown_regime_tightens_max_concurrent():
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    try:
+        # Balanced max_concurrent=3 -> floor(3*0.5)=1
+        r = evaluate_portfolio_gates(_with_regime("unknown"), _portfolio(open_count=1))
+        assert not r.allowed
+        r = evaluate_portfolio_gates(_with_regime("unknown"), _portfolio(open_count=0))
+        assert r.allowed
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+@pytest.mark.asyncio
+async def test_crisis_regime_floors_max_concurrent_to_one():
+    """0.0 multiplier would compute floor(3*0.0)=0, but the gate must never
+    fully deadlock via this lever alone — floored to 1. CRISIS's real block
+    lives upstream (signal generation already skips CRISIS entirely); this
+    is defense-in-depth against a hand-built signal, e.g. manual trade."""
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    try:
+        r = evaluate_portfolio_gates(_with_regime("crisis"), _portfolio(open_count=1))
+        assert not r.allowed
+        r = evaluate_portfolio_gates(_with_regime("crisis"), _portfolio(open_count=0))
+        assert r.allowed
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+@pytest.mark.asyncio
+async def test_missing_regime_key_is_noop():
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    try:
+        r = evaluate_portfolio_gates(_equity(), _portfolio(open_count=3))  # no "regime" key
+        assert not r.allowed
+        assert "regime_tightened_capacity" not in r.flags
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_regime_string_is_noop():
+    """A future RegimeType added without updating this table must fail
+    toward current behavior, never toward maximum restriction."""
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+    try:
+        r = evaluate_portfolio_gates(_with_regime("some_future_regime"), _portfolio(open_count=3))
+        assert not r.allowed
+        assert "regime_tightened_capacity" not in r.flags
+        r = evaluate_portfolio_gates(_with_regime("some_future_regime"), _portfolio(open_count=2))
+        assert r.allowed
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
+
+
+@pytest.mark.asyncio
+async def test_regime_tightening_composes_with_mode_tightening():
+    """Regime must apply to the already mode-tightened max_pos, not the raw
+    global cap — Scalper's own 3-cap x 0.75 = 2, not the global 5 x 0.75 = 3."""
+    from app.services.trading_mode import trading_mode_manager, TradingModeType
+
+    await trading_mode_manager.set_mode(TradingModeType.SCALPER)
+    try:
+        r = evaluate_portfolio_gates(_with_regime("high_vol_trending"), _portfolio(open_count=2))
+        assert not r.allowed
+    finally:
+        await trading_mode_manager.set_mode(TradingModeType.BALANCED)
 
 
 def test_blocks_underlying_concentration():

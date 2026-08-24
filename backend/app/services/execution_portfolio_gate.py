@@ -20,6 +20,7 @@ execution_portfolio_gate=false.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -29,6 +30,24 @@ from app.services.risk_manager import PortfolioRiskState, ProposedTrade, RiskMan
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Per-regime concurrency tightening — separate from regime_classifier.py's
+# REGIME_CONFIG size_multiplier because position-size economics and
+# concurrent-position-count risk appetite don't necessarily move together
+# (e.g. LOW_VOL_TRENDING options get less premium per trade but that's not
+# a headcount-risk signal). Tighten-only: every value must be <= 1.0 — this
+# gate must never raise capacity above the mode/global caps computed below.
+# Unrecognized/missing regime strings default to 1.0 (no-op) via
+# REGIME_CONCURRENCY_MULTIPLIER.get(..., 1.0) at the call site — new logic
+# added to an already-live, production-consequential gate must fail toward
+# current behavior, not toward maximum restriction.
+REGIME_CONCURRENCY_MULTIPLIER: dict[str, float] = {
+    "low_vol_trending":   1.0,   # calm/directional — REGIME_CONFIG's own equity_size_multiplier is a full 1.0, no headcount risk elevation
+    "normal_mean_revert": 1.0,   # baseline "ideal for premium selling" regime — no tightening
+    "high_vol_trending":  0.75,  # "elevated risk" per REGIME_CONFIG — matches its own options_size_multiplier=0.75
+    "crisis":             0.0,   # defense-in-depth only; the real CRISIS block is upstream (signal generation already skips CRISIS entirely)
+    "unknown":            0.5,   # matches REGIME_CONFIG's own options_size_multiplier=0.5 for uncertain classification
+}
 
 
 @dataclass
@@ -92,14 +111,22 @@ def evaluate_portfolio_gates(
     from app.services.trading_mode import trading_mode_manager
     max_pos = min(rm.max_concurrent, trading_mode_manager.config.max_concurrent)
 
+    # Regime can only ever tighten max_pos further, never loosen past the
+    # mode/global caps already computed above.
+    regime_multiplier = REGIME_CONCURRENCY_MULTIPLIER.get(signal.get("regime"), 1.0)
+    regime_tightened = regime_multiplier < 1.0
+    if regime_tightened:
+        max_pos = max(1, math.floor(max_pos * regime_multiplier))
+
     if portfolio.open_position_count >= max_pos:
         return PortfolioGateResult(
             allowed=False,
             reason=(
                 f"Max concurrent positions reached: "
                 f"{portfolio.open_position_count}/{max_pos}"
+                + (f" (regime-tightened: {signal.get('regime')})" if regime_tightened else "")
             ),
-            flags=["max_positions"],
+            flags=["max_positions"] + (["regime_tightened_capacity"] if regime_tightened else []),
             proposed_risk_dollars=risk_dollars,
         )
 
