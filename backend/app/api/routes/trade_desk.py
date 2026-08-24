@@ -1034,9 +1034,9 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # Step 8 — wires RiskManager + portfolio_engine into the live OMS path.
     # Greeks caps remain off unless execution_enforce_portfolio_greeks=true.
     # Rollback: execution_portfolio_gate=false.
-    # When max_positions would block an equity entry and position_rotation_on_max
-    # is enabled, close N equity positions (best P&L + lowest confidence) then
-    # re-check the gate.
+    # When max_positions would block an incoming entry (equity or options)
+    # and position_rotation_on_max is enabled, close N open positions
+    # (equity or options — whichever ranks worst) then re-check the gate.
     from app.core.config import settings as _rot_cfg
     from app.services.execution_portfolio_gate import check_execution_portfolio
     portfolio_gate = await check_execution_portfolio(
@@ -1045,14 +1045,14 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     if (
         not portfolio_gate.allowed
         and "max_positions" in (portfolio_gate.flags or [])
-        and asset_type == "equity"
+        and asset_type in ("equity", "options")
         and getattr(_rot_cfg, "position_rotation_on_max", False)
     ):
         try:
             from app.broker.broker_factory import get_broker
-            from app.services.position_rotation import rotate_for_new_equity_entry
+            from app.services.position_rotation import rotate_for_blocked_entry
             _rot_broker = get_broker()
-            rotated = await rotate_for_new_equity_entry(
+            rotated = await rotate_for_blocked_entry(
                 incoming_ticker=ticker,
                 broker=_rot_broker,
                 log_execution=_log_execution,

@@ -15,7 +15,7 @@ from app.services.position_rotation import (
     RotationCandidate,
     close_options_trade,
     select_rotation_targets,
-    rotate_for_new_equity_entry,
+    rotate_for_blocked_entry,
     _options_unrealized_by_underlying,
 )
 
@@ -252,7 +252,7 @@ async def test_options_unrealized_by_underlying_fetch_failure_returns_empty():
 async def test_rotate_respects_flag_off(monkeypatch):
     from app.core import config as cfg
     monkeypatch.setattr(cfg.settings, "position_rotation_on_max", False)
-    out = await rotate_for_new_equity_entry(
+    out = await rotate_for_blocked_entry(
         incoming_ticker="TSLA", broker=MagicMock(),
     )
     assert out == []
@@ -312,7 +312,7 @@ async def test_rotate_closes_selected_targets_and_protects_the_winner(monkeypatc
          patch("app.services.position_rotation._mid_price", side_effect=fake_mid), \
          patch("app.services.alpha_edge_engine.compute_equity_hold_score", side_effect=fake_quality), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close):
-        out = await rotate_for_new_equity_entry(
+        out = await rotate_for_blocked_entry(
             incoming_ticker="TSLA", broker=MagicMock(),
         )
 
@@ -372,7 +372,7 @@ async def test_rotate_quality_lookup_failure_falls_back_to_confidence(monkeypatc
          patch("app.services.alpha_edge_engine.compute_equity_hold_score",
                side_effect=RuntimeError("quality lookup failed")), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close):
-        out = await rotate_for_new_equity_entry(
+        out = await rotate_for_blocked_entry(
             incoming_ticker="TSLA", broker=MagicMock(),
         )
 
@@ -477,7 +477,7 @@ async def test_close_options_trade_not_filled_skips_record_exit():
     assert out["status"] == "submitted"
 
 
-# ── rotate_for_new_equity_entry — widened (options-eligible) candidate pool ──
+# ── rotate_for_blocked_entry — widened (options-eligible) candidate pool ──
 
 def _open_option_row(tid, underlying, spread_type="put", signal_score=0.5,
                       days_ago=0):
@@ -535,7 +535,7 @@ async def test_rotate_closes_worst_options_position_via_close_options_trade(monk
                side_effect=lambda t: {"SPY": 20, "QQQ": 60}[t.underlying]), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close) as opt_mock, \
          patch("app.services.position_rotation.close_equity_trade") as eq_mock:
-        out = await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+        out = await rotate_for_blocked_entry(incoming_ticker="TSLA", broker=MagicMock())
 
     assert closed == ["SPY"]  # worse hold score among the losers
     opt_mock.assert_awaited_once()
@@ -565,7 +565,7 @@ async def test_rotate_protects_profitable_options_position(monkeypatch):
                new=AsyncMock(return_value={"SPY": 200.0, "QQQ": -30.0})), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=50), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close):
-        out = await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+        out = await rotate_for_blocked_entry(incoming_ticker="TSLA", broker=MagicMock())
 
     assert "SPY" not in closed
     assert closed == ["QQQ"]
@@ -592,7 +592,7 @@ async def test_rotate_fetches_broker_positions_exactly_once_for_options(monkeypa
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=50), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close):
-        await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=broker)
+        await rotate_for_blocked_entry(incoming_ticker="TSLA", broker=broker)
 
     broker.get_positions.assert_awaited_once()
 
@@ -626,7 +626,7 @@ async def test_rotate_mixed_pool_closes_worse_ranked_options_over_equity(monkeyp
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=10), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
-        await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+        await rotate_for_blocked_entry(incoming_ticker="TSLA", broker=MagicMock())
 
     # SPY (options, quality=10) ranks worse than AAPL (equity, quality=80) -> SPY closed.
     assert closed == ["SPY"]
@@ -661,7 +661,50 @@ async def test_rotate_mixed_pool_closes_worse_ranked_equity_over_options(monkeyp
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=90), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
-        await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+        await rotate_for_blocked_entry(incoming_ticker="TSLA", broker=MagicMock())
 
     # AAPL (equity, quality=5) ranks worse than SPY (options, quality=90) -> AAPL closed.
     assert closed == ["AAPL"]
+
+
+@pytest.mark.asyncio
+async def test_rotate_triggers_for_incoming_options_signal_and_excludes_its_own_underlying(monkeypatch):
+    """Trigger symmetry (5c): rotate_for_blocked_entry() doesn't take or
+    check the incoming signal's asset type at all — it only excludes
+    incoming_ticker's underlying from the candidate pool. This proves an
+    incoming OPTIONS entry (e.g. a new SPY spread blocked by max_positions)
+    triggers rotation exactly like an equity entry always has, and never
+    rotates the very SPY options position it would conflict with."""
+    from app.core import config as cfg
+    monkeypatch.setattr(cfg.settings, "position_rotation_on_max", True)
+    monkeypatch.setattr(cfg.settings, "position_rotation_closes", 1)
+
+    trades = [
+        _open_option_row("t1", "SPY", signal_score=0.9),   # same underlying as the incoming entry
+        _open_equity_row("t2", "AAPL", signal_score=0.2),
+    ]
+    session = _rotation_session(trades)
+    closed: list[str] = []
+
+    async def fake_close_eq(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    async def fake_close_opt(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.position_rotation._mid_price", return_value=90.0), \
+         patch("app.services.alpha_edge_engine.compute_equity_hold_score", return_value=10), \
+         patch("app.services.position_rotation._options_unrealized_by_underlying",
+               new=AsyncMock(return_value={"SPY": -1000.0})), \
+         patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=0), \
+         patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
+         patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
+        out = await rotate_for_blocked_entry(incoming_ticker="SPY", broker=MagicMock())
+
+    # SPY would rank worst by every tier, but it IS the incoming underlying -> excluded.
+    assert "SPY" not in closed
+    assert closed == ["AAPL"]
+    assert len(out) == 1

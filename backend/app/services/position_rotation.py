@@ -1,12 +1,12 @@
 """
 Position rotation — free slots when at max concurrent opens.
 
-When a new equity entry is blocked by max_positions and
+When a new entry (equity or options) is blocked by max_positions and
 ``settings.position_rotation_on_max`` is True, close N open positions so
-the new trade can proceed. The trigger stays equity-only (only an
-incoming equity signal can initiate rotation), but the candidate pool
-being closed may be equity OR options — whichever open position genuinely
-ranks worst. Winner Protection is a hard floor, not a ranking preference:
+the new trade can proceed. Symmetric on both ends: the incoming entry may
+be equity or options, and the candidate pool being closed may be equity
+OR options — whichever open position genuinely ranks worst. Winner
+Protection is a hard floor, not a ranking preference:
 a position with unrealized P&L above
 ``settings.position_rotation_winner_pnl_floor`` (default: any profit at
 all) is never a rotation target, full stop — it is excluded before any
@@ -321,7 +321,7 @@ async def close_options_trade(
     }
 
 
-async def rotate_for_new_equity_entry(
+async def rotate_for_blocked_entry(
     *,
     incoming_ticker: str,
     broker: Any,
@@ -329,10 +329,10 @@ async def rotate_for_new_equity_entry(
 ) -> list[dict]:
     """
     Close configured number of open positions to free a slot for a new
-    equity entry. Trigger stays equity-only — this is only ever called
-    when an incoming equity signal is blocked by max_positions — but the
-    candidate pool being closed may be equity OR options; whichever open
-    position genuinely ranks worst.
+    entry (equity or options) blocked by max_positions. Asset-class-
+    agnostic on both ends: the incoming entry may be equity or options,
+    and the candidate pool being closed may be equity OR options —
+    whichever open position genuinely ranks worst.
 
     Returns list of close receipts (may be empty if rotation not possible).
     """

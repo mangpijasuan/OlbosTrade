@@ -7,7 +7,7 @@ Structurally the same shape as spot_price_cache.py (a plain module-level
 dict + time.monotonic(), not a class) but push- rather than pull-based:
 compute_correlation_clusters() needs a live yfinance fetch per ticker
 (see portfolio.py's GET /correlation route), which must never sit inside
-position_rotation.py's rotate_for_new_equity_entry() money-path. Instead,
+position_rotation.py's rotate_for_blocked_entry() money-path. Instead,
 refresh() is called periodically by main.py's background scheduler, and
 rotation only ever does a synchronous, non-blocking dict lookup via
 in_flagged_cluster().

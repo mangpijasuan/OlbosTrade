@@ -2162,7 +2162,7 @@ async def _reconcile_positions() -> None:
 async def _refresh_rotation_correlation_cache() -> None:
     """Periodic refresh of the rotation-scoped correlation cache — see
     rotation_correlation_cache.py. Deferred from Phase 3 Increment 1
-    (Winner Protection) so rotate_for_new_equity_entry() never itself
+    (Winner Protection) so rotate_for_blocked_entry() never itself
     triggers a live yfinance fetch."""
     from app.services.rotation_correlation_cache import refresh
     await refresh()
