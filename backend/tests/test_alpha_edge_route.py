@@ -119,6 +119,39 @@ async def test_equity_broker_position_lookup_failure_does_not_block_scoring():
     assert result.position == {"held": False}
 
 
+# ── compute_equity_hold_score (position_rotation.py's quality-score input) ──
+
+@pytest.mark.asyncio
+async def test_hold_score_computed_from_indicators_and_direction():
+    from app.services import alpha_edge_engine as ae
+
+    with patch("app.main._yf_bars", new=AsyncMock(return_value=_bars())):
+        score = await ae.compute_equity_hold_score("AAPL", "BUY")
+
+    assert score is not None
+    assert 0 <= score <= 100
+
+
+@pytest.mark.asyncio
+async def test_hold_score_insufficient_bars_returns_none():
+    from app.services import alpha_edge_engine as ae
+
+    with patch("app.main._yf_bars", new=AsyncMock(return_value=_bars(n=5))):
+        score = await ae.compute_equity_hold_score("OBSCURE", "BUY")
+
+    assert score is None
+
+
+@pytest.mark.asyncio
+async def test_hold_score_fetch_failure_returns_none_not_raises():
+    from app.services import alpha_edge_engine as ae
+
+    with patch("app.main._yf_bars", new=AsyncMock(side_effect=ConnectionError("yf down"))):
+        score = await ae.compute_equity_hold_score("AAPL", "BUY")
+
+    assert score is None
+
+
 # ── compute_options_alpha_edge ───────────────────────────────────────────────
 
 def _trade(**overrides):

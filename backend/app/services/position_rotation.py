@@ -3,11 +3,19 @@ Position rotation — free slots when at max concurrent opens.
 
 When a new equity entry is blocked by max_positions and
 ``settings.position_rotation_on_max`` is True, close N open equity
-positions so the new trade can proceed:
+positions so the new trade can proceed. Winner Protection is a hard floor,
+not a ranking preference: a position with unrealized P&L above
+``settings.position_rotation_winner_pnl_floor`` (default: any profit at
+all) is never a rotation target, full stop — it is excluded before any
+ranking happens, and if too few non-winners remain to free the requested
+slots, rotation is skipped entirely rather than touching a winner.
 
-  1. Highest unrealized P&L (bank the winner)
-  2. Lowest entry ``signal_score`` among the remainder (drop weakest conviction)
-     — if scores are missing, fall back to oldest entry_date
+Among the eligible (non-winning) positions, closure order is:
+
+  1. Lowest Position Quality Score (``compute_equity_hold_score`` —
+     alpha_edge_engine.py's hold-score reused, not a new formula)
+  2. Lowest entry ``signal_score`` among ties / missing quality score
+  3. Oldest ``entry_date`` among ties / missing both
 
 Never closes the incoming ticker's underlying. Equity only (v1).
 """
@@ -32,6 +40,18 @@ class RotationCandidate:
     confidence: Optional[float]
     entry_date: Optional[datetime]
     spread_type: str
+    quality_score: Optional[float] = None
+
+
+def _rank_key(c: RotationCandidate):
+    """Ascending sort key: quality_score (None-last) -> confidence
+    (None-last) -> oldest entry_date. Tuple-of-tuples so a missing field
+    always sorts after every real value at that tier, never interpolated
+    as if it were a real score."""
+    quality = (0, c.quality_score) if c.quality_score is not None else (1, 0.0)
+    confidence = (0, c.confidence) if c.confidence is not None else (1, 0.0)
+    entry = c.entry_date or datetime.min.replace(tzinfo=timezone.utc)
+    return (quality, confidence, entry)
 
 
 def select_rotation_targets(
@@ -44,7 +64,8 @@ def select_rotation_targets(
     Pick up to ``count`` equity positions to close for a new entry.
 
     Returns [] if fewer than ``count`` eligible candidates remain after
-    excluding the incoming underlying (caller should keep blocking).
+    excluding the incoming underlying and applying the Winner Protection
+    floor (caller should keep blocking rather than touch a winner).
     """
     if count <= 0:
         return []
@@ -54,32 +75,13 @@ def select_rotation_targets(
         if (c.underlying or "").upper() != incoming
         and (c.spread_type or "").lower() in ("equity_long", "equity_short")
     ]
-    if len(pool) < count:
+
+    winner_floor = float(getattr(settings, "position_rotation_winner_pnl_floor", 0.0) or 0.0)
+    eligible = [c for c in pool if c.unrealized_pnl <= winner_floor]
+    if len(eligible) < count:
         return []
 
-    selected: list[RotationCandidate] = []
-    remaining = list(pool)
-
-    # 1) Most profitable (unrealized)
-    by_pnl = sorted(remaining, key=lambda c: c.unrealized_pnl, reverse=True)
-    first = by_pnl[0]
-    selected.append(first)
-    remaining = [c for c in remaining if c.trade_id != first.trade_id]
-
-    while len(selected) < count and remaining:
-        # 2+) Lowest confidence; missing score → treat as oldest among unscored
-        scored = [c for c in remaining if c.confidence is not None]
-        if scored:
-            nxt = min(scored, key=lambda c: float(c.confidence))  # type: ignore[arg-type]
-        else:
-            nxt = min(
-                remaining,
-                key=lambda c: c.entry_date or datetime.min.replace(tzinfo=timezone.utc),
-            )
-        selected.append(nxt)
-        remaining = [c for c in remaining if c.trade_id != nxt.trade_id]
-
-    return selected
+    return sorted(eligible, key=_rank_key)[:count]
 
 
 def _equity_entry_price(trade: Any) -> float:
@@ -209,12 +211,20 @@ async def rotate_for_new_equity_entry(
         )
         return []
 
+    from app.services.alpha_edge_engine import compute_equity_hold_score
+
     candidates: list[RotationCandidate] = []
     for t in equity_opens:
         mid = await _mid_price(broker, t.underlying)
         # No quote → treat unrealized as 0 so we don't invent P&L
         upnl = _equity_unrealized(t, mid) if mid is not None else 0.0
         conf = float(t.signal_score) if t.signal_score is not None else None
+        direction = "BUY" if (t.spread_type or "").lower() == "equity_long" else "SELL"
+        try:
+            quality = await compute_equity_hold_score(t.underlying, direction)
+        except Exception as exc:
+            logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
+            quality = None
         candidates.append(
             RotationCandidate(
                 trade_id=str(t.id),
@@ -223,6 +233,7 @@ async def rotate_for_new_equity_entry(
                 confidence=conf,
                 entry_date=t.entry_date,
                 spread_type=t.spread_type or "",
+                quality_score=quality,
             )
         )
 
@@ -250,9 +261,9 @@ async def rotate_for_new_equity_entry(
             if log_execution is not None:
                 await log_execution(receipt)
             logger.info(
-                "rotation closed %s trade_id=%s unrealized≈%.2f confidence=%s",
+                "rotation closed %s trade_id=%s unrealized≈%.2f quality=%s confidence=%s",
                 target.underlying, target.trade_id,
-                target.unrealized_pnl, target.confidence,
+                target.unrealized_pnl, target.quality_score, target.confidence,
             )
         except Exception as exc:
             logger.error(

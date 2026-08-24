@@ -289,6 +289,43 @@ async def compute_equity_alpha_edge(ticker: str, broker=None) -> AlphaEdgeResult
     )
 
 
+async def compute_equity_hold_score(ticker: str, position_direction: str) -> Optional[int]:
+    """
+    Position Quality Score building block for an already-held equity
+    position — used by position_rotation.py to rank rotation candidates.
+
+    Composes the same _yf_bars -> compute_indicators -> score_equity_signal
+    -> compute_equity_scores() pipeline compute_equity_alpha_edge() uses,
+    but skips that function's broker.get_equity_positions() and
+    SignalOutcome anchor lookups: the caller already knows the position and
+    its direction from the open Trade row, so both would be redundant I/O
+    per ticker. Returns None on any data failure (insufficient bars,
+    indicator failure) — caller must fall back, never fabricate a score.
+    """
+    from app.services.equity_signal_engine import compute_indicators, score_equity_signal
+
+    ticker = ticker.upper()
+    try:
+        from app.main import _yf_bars
+        import pandas as pd
+        bars = await _yf_bars(ticker, limit=250)
+        if len(bars) < 30:
+            return None
+        df = pd.DataFrame([{
+            "open": float(b.open), "high": float(b.high),
+            "low": float(b.low), "close": float(b.close), "volume": b.volume,
+        } for b in bars])
+        ind = compute_indicators(df)
+    except Exception:
+        return None
+
+    current_action, current_confidence, _reasons = score_equity_signal(ind)
+    _entry, hold_score, _exit = compute_equity_scores(
+        current_action, current_confidence, position_direction,
+    )
+    return hold_score
+
+
 async def compute_options_alpha_edge(ticker: str) -> AlphaEdgeResult:
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade

@@ -169,10 +169,16 @@ class Settings(BaseSettings):
     # Greeks delta/vega caps — OFF by default (miscalibrated for live spreads).
     execution_enforce_portfolio_greeks: bool = Field(default=False)
     # When True and max concurrent positions is hit, close N equity positions
-    # (highest unrealized P&L, then lowest signal_score) to free a slot for a
-    # new equity entry. Off by default — money-path auto-close.
+    # (worst quality score/confidence among non-winners — see
+    # position_rotation_winner_pnl_floor) to free a slot for a new equity
+    # entry. Off by default — money-path auto-close.
     position_rotation_on_max: bool = Field(default=False)
     position_rotation_closes: int = Field(default=2)
+    # Positions with unrealized P&L above this (dollars) are never rotation
+    # targets — Winner Protection floor. A position must be at or below this
+    # to even be eligible for closure; it never trades off against quality
+    # score or confidence.
+    position_rotation_winner_pnl_floor: float = Field(default=0.0)
 
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)
