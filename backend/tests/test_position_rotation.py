@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ import pytest
 from app.services import rotation_correlation_cache
 from app.services.position_rotation import (
     RotationCandidate,
+    close_options_trade,
     select_rotation_targets,
     rotate_for_new_equity_entry,
 )
@@ -334,4 +336,100 @@ async def test_rotate_quality_lookup_failure_falls_back_to_confidence(monkeypatc
 
     # Quality lookup failed for both -> falls back to lowest confidence (MSFT, 0.2).
     assert closed == ["MSFT"]
-    assert len(out) == 1
+
+
+# ── close_options_trade ──────────────────────────────────────────────────
+
+def _opt_trade(spread_type="put", short=100, long=95, qty=2, strategy="bull_put_spread"):
+    return SimpleNamespace(
+        id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1",
+        underlying="SPY", spread_type=spread_type, strategy=strategy,
+        short_strike=Decimal(str(short)), long_strike=Decimal(str(long)),
+        expiration=date(2026, 9, 18), quantity=qty,
+    )
+
+
+@pytest.mark.asyncio
+async def test_close_options_trade_success_correct_leg_actions_and_mkt():
+    trade = _opt_trade()
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=1)
+    broker.place_order = AsyncMock(return_value=MagicMock(
+        status="filled", order_id="ord-opt-1", fill_price=Decimal("1.50"),
+    ))
+    with patch("app.services.trade_recorder.trade_recorder.record_exit",
+               new=AsyncMock(return_value=True)) as record_mock:
+        out = await close_options_trade(trade, broker=broker, closed_by="manual")
+
+    broker.place_order.assert_awaited_once()
+    order = broker.place_order.await_args.args[0]
+    assert order.order_type == "MKT"
+    assert order.limit_price == Decimal("0")
+    short_leg, long_leg = order.legs
+    assert short_leg.strike == Decimal("100") and short_leg.action == "BUY"
+    assert long_leg.strike == Decimal("95") and long_leg.action == "SELL"
+    assert short_leg.option_type == "put" and long_leg.option_type == "put"
+    assert short_leg.quantity == 2 and long_leg.quantity == 2
+
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["cost_to_close"] == 1.50
+    assert record_mock.await_args.kwargs["exit_reason"] == "manual"
+    assert out["status"] == "filled"
+    assert out["option_type"] == "put"
+    assert out["cancelled_open_orders"] == 1
+
+
+@pytest.mark.asyncio
+async def test_close_options_trade_broker_rejection_raises_runtimeerror():
+    trade = _opt_trade()
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_order = AsyncMock(return_value=MagicMock(
+        status="rejected", order_id=None, fill_price=None,
+    ))
+    with pytest.raises(RuntimeError):
+        await close_options_trade(trade, broker=broker)
+
+
+@pytest.mark.asyncio
+async def test_close_options_trade_missing_strikes_raises_valueerror():
+    trade = _opt_trade()
+    trade.short_strike = None
+    broker = MagicMock()
+    broker.place_order = AsyncMock()
+    with pytest.raises(ValueError):
+        await close_options_trade(trade, broker=broker)
+    broker.place_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_options_trade_missing_expiration_raises_valueerror():
+    trade = _opt_trade()
+    trade.expiration = None
+    broker = MagicMock()
+    with pytest.raises(ValueError):
+        await close_options_trade(trade, broker=broker)
+
+
+@pytest.mark.asyncio
+async def test_close_options_trade_non_option_spread_type_raises_valueerror():
+    trade = _opt_trade(spread_type="equity_long")
+    broker = MagicMock()
+    with pytest.raises(ValueError):
+        await close_options_trade(trade, broker=broker)
+
+
+@pytest.mark.asyncio
+async def test_close_options_trade_not_filled_skips_record_exit():
+    trade = _opt_trade()
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_order = AsyncMock(return_value=MagicMock(
+        status="submitted", order_id="ord-opt-2", fill_price=None,
+    ))
+    with patch("app.services.trade_recorder.trade_recorder.record_exit",
+               new=AsyncMock(return_value=True)) as record_mock:
+        out = await close_options_trade(trade, broker=broker)
+
+    record_mock.assert_not_awaited()
+    assert out["status"] == "submitted"

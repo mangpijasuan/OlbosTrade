@@ -191,6 +191,102 @@ async def close_equity_trade(
     }
 
 
+async def close_options_trade(
+    trade: Any,
+    *,
+    broker: Any,
+    closed_by: str = "manual",
+) -> dict:
+    """
+    Submit a closing order for an open 2-leg options spread Trade row: buy
+    back the short leg, sell the long leg, as a single BAG combo order via
+    broker.place_order(). Shared entry point for manual close (rotation
+    does not use this yet — options rotation is a separate, deferred
+    increment).
+
+    Always submits MKT (order_type="MKT", limit_price=Decimal("0")) — the
+    LMT combo net-credit/net-debit sign convention documented on
+    place_order() has never been exercised for a closing (action-flipped)
+    combo anywhere in this codebase, so this function does not accept
+    order_type/limit_price overrides. That is a deliberate, stated
+    limitation, not a silent gap.
+
+    Does not check kill switch (closing reduces risk). No
+    asyncio.TimeoutError handling — same convention as close_equity_trade;
+    timeouts propagate to the caller.
+    """
+    from decimal import Decimal
+
+    from app.broker.broker_interface import SpreadLeg, SpreadOrder
+    from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+    from app.services.trade_recorder import trade_recorder
+
+    spread_type = (getattr(trade, "spread_type", None) or "").lower()
+    if spread_type not in ("put", "call"):
+        raise ValueError(f"options close only; got spread_type={spread_type!r}")
+
+    short_strike = getattr(trade, "short_strike", None)
+    long_strike = getattr(trade, "long_strike", None)
+    expiration = getattr(trade, "expiration", None)
+    if short_strike is None or long_strike is None:
+        raise ValueError(f"trade {trade.id} missing short_strike/long_strike — cannot close")
+    if expiration is None:
+        raise ValueError(f"trade {trade.id} missing expiration — cannot close")
+
+    ticker = trade.underlying
+    qty = int(trade.quantity or 1)
+    trade_id = str(trade.id)
+    strategy = trade.strategy or "options_close"
+
+    # Mirror of the entry construction: short_strike was SELL-to-open, now
+    # BUY-to-close; long_strike was BUY-to-open, now SELL-to-close.
+    order = SpreadOrder(
+        strategy=strategy,
+        underlying=ticker,
+        legs=[
+            SpreadLeg(symbol=ticker, expiration=expiration, strike=Decimal(str(short_strike)),
+                      option_type=spread_type, action="BUY", quantity=qty),
+            SpreadLeg(symbol=ticker, expiration=expiration, strike=Decimal(str(long_strike)),
+                      option_type=spread_type, action="SELL", quantity=qty),
+        ],
+        limit_price=Decimal("0"),
+        order_type="MKT",
+        time_in_force="DAY",
+    )
+
+    cancelled = await broker.cancel_open_orders(ticker)
+    result = await ibkr_coordinator.submit(
+        Priority.P0,
+        lambda: broker.place_order(order),
+        req_type="PLACE_ORDER", symbol=ticker,
+    )
+    if result.status in ("cancelled", "rejected"):
+        raise RuntimeError(f"broker rejected options close for {ticker}: {result.status}")
+
+    if result.status == "filled" and result.fill_price is not None:
+        await trade_recorder.record_exit(
+            trade_id=trade_id,
+            cost_to_close=float(result.fill_price),
+            exit_reason="position_rotation" if closed_by == "position_rotation" else "manual",
+        )
+
+    return {
+        "trade_id": trade_id,
+        "ticker": ticker,
+        "asset_type": "options",
+        "strategy": strategy,
+        "option_type": spread_type,
+        "short_strike": float(short_strike),
+        "long_strike": float(long_strike),
+        "quantity": qty,
+        "order_id": result.order_id,
+        "status": result.status,
+        "cancelled_open_orders": cancelled,
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "closed_by": closed_by,
+    }
+
+
 async def rotate_for_new_equity_entry(
     *,
     incoming_ticker: str,

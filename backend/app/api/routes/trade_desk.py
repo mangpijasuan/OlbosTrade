@@ -679,9 +679,9 @@ async def close_position(req: ClosePositionRequest):
     flattens positions on its own — blocking a manual close during a
     kill-switch event would be backwards.
 
-    Equity only for now. Options positions are 2-leg spreads; closing one
-    means submitting the mirrored spread order (buy back the short leg,
-    sell the long leg) — deliberately deferred rather than half-built.
+    Equity closes support order_type/limit_price; 2-leg options spreads
+    (put/call) close via a market-order mirrored combo — see
+    close_options_trade()'s docstring for why LMT isn't supported there yet.
     """
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
@@ -703,25 +703,32 @@ async def close_position(req: ClosePositionRequest):
         raise HTTPException(409, f"Trade is not open (status={trade.status})")
 
     spread_type = (trade.spread_type or "").lower()
-    if spread_type not in ("equity_long", "equity_short"):
+    if spread_type not in ("equity_long", "equity_short", "put", "call"):
         raise HTTPException(
             400,
-            "Manual close currently supports equity positions only — "
-            "close options spreads directly with the broker for now.",
+            f"Cannot close trade with spread_type={spread_type!r} — expected "
+            "an equity direction (equity_long/equity_short) or an options "
+            "type (put/call).",
         )
 
     from app.broker.broker_factory import get_broker
-    from app.services.position_rotation import close_equity_trade
+    from app.services.position_rotation import close_equity_trade, close_options_trade
 
     broker = get_broker()
     try:
-        entry = await close_equity_trade(
-            trade,
-            broker=broker,
-            closed_by="manual",
-            order_type=req.order_type,
-            limit_price=req.limit_price,
-        )
+        if spread_type in ("put", "call"):
+            # Options close is market-order only in this increment —
+            # req.order_type/req.limit_price are intentionally not threaded
+            # through; see close_options_trade()'s docstring.
+            entry = await close_options_trade(trade, broker=broker, closed_by="manual")
+        else:
+            entry = await close_equity_trade(
+                trade,
+                broker=broker,
+                closed_by="manual",
+                order_type=req.order_type,
+                limit_price=req.limit_price,
+            )
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
     except ValueError as exc:
