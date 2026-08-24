@@ -30,7 +30,7 @@ from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.options_pricer import BlackScholesPricer
 from app.services.risk_manager import PortfolioRiskState, RiskManager
 from app.services.strategy_engine import (
-    BaseStrategy,
+    BaseStrategy, StrategyExitParams,
     BullPutSpread, BearCallSpread, IronCondor, BullCallDebitSpread,
 )
 from app.utils.logger import get_logger
@@ -147,12 +147,12 @@ class Backtester:
         self.guardrails = GuardrailEngine()
         self.risk_manager = RiskManager()
 
-    def _get_strategy(self, name: str) -> BaseStrategy:
+    def _get_strategy(self, name: str, params: Optional[StrategyExitParams] = None) -> BaseStrategy:
         strategies = {
-            "bull_put_spread": BullPutSpread(),
-            "bear_call_spread": BearCallSpread(),
-            "iron_condor": IronCondor(),
-            "bull_call_debit_spread": BullCallDebitSpread(),
+            "bull_put_spread": BullPutSpread(params),
+            "bear_call_spread": BearCallSpread(params),
+            "iron_condor": IronCondor(params),
+            "bull_call_debit_spread": BullCallDebitSpread(params),
         }
         if name not in strategies:
             raise ValueError(f"Unknown strategy: {name}. Valid: {list(strategies.keys())}")
@@ -197,6 +197,8 @@ class Backtester:
         starting_capital: float = 25000.0,
         signal_score_override: float = 0.70,
         vix_df: Optional[pd.DataFrame] = None,
+        strategy_params: Optional[StrategyExitParams] = None,
+        spy_df: Optional[pd.DataFrame] = None,
     ) -> BacktestResult:
         """
         Run a full walk-forward backtest.
@@ -209,15 +211,29 @@ class Backtester:
             signal_score_override: Fixed signal score (0–1) — model gates here
             vix_df:                Optional VIX OHLCV DataFrame for real IV rank.
                                    If None, falls back to RV-based approximation.
+            strategy_params:       Optional exit-rule override (profit target /
+                                   stop-loss multiplier / DTE exit). If None,
+                                   the strategy's own hardcoded defaults apply —
+                                   used by strategy_optimizer.py's grid search.
+            spy_df:                Optional pre-fetched SPY OHLCV covering
+                                   [start_date - 60d warmup, end_date]. If None,
+                                   fetched internally as before. Callers that run
+                                   many backtests over the SAME window (e.g. a
+                                   parameter sweep) should fetch once and pass
+                                   the same frame in, rather than refetching per
+                                   call — df is used read-only here.
         """
         logger.info("Backtest starting: %s %s → %s", strategy_name, start_date, end_date)
-        strategy = self._get_strategy(strategy_name)
+        strategy = self._get_strategy(strategy_name, strategy_params)
 
         # Fetch SPY data — fetch extra history for indicator warm-up
         warmup_start = (
             pd.Timestamp(start_date) - pd.Timedelta(days=60)
         ).strftime("%Y-%m-%d")
-        df = await self.fetcher.fetch_ohlcv("SPY", warmup_start, end_date)
+        if spy_df is not None:
+            df = spy_df
+        else:
+            df = await self.fetcher.fetch_ohlcv("SPY", warmup_start, end_date)
 
         # FIX #1: Build shifted indicator frame — no look-ahead after this point
         ind = self._build_indicator_frame(df)

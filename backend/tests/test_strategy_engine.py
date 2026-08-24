@@ -12,7 +12,7 @@ from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.risk_manager import PortfolioRiskState, RiskManager
 from app.services.strategy_engine import (
     BullPutSpread, BearCallSpread, IronCondor, BullCallDebitSpread,
-    approve_trade, Signal, _active_risk_pct,
+    StrategyExitParams, approve_trade, Signal, _active_risk_pct,
 )
 
 
@@ -90,6 +90,49 @@ def test_bull_put_size_and_exit():
     assert bp.check_exit(2.0, 2.0, 15, False).should_exit          # DTE stop
     assert bp.check_exit(2.0, 4.0, 30, False).urgency == "immediate"  # 2x loss
     assert not bp.check_exit(2.0, 1.5, 30, False).should_exit
+
+
+# ── StrategyExitParams: default-preserving + override behavior (Track 2D) ────
+
+@pytest.mark.parametrize("strategy_cls,entry_credit,at_default_target", [
+    (BullPutSpread, 2.0, 0.9),          # 50% target: profit_pct=(2-0.9)/2=0.55 >= 0.50
+    (BearCallSpread, 2.0, 0.9),         # 50% target, same shape
+    (IronCondor, 2.0, 1.4),             # 25% target: profit_pct=(2-1.4)/2=0.30 >= 0.25
+])
+def test_no_args_matches_explicit_default_params(strategy_cls, entry_credit, at_default_target):
+    """BullPutSpread() (no args) must produce identical decisions to
+    BullPutSpread(StrategyExitParams()) constructed with THIS strategy's
+    own DEFAULT_PARAMS — proves the params refactor changed nothing for
+    the live/default path (each strategy has its own defaults; a bare
+    StrategyExitParams() alone is NOT a safe stand-in for every strategy,
+    see test_bull_call_debit_default_differs_from_shared_default below)."""
+    no_args = strategy_cls()
+    explicit = strategy_cls(strategy_cls.DEFAULT_PARAMS)
+    a = no_args.check_exit(entry_credit, at_default_target, 30, False)
+    b = explicit.check_exit(entry_credit, at_default_target, 30, False)
+    assert a.should_exit == b.should_exit
+    assert a.reason == b.reason
+
+
+def test_bull_call_debit_default_differs_from_shared_default():
+    """Confirms the real bug this session caught: BullCallDebitSpread's own
+    hardcoded values (75% profit / 10 DTE) differ from BaseStrategy's
+    shared StrategyExitParams() default (50% / 21) — passing a bare
+    StrategyExitParams() to it would silently change its live behavior."""
+    assert BullCallDebitSpread.DEFAULT_PARAMS.profit_target_pct == 0.75
+    assert BullCallDebitSpread.DEFAULT_PARAMS.dte_exit == 10
+    assert StrategyExitParams().profit_target_pct == 0.50
+
+
+def test_custom_params_change_check_exit_at_the_boundary():
+    """A non-default profit_target_pct changes check_exit()'s decision
+    exactly where the old hardcoded 0.50 used to draw the line."""
+    entry_credit, current_value = 2.0, 1.3  # profit_pct = 0.35
+    default_bp = BullPutSpread()
+    assert not default_bp.check_exit(entry_credit, current_value, 30, False).should_exit
+
+    tighter_bp = BullPutSpread(StrategyExitParams(profit_target_pct=0.35))
+    assert tighter_bp.check_exit(entry_credit, current_value, 30, False).should_exit
 
 
 # ── Bear Call Spread ─────────────────────────────────────────────────────────
