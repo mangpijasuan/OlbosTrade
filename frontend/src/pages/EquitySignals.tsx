@@ -613,7 +613,7 @@ export default function EquitySignals() {
 
   return (
     <div className="page-shell" style={{ maxWidth: 1200 }}>
-      <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <AssetToggle tab={tab} onChange={setTab} />
         <div style={{ flex: 1, minWidth: 220 }}><BrokerStatus /></div>
         <div style={{ flex: 1, minWidth: 220 }}><PortfolioGreeks /></div>

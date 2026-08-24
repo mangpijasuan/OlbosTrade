@@ -64,13 +64,6 @@ export default function BrokerStatus() {
       <span style={{ color: "var(--ink-dim)" }}>
         {connected ? "connected" : info.error || "disconnected"}
       </span>
-      <span style={{ flex: 1 }} />
-      {info.supports_options && (
-        <span style={{ color: "var(--ink-faint)", fontSize: 10 }}>OPTIONS</span>
-      )}
-      {info.supports_equities && (
-        <span style={{ color: "var(--ink-faint)", fontSize: 10 }}>EQUITIES</span>
-      )}
     </div>
   );
 }
