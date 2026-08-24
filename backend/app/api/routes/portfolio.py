@@ -218,3 +218,60 @@ async def portfolio_rotation_performance():
         return empty
 
     return {"status": "ok", **compute_rotation_ledger_stats(rotations)}
+
+
+@router.get("/rotation-activity")
+async def portfolio_rotation_activity(limit: int = 20):
+    """
+    Rotation activity feed — a chronological read of what
+    position_rotation.py actually closed and why (the ranking signals
+    captured on every rotation receipt: quality_score, in_flagged_cluster,
+    confidence, unrealized_pnl_at_decision). Complementary to
+    /rotation-performance: that route reports financial outcome after the
+    fact from Trade rows; this one reports the decision itself from
+    ExecutionEvent, forward-looking rather than backward-looking. Does not
+    attempt to show what new position a freed slot went to — no
+    structural link exists between a rotation close and the entry it
+    enabled (same known gap /rotation-performance already documents).
+    """
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+
+    empty = {"status": "no_rotations_yet", "events": []}
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(ExecutionEvent)
+                .where(
+                    ExecutionEvent.kind == "execution",
+                    ExecutionEvent.payload["closed_by"].astext == "position_rotation",
+                )
+                .order_by(ExecutionEvent.created_at.desc())
+                .limit(limit)
+            )).scalars().all()
+    except Exception as exc:
+        return {**empty, "status": "error", "error": str(exc)}
+
+    if not rows:
+        return empty
+
+    events = []
+    for r in rows:
+        p = r.payload or {}
+        events.append({
+            "id": str(r.id),
+            "ticker": r.ticker,
+            # close_equity_trade()'s receipt has no asset_type key at all
+            # (only close_options_trade()'s does) — default to equity.
+            "asset_type": p.get("asset_type") or "equity",
+            "status": p.get("status"),
+            "quality_score": p.get("quality_score"),
+            "in_flagged_cluster": p.get("in_flagged_cluster"),
+            "confidence": p.get("confidence"),
+            "unrealized_pnl_at_decision": p.get("unrealized_pnl_at_decision"),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+
+    return {"status": "ok", "events": events}

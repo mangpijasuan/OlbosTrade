@@ -76,6 +76,23 @@ interface RotationPerformanceResp {
   recent: RotationRow[];
 }
 
+interface RotationActivityEvent {
+  id: string;
+  ticker: string | null;
+  asset_type: string;
+  status: string | null;
+  quality_score: number | null;
+  in_flagged_cluster: boolean | null;
+  confidence: number | null;
+  unrealized_pnl_at_decision: number | null;
+  created_at: string | null;
+}
+interface RotationActivityResp {
+  status: "ok" | "no_rotations_yet" | "error";
+  error?: string;
+  events: RotationActivityEvent[];
+}
+
 function ExposureBreakdown({ title, exposure, capital }: {
   title: string; exposure: Record<string, number> | undefined; capital: number;
 }) {
@@ -173,6 +190,7 @@ export default function RiskMonitor() {
   const [corr, setCorr] = useState<CorrelationResp | null>(null);
   const [corrError, setCorrError] = useState(false);
   const [rotoPerf, setRotoPerf] = useState<RotationPerformanceResp | null>(null);
+  const [rotoActivity, setRotoActivity] = useState<RotationActivityResp | null>(null);
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
@@ -199,6 +217,7 @@ export default function RiskMonitor() {
         fetch("/api/risk/var").then(r => r.json()).then(setVarRep),
         fetch("/api/portfolio/heat").then(r => r.json()).then(setHeat),
         fetch("/api/portfolio/rotation-performance").then(r => r.json()).then(setRotoPerf),
+        fetch("/api/portfolio/rotation-activity").then(r => r.json()).then(setRotoActivity),
       ]).then(results => {
         setSectionsError(results.some(r => r.status === "rejected"));
       });
@@ -624,6 +643,62 @@ export default function RiskMonitor() {
         ) : (
           <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: corrError ? "var(--red)" : "var(--ink-faint)" }}>
             {corrError ? "Failed to load correlation data." : "Loading…"}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Rotation Activity" action={rotoActivity && rotoActivity.status === "ok" && (
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+          {rotoActivity.events.length} event{rotoActivity.events.length === 1 ? "" : "s"}
+        </span>
+      )}>
+        {rotoActivity ? (
+          rotoActivity.status === "ok" ? (
+            <div className="mono" style={{ fontSize: 11, padding: "6px 16px" }}>
+              {rotoActivity.events.map(e => (
+                <div key={e.id} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  padding: "6px 0", borderBottom: "1px solid var(--line-dim)",
+                }}>
+                  <span style={{ color: "var(--ink)", minWidth: 50 }}>{e.ticker ?? "—"}</span>
+                  <span style={{ color: "var(--ink-faint)", fontSize: 10 }}>{e.asset_type}</span>
+                  {e.in_flagged_cluster && (
+                    <span style={{ color: "var(--amber)", fontSize: 10 }}>clustered</span>
+                  )}
+                  <span style={{ color: "var(--ink-faint)" }}>
+                    Q{e.quality_score != null ? e.quality_score.toFixed(0) : "—"}
+                  </span>
+                  <span style={{ color: "var(--ink-faint)" }}>
+                    C{e.confidence != null ? e.confidence.toFixed(2) : "—"}
+                  </span>
+                  <span style={{
+                    color: e.unrealized_pnl_at_decision == null
+                      ? "var(--ink-faint)"
+                      : e.unrealized_pnl_at_decision >= 0 ? "var(--green)" : "var(--red)",
+                  }}>
+                    {e.unrealized_pnl_at_decision != null
+                      ? `${e.unrealized_pnl_at_decision >= 0 ? "+" : ""}$${Math.abs(e.unrealized_pnl_at_decision).toFixed(0)}`
+                      : "—"}
+                  </span>
+                  <span style={{ color: "var(--ink-faint)", fontSize: 10 }}>{e.status ?? "—"}</span>
+                  <span style={{ color: "var(--ink-faint)", fontSize: 10 }}>
+                    {e.created_at ? new Date(e.created_at).toLocaleString() : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : rotoActivity.status === "no_rotations_yet" ? (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
+              No capital rotations closed yet.
+            </div>
+          ) : (
+            <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>
+              Failed to load rotation activity{rotoActivity.error ? `: ${rotoActivity.error}` : ""}.
+            </div>
+          )
+        ) : (
+          <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: sectionsError ? "var(--red)" : "var(--ink-faint)" }}>
+            {sectionsError ? "Failed to load rotation activity." : "Loading…"}
           </div>
         )}
       </Section>
