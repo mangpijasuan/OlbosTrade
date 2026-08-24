@@ -136,9 +136,17 @@ class IBKRClient(BrokerInterface):
     def __init__(self) -> None:
         self.ib = IB()
         self._connected = False
+        # Tracks the one-shot account-updates subscription used by
+        # get_account_summary() — see that method's docstring. Reset here
+        # and on every fresh connect(): a new physical session invalidates
+        # whatever subscription existed on the old socket, even if this
+        # flag was never explicitly cleared by an intervening disconnect()
+        # (e.g. a silent connection drop caught by the reconnect watchdog).
+        self._account_subscribed = False
 
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
+        self._account_subscribed = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 await self.ib.connectAsync(
@@ -183,6 +191,7 @@ class IBKRClient(BrokerInterface):
         if self._connected:
             self.ib.disconnect()
             self._connected = False
+            self._account_subscribed = False
             logger.info("IBKR disconnected")
 
     def _require_connection(self) -> None:
@@ -1043,21 +1052,29 @@ class IBKRClient(BrokerInterface):
     async def get_account_summary(self) -> AccountSummary:
         """
         Return account summary from IBKR.
-        Uses reqAccountValuesAsync (one-shot, no persistent subscription)
-        to avoid IBKR error 322 (subscription accumulation).
+
+        accountValues() reads ib_insync's local cache, kept fresh by TWS's
+        background account-update push — but only while subscribed via
+        reqAccountUpdatesAsync(True, ...). Subscribe exactly once per
+        connection (tracked by self._account_subscribed, reset in
+        connect()/disconnect()) and never unsubscribe: the previous
+        subscribe-then-immediately-unsubscribe-every-call pattern avoided
+        IBKR error 322 (subscription accumulation from repeated subscribe
+        calls) but meant the cache only ever reflected a single point-in-
+        time snapshot from the first call after each connect — every
+        subsequent call silently returned the same frozen numbers.
+        Subscribing once and holding it open avoids error 322 (which comes
+        from *repeated* subscribe calls, not from one that stays open) while
+        keeping the cache genuinely live for the life of the connection.
         """
         self._require_connection()
 
-        # accountValues() returns cached values from the TWS account subscription (no new request).
-        # reqAccountSummaryAsync opens a persistent subscription — avoid calling it repeatedly.
-        account_values = self.ib.accountValues()
-        if not account_values:
-            # First call: subscribe once, grab values, then cancel subscription
+        if not self._account_subscribed:
             account_id_temp = (self.ib.managedAccounts() or [""])[0]
             await self.ib.reqAccountUpdatesAsync(True, account_id_temp)
-            account_values = self.ib.accountValues()
-            await self.ib.reqAccountUpdatesAsync(False, account_id_temp)
+            self._account_subscribed = True
 
+        account_values = self.ib.accountValues()
         values: Dict[str, str] = {}
         account_id = (self.ib.managedAccounts() or ["unknown"])[0]
         for v in account_values:

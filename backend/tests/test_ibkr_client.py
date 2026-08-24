@@ -53,6 +53,7 @@ async def test_get_account_summary_maps_fields_correctly(client):
     ]
     client.ib.accountValues = MagicMock(return_value=mock_values)
     client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
 
     summary = await client.get_account_summary()
 
@@ -61,6 +62,65 @@ async def test_get_account_summary_maps_fields_correctly(client):
     assert summary.cash_balance == Decimal("20000.00")
     assert summary.buying_power == Decimal("15000.00")
     assert summary.trading_mode == "paper"
+
+
+@pytest.mark.asyncio
+async def test_get_account_summary_subscribes_once_not_every_call(client):
+    """The account-updates subscription must be established exactly once,
+    not repeated on every call — repeating it caused IBKR error 322, and
+    unsubscribing right after (the previous behavior) froze accountValues()
+    at a single point-in-time snapshot forever. Two consecutive calls must
+    read live values without triggering a second subscribe."""
+    client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
+
+    first_snapshot = [MagicMock(tag="NetLiquidation", value="25000.00", currency="USD")]
+    second_snapshot = [MagicMock(tag="NetLiquidation", value="25500.00", currency="USD")]
+    client.ib.accountValues = MagicMock(side_effect=[first_snapshot, second_snapshot])
+
+    first = await client.get_account_summary()
+    second = await client.get_account_summary()
+
+    assert first.net_liquidation == Decimal("25000.00")
+    assert second.net_liquidation == Decimal("25500.00")  # proves the second call sees fresh data
+    client.ib.reqAccountUpdatesAsync.assert_called_once_with(True, "DU123456")
+
+
+@pytest.mark.asyncio
+async def test_get_account_summary_never_unsubscribes(client):
+    """reqAccountUpdatesAsync(False, ...) must never be called from here —
+    that was the bug: unsubscribing immediately after the first snapshot
+    left accountValues() frozen for the rest of the connection's life."""
+    client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+    client.ib.accountValues = MagicMock(return_value=[])
+    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
+
+    await client.get_account_summary()
+
+    for call in client.ib.reqAccountUpdatesAsync.call_args_list:
+        assert call.args[0] is not False, "must never unsubscribe"
+
+
+@pytest.mark.asyncio
+async def test_connect_resets_account_subscription_flag():
+    """A fresh connect() must reset _account_subscribed — the old
+    subscription (if any) lived on a socket that's now gone, so the next
+    get_account_summary() call must resubscribe rather than trust a stale
+    flag from a previous connection."""
+    client = IBKRClient()
+    client._account_subscribed = True  # simulate a prior live connection
+    with patch.object(client.ib, "connectAsync", new_callable=AsyncMock), \
+         patch.object(client.ib, "reqMarketDataType"):
+        await client.connect()
+    assert client._account_subscribed is False
+
+
+@pytest.mark.asyncio
+async def test_disconnect_resets_account_subscription_flag(client):
+    client._account_subscribed = True
+    client.ib.disconnect = MagicMock()
+    await client.disconnect()
+    assert client._account_subscribed is False
 
 
 @pytest.mark.asyncio
