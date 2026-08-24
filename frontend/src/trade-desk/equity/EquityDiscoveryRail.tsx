@@ -4,13 +4,16 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import ConfidenceFloorLabel from "../../components/ConfidenceFloorLabel";
 import SignalDirectionBadge from "../../components/SignalDirectionBadge";
-import WhyBlockedChip from "../../components/WhyBlockedChip";
+import MissionCard from "../../components/MissionCard";
 import { useDeskBlockContext } from "../../hooks/useDeskBlockContext";
 import { deriveSignalBlockReason } from "../../utils/signalBlockReason";
 
 const DEFAULT_WATCH = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "QQQ", "SPY"];
+
+function railConfidenceTone(pct: number): string {
+  return pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
+}
 
 type DiscTab = "watch" | "signals" | "positions";
 
@@ -101,29 +104,29 @@ export default function EquityDiscoveryRail({
           </button>
         ))}
       </div>
-      <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
+      <div className="mission-list" style={{ flex: 1, overflow: "auto", padding: 8 }}>
         {tab === "watch" &&
           DEFAULT_WATCH.map((t) => {
             const s = snaps[t];
             const on = t === symbol;
             const pct = s?.change_pct;
+            const pctTone = (pct ?? 0) >= 0 ? "var(--green)" : "var(--red)";
             return (
-              <button
+              <MissionCard
                 key={t}
-                type="button"
+                variant="compact"
+                as="button"
                 onClick={() => onSelect(t)}
-                className={`instrument-card discovery-rail-row${on ? " discovery-rail-row--selected" : ""}`}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <span className="mono" style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>{t}</span>
-                  <span className="tnum" style={{ fontSize: 10, color: (pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                    {typeof pct === "number" ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : "—"}
-                  </span>
-                </div>
-                <div className="tnum" style={{ fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
-                  {typeof s?.last_close === "number" ? `$${s.last_close.toFixed(2)}` : "—"}
-                </div>
-              </button>
+                selected={on}
+                aria-pressed={on}
+                aria-label={`Select ${t}`}
+                reward={typeof pct === "number" ? {
+                  value: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`,
+                  tone: pctTone,
+                } : undefined}
+                title={t}
+                subtitle={typeof s?.last_close === "number" ? `$${s.last_close.toFixed(2)}` : "—"}
+              />
             );
           })}
 
@@ -135,23 +138,33 @@ export default function EquityDiscoveryRail({
               tone={signalsError ? "error" : undefined}
             />
           ) : (
-            actionable.map((s) => (
-              <button
-                key={s.id || `${s.ticker}-${s.generated_at}`}
-                type="button"
-                onClick={() => onSelect(s.ticker)}
-                className="instrument-card discovery-rail-row"
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <span className="mono" style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>{s.ticker}</span>
-                  <SignalDirectionBadge action={s.action} size="sm" />
-                </div>
-                <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                  <ConfidenceFloorLabel confidence={s.confidence} minConfidence={minConfidence} />
-                  <WhyBlockedChip reason={deriveSignalBlockReason(s, blockCtx)} />
-                </div>
-              </button>
-            ))
+            actionable.map((s) => {
+              const confPct = Math.round((s.confidence ?? 0) * 100);
+              const tone = railConfidenceTone(confPct);
+              const block = deriveSignalBlockReason(s, blockCtx);
+              return (
+                <MissionCard
+                  key={s.id || `${s.ticker}-${s.generated_at}`}
+                  variant="compact"
+                  as="button"
+                  onClick={() => onSelect(s.ticker)}
+                  aria-label={`Select ${s.ticker} signal`}
+                  reward={{ prefix: "CONF", value: `${confPct}%`, tone }}
+                  title={(
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {s.ticker}
+                      <SignalDirectionBadge action={s.action} size="sm" />
+                    </span>
+                  )}
+                  subtitle={block ? String(block) : "Above desk floor"}
+                  meta={{
+                    label: s.action === "HOLD" ? "HOLD" : confPct >= Math.round(minConfidence * 100) ? "LIVE" : "LOW",
+                    tone: confPct >= Math.round(minConfidence * 100) ? "var(--green)" : "var(--amber)",
+                  }}
+                  progress={{ value: confPct, tone, label: `${s.ticker} confidence` }}
+                />
+              );
+            })
           ))}
 
         {tab === "positions" &&
@@ -162,31 +175,27 @@ export default function EquityDiscoveryRail({
               tone={positionsError ? "error" : undefined}
             />
           ) : (
-            positions.map((p: any) => (
-              <button
-                key={`${p.symbol}-${p.entry_date || "x"}`}
-                type="button"
-                onClick={() => onSelect(p.symbol || p.underlying)}
-                className="instrument-card discovery-rail-row"
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <span className="mono" style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>
-                    {p.symbol || p.underlying}
-                  </span>
-                  <span
-                    className="tnum"
-                    style={{
-                      fontSize: 10,
-                      color: (p.unrealized_pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)",
-                    }}
-                  >
-                    {typeof p.unrealized_pnl === "number"
-                      ? `${p.unrealized_pnl >= 0 ? "+" : ""}$${p.unrealized_pnl.toFixed(0)}`
-                      : "—"}
-                  </span>
-                </div>
-              </button>
-            ))
+            positions.map((p: any) => {
+              const pnl = p.unrealized_pnl;
+              const pnlTone = (pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)";
+              return (
+                <MissionCard
+                  key={`${p.symbol}-${p.entry_date || "x"}`}
+                  variant="compact"
+                  as="button"
+                  onClick={() => onSelect(p.symbol || p.underlying)}
+                  aria-label={`Select ${p.symbol || p.underlying}`}
+                  reward={typeof pnl === "number" ? {
+                    prefix: "P&L",
+                    value: `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(0)}`,
+                    tone: pnlTone,
+                  } : undefined}
+                  title={p.symbol || p.underlying}
+                  subtitle={typeof p.quantity === "number" ? `${p.quantity} sh` : "Open position"}
+                  meta={{ label: "HELD", tone: "var(--accent)" }}
+                />
+              );
+            })
           ))}
       </div>
     </div>

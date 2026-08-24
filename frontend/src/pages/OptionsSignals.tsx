@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import SignalAttribution from "../components/SignalAttribution";
 import SignalDirectionBadge from "../components/SignalDirectionBadge";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
+import MissionCard from "../components/MissionCard";
 import BacktestButtons from "../components/BacktestButtons";
 import { StatTile } from "../components/ui";
 import type { SignalAttributionData } from "../types/signal";
@@ -60,23 +61,6 @@ interface OptionsSignal {
   // reasons (insufficient history, zero-sized position, etc.).
   evidence?: SignalEvidence | null;
   opportunity_score?: { score: number; components: Record<string, number> } | null;
-}
-
-function ConfidenceBar({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  const color = pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{
-        flex: 1, height: 4, background: "var(--bg-4)", borderRadius: 2, overflow: "hidden",
-      }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2 }} />
-      </div>
-      <span style={{ color, fontFamily: "var(--mono)", fontSize: 11, fontWeight: 600, minWidth: 36 }}>
-        {pct}%
-      </span>
-    </div>
-  );
 }
 
 function StatPill({ label, value }: { label: string; value: string }) {
@@ -141,6 +125,10 @@ const ACTION_GROUP_COLOR: Record<string, string> = {
   SELL_SPREAD: "var(--red)",
 };
 
+function confidenceTone(pct: number): string {
+  return pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
+}
+
 function OptionsSignalGroup({
   action,
   signals,
@@ -163,7 +151,7 @@ function OptionsSignalGroup({
         </span>
         <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+      <div className="mission-list">
         {signals.map(sig => <OptionsSignalCard key={sig.id} sig={sig} />)}
       </div>
     </div>
@@ -175,127 +163,115 @@ function OptionsSignalCard({ sig }: { sig: OptionsSignal }) {
   const intel = sig.intelligence || {};
   const isDebit = sig.action === "BUY_SPREAD";
   const net = spread.net_credit;
-  const border =
-    isDebit ? "rgba(34,197,94,0.25)" :
-    sig.action === "SELL_SPREAD" ? "rgba(239,68,68,0.25)" :
-    "var(--line-dim)";
+  const directionClass = isDebit ? "mission-card--buy" : sig.action === "SELL_SPREAD" ? "mission-card--sell" : "";
 
   const pop = sig.pop ?? intel.pop ?? sig.confidence;
+  const popPct = Math.round(pop * 100);
+  const popTone = confidenceTone(popPct);
+  const confPct = Math.round(sig.confidence * 100);
+
+  const reward = sig.opportunity_score != null
+    ? { prefix: "OPP", value: String(sig.opportunity_score.score), tone: confidenceTone(sig.opportunity_score.score) }
+    : net != null
+      ? { prefix: isDebit ? "DB" : "CR", value: `$${Math.abs(net).toFixed(2)}`, tone: "var(--green)" }
+      : { prefix: sig.pop != null ? "POP" : "CONF", value: `${popPct}%`, tone: popTone };
+
+  const subtitle = [
+    sig.strategy ? sig.strategy.replace(/_/g, " ") : null,
+    formatExp(spread.expiration) || null,
+    formatStrikePair(spread) || null,
+  ].filter(Boolean).join(" · ");
 
   return (
-    <div
-      className="instrument-card"
-      style={{
-        border: `1px solid ${border}`,
-        padding: "14px 16px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
+    <MissionCard
+      className={directionClass}
+      reward={reward}
+      title={(
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="mono" style={{ fontWeight: 700, fontSize: 15 }}>{sig.ticker}</span>
+          {formatStrikePair(spread) && (
+            <span className="mono" style={{ color: "var(--ink-dim)", fontWeight: 500, fontSize: 12 }}>
+              {formatStrikePair(spread)}
+            </span>
+          )}
+          <SignalDirectionBadge action={sig.action} size="sm" />
+          <SignalAttribution data={toAttribution(sig)} size="sm" />
+        </span>
+      )}
+      subtitle={subtitle || new Date(sig.generated_at).toLocaleTimeString()}
+      meta={{
+        label: spread.dte != null ? `${spread.dte}D` : `${confPct}%`,
+        tone: spread.dte != null ? "var(--cyan)" : popTone,
+        icon: "⏳",
+      }}
+      progress={{
+        value: popPct,
+        tone: popTone,
+        label: `${sig.ticker} probability`,
       }}
     >
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{
-            color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700,
-          }}>
-            {sig.ticker}
-            {formatStrikePair(spread) ? (
-              <span style={{ color: "var(--ink-dim)", fontWeight: 500, fontSize: 12, marginLeft: 8 }}>
-                {formatStrikePair(spread)}
-              </span>
-            ) : null}
-          </span>
-          {sig.strategy && (
-            <span style={{
-              color: "var(--cyan)", fontFamily: "var(--mono)", fontSize: 9,
-              letterSpacing: "0.08em", textTransform: "uppercase",
-            }}>
-              {sig.strategy.replace(/_/g, " ")}
-              {formatExp(spread.expiration) ? ` · ${formatExp(spread.expiration)}` : ""}
-            </span>
+      <div className="mission-card__details">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {sig.opportunity_score != null && (
+            <OpportunityScorePill value={sig.opportunity_score.score} />
           )}
+          {sig.iv_rank !== undefined && <StatPill label="IV RANK" value={sig.iv_rank.toFixed(0)} />}
+          {sig.signal_score !== undefined && <StatPill label="SCORE" value={sig.signal_score.toFixed(3)} />}
+          {intel.delta_short !== undefined && <StatPill label="Δ" value={intel.delta_short.toFixed(2)} />}
+          {intel.vega_short !== undefined && <StatPill label="V" value={intel.vega_short.toFixed(3)} />}
+          {intel.theta_short !== undefined && <StatPill label="θ" value={intel.theta_short.toFixed(3)} />}
+          {sig.kelly_fraction != null && <StatPill label="KELLY" value={`${(sig.kelly_fraction * 100).toFixed(0)}%`} />}
+          <span style={{ flex: 1 }} />
+          <AlphaEdgeInline ticker={sig.ticker} assetType="options" />
         </div>
-        <SignalDirectionBadge action={sig.action} />
-        <SignalAttribution data={toAttribution(sig)} size="sm" />
-        <span style={{ flex: 1 }} />
-        <span style={{
-          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 9,
-        }}>
-          {new Date(sig.generated_at).toLocaleTimeString()}
-        </span>
-      </div>
 
-      {/* Confidence / POP */}
-      <div>
-        <div style={{ color: "var(--ink-dim)", fontSize: 9, fontFamily: "var(--mono)", marginBottom: 4, letterSpacing: "0.08em" }}>
-          {sig.pop != null ? "POP" : "CONFIDENCE"}
-        </div>
-        <ConfidenceBar value={pop} />
-      </div>
-
-      {/* Greeks / IV pills */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        {sig.opportunity_score != null && (
-          <OpportunityScorePill value={sig.opportunity_score.score} />
-        )}
-        {sig.iv_rank !== undefined && <StatPill label="IV RANK" value={sig.iv_rank.toFixed(0)} />}
-        {sig.signal_score !== undefined && <StatPill label="SCORE" value={sig.signal_score.toFixed(3)} />}
-        {intel.delta_short !== undefined && <StatPill label="Δ" value={intel.delta_short.toFixed(2)} />}
-        {intel.vega_short !== undefined && <StatPill label="V" value={intel.vega_short.toFixed(3)} />}
-        {intel.theta_short !== undefined && <StatPill label="θ" value={intel.theta_short.toFixed(3)} />}
-        {sig.kelly_fraction != null && <StatPill label="KELLY" value={`${(sig.kelly_fraction * 100).toFixed(0)}%`} />}
-        <span style={{ flex: 1 }} />
-        <AlphaEdgeInline ticker={sig.ticker} assetType="options" />
-      </div>
-
-      {/* Spread levels */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-        gap: 8, background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
-      }}>
-        <PriceCell
-          label={isDebit ? "DEBIT" : "CREDIT"}
-          value={net !== undefined ? Math.abs(net) : undefined}
-          color="var(--ink)"
-        />
-        <PriceCell
-          label="MAX LOSS"
-          value={spread.max_loss}
-          color="var(--red)"
-        />
-        <PriceCell
-          label="BREAKEVEN"
-          value={spread.breakeven}
-          color="var(--green)"
-        />
         <div style={{
-          gridColumn: "1/-1", display: "flex", gap: 16, flexWrap: "wrap",
-          fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 4,
+          display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 8, background: "var(--bg-3)", borderRadius: 4, padding: "8px 12px",
         }}>
-          {sig.quantity !== undefined && (
-            <span>CONTRACTS: <b style={{ color: "var(--ink)" }}>{sig.quantity}</b></span>
-          )}
-          {spread.dte !== undefined && (
-            <span>DTE <b style={{ color: "var(--cyan)" }}>{spread.dte}</b></span>
-          )}
-          {intel.reward_risk !== undefined && (
-            <span>R:R <b style={{ color: "var(--cyan)" }}>{intel.reward_risk.toFixed(2)}x</b></span>
-          )}
-          {spread.short_strike !== undefined && spread.long_strike !== undefined && (
-            <span>
-              STRIKES <b style={{ color: "var(--ink)" }}>
-                {spread.short_strike}/{spread.long_strike}
-              </b>
-            </span>
-          )}
+          <PriceCell
+            label={isDebit ? "DEBIT" : "CREDIT"}
+            value={net !== undefined ? Math.abs(net) : undefined}
+            color="var(--ink)"
+          />
+          <PriceCell
+            label="MAX LOSS"
+            value={spread.max_loss}
+            color="var(--red)"
+          />
+          <PriceCell
+            label="BREAKEVEN"
+            value={spread.breakeven}
+            color="var(--green)"
+          />
+          <div style={{
+            gridColumn: "1/-1", display: "flex", gap: 16, flexWrap: "wrap",
+            fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 4,
+          }}>
+            {sig.quantity !== undefined && (
+              <span>CONTRACTS: <b style={{ color: "var(--ink)" }}>{sig.quantity}</b></span>
+            )}
+            {spread.dte !== undefined && (
+              <span>DTE <b style={{ color: "var(--cyan)" }}>{spread.dte}</b></span>
+            )}
+            {intel.reward_risk !== undefined && (
+              <span>R:R <b style={{ color: "var(--cyan)" }}>{intel.reward_risk.toFixed(2)}x</b></span>
+            )}
+            {spread.short_strike !== undefined && spread.long_strike !== undefined && (
+              <span>
+                STRIKES <b style={{ color: "var(--ink)" }}>
+                  {spread.short_strike}/{spread.long_strike}
+                </b>
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <BacktestButtons ticker={sig.ticker} assetType="options" strategy={sig.strategy} />
         </div>
       </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <BacktestButtons ticker={sig.ticker} assetType="options" strategy={sig.strategy} />
-      </div>
-    </div>
+    </MissionCard>
   );
 }
 

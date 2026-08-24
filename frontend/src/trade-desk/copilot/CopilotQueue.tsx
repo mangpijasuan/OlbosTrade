@@ -9,7 +9,7 @@ import { api } from "../../api/client";
 import SignalAttribution from "../../components/SignalAttribution";
 import SignalDirectionBadge from "../../components/SignalDirectionBadge";
 import type { SignalAttributionData } from "../../types/signal";
-import MetricHint from "../../components/MetricHint";
+import MissionCard from "../../components/MissionCard";
 import { Badge } from "../../components/ui";
 import {
   lifecycleColor,
@@ -122,108 +122,90 @@ export default function CopilotQueue() {
           </div>
         </div>
       ) : (
-        <div style={{ overflowY: "auto", flex: "0 1 auto", maxHeight: "55%" }}>
-          {pending.map((s: any) => (
-            <div
-              key={s.id}
-              className="instrument-card"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 16,
-                padding: "12px 16px",
-                margin: "6px 8px",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                    {s.ticker}
+        <div className="mission-list" style={{ overflowY: "auto", flex: "0 1 auto", maxHeight: "55%", padding: "6px 8px" }}>
+          {pending.map((s: any) => {
+            const pop = s.intelligence?.pop;
+            const ev = s.intelligence?.expected_value;
+            const confidence = typeof s.confidence === "number" ? s.confidence : null;
+            const progressVal = pop != null ? pop * 100 : confidence != null ? confidence * 100 : null;
+            const progressTone = pop != null
+              ? (pop >= 0.7 ? "var(--green)" : "var(--amber)")
+              : confidence != null && confidence >= 0.7
+                ? "var(--green)"
+                : "var(--amber)";
+
+            const reward = s.spread?.net_credit != null
+              ? { prefix: "$", value: s.spread.net_credit.toFixed(2), tone: "var(--green)" }
+              : ev != null
+                ? { prefix: "EV", value: `$${ev.toFixed(0)}`, tone: ev >= 0 ? "var(--green)" : "var(--red)" }
+                : confidence != null
+                  ? { prefix: "CONF", value: `${Math.round(confidence * 100)}%`, tone: progressTone }
+                  : undefined;
+
+            const subtitle = s.spread
+              ? `${s.spread.option_type?.toUpperCase()} ${s.spread.short_strike}/${s.spread.long_strike} · exp ${s.spread.expiration} · max loss $${s.spread.max_loss?.toFixed(2) ?? "—"}`
+              : `Equity · queued ${s.queued_at ? new Date(s.queued_at).toLocaleString() : "—"}`;
+
+            return (
+              <MissionCard
+                key={s.id}
+                reward={reward}
+                title={(
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span className="mono" style={{ fontWeight: 700 }}>{s.ticker}</span>
+                    <Badge kind="tag" tone="var(--ink-dim)">{s.asset_type?.toUpperCase() || "EQUITY"}</Badge>
+                    <SignalDirectionBadge action={s.action || s.strategy?.toUpperCase()} size="sm" />
+                    <SignalAttribution
+                      data={
+                        {
+                          direction: s.action || s.strategy?.toUpperCase() || "BUY",
+                          source: s.source ?? "unknown",
+                          timeframe: null,
+                          confidence,
+                          updatedAt: s.queued_at ?? null,
+                          authority: "advisory",
+                        } as SignalAttributionData
+                      }
+                      size="sm"
+                    />
                   </span>
-                  <Badge kind="tag" tone="var(--ink-dim)">{s.asset_type?.toUpperCase() || "EQUITY"}</Badge>
-                  <SignalDirectionBadge action={s.action || s.strategy?.toUpperCase()} />
-                  <SignalAttribution
-                    data={
-                      {
-                        direction: s.action || s.strategy?.toUpperCase() || "BUY",
-                        source: s.source ?? "unknown",
-                        timeframe: null,
-                        confidence: typeof s.confidence === "number" ? s.confidence : null,
-                        updatedAt: s.queued_at ?? null,
-                        authority: "advisory",
-                      } as SignalAttributionData
-                    }
-                    size="sm"
-                  />
-                  <Badge kind="tag" tone="var(--amber)">{s.regime?.toUpperCase() || "—"}</Badge>
-                </div>
-                {s.spread && (
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                    {s.spread.option_type?.toUpperCase()} spread{" "}
-                    {s.spread.short_strike}/{s.spread.long_strike} exp {s.spread.expiration} · credit:{" "}
-                    <span style={{ color: "var(--green)" }}>${s.spread.net_credit?.toFixed(2)}</span> · max loss:{" "}
-                    <span style={{ color: "var(--red)" }}>${s.spread.max_loss?.toFixed(2)}</span>
-                  </div>
                 )}
-                {s.intelligence && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 14,
-                      marginTop: 6,
-                      flexWrap: "wrap",
-                      fontFamily: "var(--mono)",
-                      fontSize: 10,
-                    }}
-                  >
-                    <span style={{ color: "var(--ink-dim)" }}>
-                      <MetricHint id="POP" />{" "}
-                      <b style={{ color: (s.intelligence.pop ?? 0) >= 0.7 ? "var(--green)" : "var(--amber)" }}>
-                        {((s.intelligence.pop ?? 0) * 100).toFixed(0)}%
-                      </b>
-                    </span>
-                    <span style={{ color: "var(--ink-dim)" }}>
-                      <MetricHint id="EV" />{" "}
-                      <b style={{ color: (s.intelligence.expected_value ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                        ${(s.intelligence.expected_value ?? 0).toFixed(0)}
-                      </b>
-                    </span>
-                    <span style={{ color: "var(--ink-dim)" }}>
-                      <MetricHint id="Kelly" />{" "}
-                      <b style={{ color: "var(--cyan)" }}>
-                        {((s.intelligence.kelly_fraction ?? 0) * 100).toFixed(1)}%
-                      </b>
-                    </span>
-                  </div>
+                subtitle={subtitle}
+                meta={{
+                  label: s.regime?.toUpperCase() || (pop != null ? `${Math.round(pop * 100)}% POP` : "PENDING"),
+                  tone: s.regime ? "var(--amber)" : pop != null && pop >= 0.7 ? "var(--green)" : "var(--ink-dim)",
+                  icon: "⏳",
+                }}
+                progress={progressVal != null ? {
+                  value: progressVal,
+                  tone: progressTone,
+                  label: `${s.ticker} approval readiness`,
+                } : undefined}
+                actions={(
+                  <>
+                    <button
+                      type="button"
+                      className="btn-t"
+                      disabled={acting === s.id}
+                      onClick={() => act(s.id, "approve")}
+                      style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
+                    >
+                      APPROVE
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-t danger"
+                      disabled={acting === s.id}
+                      onClick={() => act(s.id, "reject")}
+                      style={{ fontSize: 11 }}
+                    >
+                      REJECT
+                    </button>
+                  </>
                 )}
-                {!s.spread && (
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                    Equity · queued {s.queued_at ? new Date(s.queued_at).toLocaleString() : "—"}
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                <button
-                  type="button"
-                  className="btn-t"
-                  disabled={acting === s.id}
-                  onClick={() => act(s.id, "approve")}
-                  style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
-                >
-                  APPROVE
-                </button>
-                <button
-                  type="button"
-                  className="btn-t danger"
-                  disabled={acting === s.id}
-                  onClick={() => act(s.id, "reject")}
-                  style={{ fontSize: 11 }}
-                >
-                  REJECT
-                </button>
-              </div>
-            </div>
-          ))}
+              />
+            );
+          })}
         </div>
       )}
 

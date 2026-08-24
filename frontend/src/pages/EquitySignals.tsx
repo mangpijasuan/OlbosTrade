@@ -12,6 +12,7 @@ import SignalDirectionBadge from "../components/SignalDirectionBadge";
 import ConfidenceFloorLabel from "../components/ConfidenceFloorLabel";
 import WhyBlockedChip from "../components/WhyBlockedChip";
 import AlphaEdgeInline, { OpportunityScorePill } from "../components/AlphaEdgeInline";
+import MissionCard from "../components/MissionCard";
 import BacktestButtons from "../components/BacktestButtons";
 import { StatTile } from "../components/ui";
 import type { SignalAttributionData } from "../types/signal";
@@ -157,6 +158,10 @@ function toAttribution(sig: Signal): SignalAttributionData {
   };
 }
 
+function confidenceTone(pct: number): string {
+  return pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
+}
+
 function SignalCard({
   sig,
   minConfidence,
@@ -169,94 +174,99 @@ function SignalCard({
   const tp = sig.trade_plan || {};
   const ind = sig.indicators || {};
   const block = deriveSignalBlockReason(sig, blockCtx);
+  const confPct = Math.round(sig.confidence * 100);
+  const tone = confidenceTone(confPct);
+  const directionClass = sig.action === "BUY" ? "mission-card--buy" : sig.action === "SELL" ? "mission-card--sell" : "";
+
+  const reward = sig.opportunity_score != null
+    ? { prefix: "OPP", value: String(sig.opportunity_score.score), tone: confidenceTone(sig.opportunity_score.score) }
+    : sig.action !== "HOLD"
+      ? { prefix: "CONF", value: `${confPct}%`, tone }
+      : undefined;
+
+  const subtitleParts = [
+    new Date(sig.generated_at).toLocaleTimeString(),
+    block ? String(block) : null,
+    sig.reason,
+  ].filter(Boolean);
 
   return (
-    <div className="instrument-card" style={{
-      border: `1px solid ${sig.action === "BUY" ? "rgba(34,197,94,0.25)" :
-                            sig.action === "SELL" ? "rgba(239,68,68,0.25)" :
-                            "var(--line-dim)"}`,
-      padding: "14px 16px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 10,
-    }}>
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <TickerLogo ticker={sig.ticker} />
-        <span style={{
-          color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700,
-        }}>
-          {sig.ticker}
-        </span>
-        <SignalDirectionBadge action={sig.action} />
-        <SignalAttribution data={toAttribution(sig)} size="sm" />
-        <WhyBlockedChip reason={block} />
-        {sig.earnings_gated && (
-          <span style={{
-            color: "var(--amber)", border: "1px solid var(--amber)",
-            borderRadius: 3, padding: "2px 6px", fontSize: 9, letterSpacing: "0.1em",
-          }}>
-            EARNINGS GATE
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <span style={{
-          color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 9,
-        }}>
-          {new Date(sig.generated_at).toLocaleTimeString()}
-        </span>
-      </div>
-
-      {/* Confidence */}
-      {sig.action !== "HOLD" && (
-        <div>
-          <div style={{ color: "var(--ink-dim)", fontSize: 9, fontFamily: "var(--mono)", marginBottom: 4, letterSpacing: "0.08em" }}>
-            CONFIDENCE
-          </div>
-          <ConfidenceBar value={sig.confidence} minConfidence={minConfidence} />
-        </div>
-      )}
-
-      {/* Score pills */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        {sig.opportunity_score != null && (
-          <OpportunityScorePill value={sig.opportunity_score.score} />
-        )}
-        <ScorePill label="ORDERFLOW" value={sig.orderflow_score} />
-        <ScorePill label="IV BOOST" value={sig.iv_overlay_boost} />
-        {ind.rsi !== undefined && <StatPill label="RSI" value={ind.rsi.toFixed(1)} />}
-        {ind.volume_ratio !== undefined && <StatPill label="VOL×" value={ind.volume_ratio.toFixed(1)} />}
-        {ind.bb_pct_b !== undefined && <StatPill label="BB%B" value={ind.bb_pct_b.toFixed(2)} />}
-        <span style={{ flex: 1 }} />
-        <AlphaEdgeInline ticker={sig.ticker} assetType="equity" />
-      </div>
-
-      {/* Trade plan */}
-      {tp.entry_price && (
-        <div className="trade-plan-well" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-          <PriceCell label="ENTRY" value={tp.entry_price} color="var(--ink)" />
-          <PriceCell label="STOP"  value={tp.stop_price}  color="var(--red)" />
-          <PriceCell label="TARGET" value={tp.target_price} color="var(--green)" />
-          <PriceCell label="MOVE" value={tp.target_move_pct} color="var(--amber)" suffix="%" />
-          {tp.shares !== undefined && (
-            <div style={{ gridColumn: "1/-1", display: "flex", gap: 16,
-              fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 4 }}>
-              <span>SHARES: <b style={{color:"var(--ink)"}}>{tp.shares}</b></span>
-              {tp.risk_reward !== undefined && (
-                <span>R:R <b style={{color:"var(--cyan)"}}>{tp.risk_reward.toFixed(2)}x</b></span>
-              )}
-              {tp.risk_dollars !== undefined && (
-                <span>RISK <b style={{color:"var(--amber)"}}>${tp.risk_dollars.toFixed(0)}</b></span>
-              )}
-            </div>
+    <MissionCard
+      className={directionClass}
+      reward={reward}
+      title={(
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <TickerLogo ticker={sig.ticker} />
+          <span className="mono" style={{ fontWeight: 700, fontSize: 15 }}>{sig.ticker}</span>
+          <SignalDirectionBadge action={sig.action} size="sm" />
+          <SignalAttribution data={toAttribution(sig)} size="sm" />
+          <WhyBlockedChip reason={block} />
+          {sig.earnings_gated && (
+            <span style={{
+              color: "var(--amber)", border: "1px solid var(--amber)",
+              borderRadius: 3, padding: "2px 6px", fontSize: 9, letterSpacing: "0.1em",
+            }}>
+              EARNINGS GATE
+            </span>
           )}
-        </div>
+        </span>
       )}
+      subtitle={subtitleParts.join(" · ")}
+      meta={{
+        label: sig.action === "HOLD" ? "HOLD" : confPct >= Math.round(minConfidence * 100) ? "LIVE" : "LOW",
+        tone: sig.action === "HOLD" ? "var(--ink-dim)" : confPct >= Math.round(minConfidence * 100) ? "var(--green)" : "var(--amber)",
+        icon: "⏳",
+      }}
+      progress={sig.action !== "HOLD" ? {
+        value: confPct,
+        tone,
+        label: `${sig.ticker} confidence`,
+      } : undefined}
+    >
+      <div className="mission-card__details">
+        {sig.action !== "HOLD" && (
+          <ConfidenceFloorLabel confidence={sig.confidence} minConfidence={minConfidence} />
+        )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <BacktestButtons ticker={sig.ticker} assetType="equity" />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {sig.opportunity_score != null && (
+            <OpportunityScorePill value={sig.opportunity_score.score} />
+          )}
+          <ScorePill label="ORDERFLOW" value={sig.orderflow_score} />
+          <ScorePill label="IV BOOST" value={sig.iv_overlay_boost} />
+          {ind.rsi !== undefined && <StatPill label="RSI" value={ind.rsi.toFixed(1)} />}
+          {ind.volume_ratio !== undefined && <StatPill label="VOL×" value={ind.volume_ratio.toFixed(1)} />}
+          {ind.bb_pct_b !== undefined && <StatPill label="BB%B" value={ind.bb_pct_b.toFixed(2)} />}
+          <span style={{ flex: 1 }} />
+          <AlphaEdgeInline ticker={sig.ticker} assetType="equity" />
+        </div>
+
+        {tp.entry_price && (
+          <div className="trade-plan-well" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+            <PriceCell label="ENTRY" value={tp.entry_price} color="var(--ink)" />
+            <PriceCell label="STOP"  value={tp.stop_price}  color="var(--red)" />
+            <PriceCell label="TARGET" value={tp.target_price} color="var(--green)" />
+            <PriceCell label="MOVE" value={tp.target_move_pct} color="var(--amber)" suffix="%" />
+            {tp.shares !== undefined && (
+              <div style={{ gridColumn: "1/-1", display: "flex", gap: 16,
+                fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", marginTop: 4 }}>
+                <span>SHARES: <b style={{color:"var(--ink)"}}>{tp.shares}</b></span>
+                {tp.risk_reward !== undefined && (
+                  <span>R:R <b style={{color:"var(--cyan)"}}>{tp.risk_reward.toFixed(2)}x</b></span>
+                )}
+                {tp.risk_dollars !== undefined && (
+                  <span>RISK <b style={{color:"var(--amber)"}}>${tp.risk_dollars.toFixed(0)}</b></span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <BacktestButtons ticker={sig.ticker} assetType="equity" />
+        </div>
       </div>
-    </div>
+    </MissionCard>
   );
 }
 
@@ -350,7 +360,7 @@ function SignalGroup({
         </span>
         <div style={{ flex: 1, height: 1, background: "var(--line-dim)" }} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+      <div className="mission-list">
         {signals.map(sig => (
           <SignalCard
             key={sig.id}

@@ -75,7 +75,7 @@ describe("AlphaEdgePanel", () => {
   it("auto-loads positions and scan candidates on mount", async () => {
     render(<AlphaEdgePanel />);
     await waitFor(() => expect(mockedApi.getPositions).toHaveBeenCalled());
-    expect(await screen.findByText("AAPL")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /AAPL Alpha Edge/i })).toBeInTheDocument();
     expect(screen.getAllByText(/open positions/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/scan candidates/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("AMD")).toBeInTheDocument();
@@ -101,7 +101,7 @@ describe("AlphaEdgePanel", () => {
       })),
     );
     render(<AlphaEdgePanel />);
-    await waitFor(() => expect(screen.getByText("AAPL")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /AAPL Alpha Edge/i })).toBeInTheDocument());
     await lookup("TSLA");
     await waitFor(() => expect(mockedApi.getAlphaEdge).toHaveBeenCalledWith("TSLA", "equity"));
     expect(await screen.findByText("NEW")).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("AlphaEdgePanel", () => {
       return Promise.resolve(response({ ticker }));
     });
     render(<AlphaEdgePanel />);
-    await waitFor(() => expect(screen.getByText("AAPL")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /AAPL Alpha Edge/i })).toBeInTheDocument());
     await lookup("BAD");
     await waitFor(() => expect(screen.getByText(/API error 500/)).toBeInTheDocument());
   });
