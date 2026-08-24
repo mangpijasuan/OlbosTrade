@@ -317,3 +317,48 @@ async def test_guardrail_history_route_db_error_returns_empty_not_500():
     with patch("app.core.database.AsyncSessionLocal", side_effect=Exception("db down")):
         result = await main_mod.guardrail_history()
     assert result == {"events": []}
+
+
+# ── GET /api/guardrails/status — account-summary timeout ────────────────────
+# This route is also docker-compose's healthcheck for the whole backend
+# container (30s interval, 10s timeout). get_account_summary() has no
+# timeout of its own, so a stuck IBKR connection used to hang this route —
+# and every healthcheck probe with it — indefinitely, eventually marking
+# the container unhealthy and blocking deploys.
+
+def _guardrail_status_db_session():
+    """Generic session answering every guardrail_status() DB touch point
+    (PnL sums via .execute()/.scalar(), recent-trades via .scalars().all(),
+    and the peak-value lookup via .get()) with empty/zero defaults."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    result = MagicMock()
+    result.scalar.return_value = 0
+    result.scalars.return_value = MagicMock(all=lambda: [])
+    session.execute = AsyncMock(return_value=result)
+    session.get = AsyncMock(return_value=None)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    return session
+
+
+@pytest.mark.asyncio
+async def test_guardrail_status_survives_hung_account_summary():
+    import asyncio as _asyncio
+    import app.main as main_mod
+
+    async def _never_returns():
+        await _asyncio.sleep(3600)
+
+    fake_broker = MagicMock()
+    fake_broker.get_account_summary = _never_returns
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=_guardrail_status_db_session()), \
+         patch("app.broker.broker_factory.get_broker", return_value=fake_broker), \
+         patch.object(main_mod, "GUARDRAIL_STATUS_ACCOUNT_SUMMARY_TIMEOUT_SECONDS", 0.05):
+        result = await _asyncio.wait_for(main_mod.guardrail_status(), timeout=5.0)
+
+    # Falls back to starting_capital (the existing except-clause behavior)
+    # instead of hanging — the route must return, not just avoid raising.
+    assert "trading_allowed" in result

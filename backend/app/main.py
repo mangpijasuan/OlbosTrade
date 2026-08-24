@@ -2363,6 +2363,13 @@ async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: Portfol
         logger.error("Failed to persist guardrail event: %s", exc)
 
 
+# docker-compose's healthcheck for the whole backend container hits this
+# route (interval 30s, timeout 10s) — kept well under that so a slow/stuck
+# IBKR connection can't hang the healthcheck and mark the container
+# unhealthy. Module-level so tests can patch it down for speed.
+GUARDRAIL_STATUS_ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
+
+
 @app.get("/api/guardrails/status", tags=["Guardrails"])
 async def guardrail_status():
     from app.core.database import AsyncSessionLocal
@@ -2402,10 +2409,17 @@ async def guardrail_status():
         daily_pnl = weekly_pnl = monthly_pnl = 0.0
         trades_today = consecutive_losses = 0
 
-    # Get real broker account value
+    # Get real broker account value. get_account_summary() has no timeout of
+    # its own, so a slow or stuck IBKR connection would otherwise hang this
+    # endpoint (and every healthcheck probe with it — see the timeout
+    # constant above) indefinitely.
     try:
+        import asyncio as _asyncio
         from app.broker.broker_factory import get_broker
-        acct = await get_broker().get_account_summary()
+        acct = await _asyncio.wait_for(
+            get_broker().get_account_summary(),
+            timeout=GUARDRAIL_STATUS_ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+        )
         current_value = float(acct.net_liquidation)
     except Exception:
         current_value = settings.starting_capital
