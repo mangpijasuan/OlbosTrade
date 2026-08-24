@@ -13,6 +13,13 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Lightweight provenance stamp for signal_outcomes.signal_engine_version —
+# bump only when score_equity_signal()'s scoring rules materially change.
+# No snapshot/versioning table exists for equity signals (unlike options'
+# strategy_config_service) because there has never been more than one
+# version in production; add one only if that stops being true.
+EQUITY_SCORING_VERSION = "1.0.0"
+
 # ── Indicator computation ───────────────────────────────────────────────────
 
 def compute_indicators(df: pd.DataFrame) -> dict:

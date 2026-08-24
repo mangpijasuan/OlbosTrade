@@ -139,6 +139,7 @@ class TradeRecorder:
                         quantity=int(quantity or 1),
                         trading_mode_at_entry=risk_mode,
                         approved_by=approved_by or "unknown",
+                        regime=regime or None,
                         dispatch_id=dispatch_id,
                         strategy_snapshot_id=snapshot_id,
                         mfe_pnl=Decimal("0"),

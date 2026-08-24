@@ -82,6 +82,10 @@ class Trade(Base):
     # Who/what approved the trade: manual|autopilot|user|copilot|scan_panel.
     # A separate concept from trading_mode_at_entry — do not conflate the two.
     approved_by: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Market regime at entry (e.g. low_vol_trending) — same value already
+    # threaded into JournalEntry.market_context; this makes it queryable
+    # for a regime-bucketed performance ledger without a join.
+    regime: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
     # AI & execution
     signal_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4), nullable=True)

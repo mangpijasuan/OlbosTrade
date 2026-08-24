@@ -57,6 +57,7 @@ async def _load_trades_from_db(
                 hold_days=hold,
                 signal_score=float(t.signal_score or 0),
                 exit_reason=str(t.exit_reason or ""),
+                regime=t.regime,
             ))
         return trades
     except Exception as exc:
@@ -172,24 +173,10 @@ async def get_performance():
     return compute_performance(rows, settings.starting_capital)
 
 
-@router.get("/signal-score-impact")
-async def get_signal_score_impact():
-    """
-    Shows whether higher signal scores actually predict better outcomes.
-    This validates whether the AI model is working.
-
-    Score correlation > 0.2  = model has predictive value
-    Score correlation < 0    = model is backwards (bad signal)
-    Score correlation ≈ 0    = model has no predictive value
-    """
-    trades = await _load_trades_from_db()
-    if len(trades) < 10:
-        return {
-            "message": f"Need at least 10 trades — you have {len(trades)}.",
-            "correlation": None,
-        }
-
-    # Bucket by score range and show avg P&L per bucket
+def _bucket_by_score(trades: list) -> dict:
+    """Bucket trades by signal_score range and show avg P&L per bucket —
+    factored out so both the top-level result and the by_regime breakdown
+    reuse the exact same bucketing, not a second copy of it."""
     buckets = {
         "0.00-0.65 (below threshold)": [],
         "0.65-0.70 (marginal)":        [],
@@ -224,6 +211,34 @@ async def get_signal_score_impact():
             bucket_stats[label] = {
                 "trade_count": 0, "win_rate": 0, "avg_pnl": 0, "total_pnl": 0
             }
+    return bucket_stats
+
+
+@router.get("/signal-score-impact")
+async def get_signal_score_impact(regime: Optional[str] = Query(None)):
+    """
+    Shows whether higher signal scores actually predict better outcomes.
+    This validates whether the AI model is working.
+
+    Score correlation > 0.2  = model has predictive value
+    Score correlation < 0    = model is backwards (bad signal)
+    Score correlation ≈ 0    = model has no predictive value
+
+    ``regime`` filters to one market regime before bucketing. Omit it to
+    also get a ``by_regime`` breakdown — the same bucket shape computed
+    once per distinct regime present in the data, added alongside the
+    unfiltered ``by_score_bucket`` rather than a separate ledger endpoint.
+    """
+    trades = await _load_trades_from_db()
+    if regime:
+        trades = [t for t in trades if t.regime == regime]
+    if len(trades) < 10:
+        return {
+            "message": f"Need at least 10 trades — you have {len(trades)}.",
+            "correlation": None,
+        }
+
+    bucket_stats = _bucket_by_score(trades)
 
     # Overall correlation
     corr = engine._score_outcome_correlation(trades)
@@ -234,7 +249,7 @@ async def get_signal_score_impact():
         else "✗ Model may be backwards — investigate"
     )
 
-    return {
+    result = {
         "overall_correlation": round(corr, 4),
         "verdict": verdict,
         "by_score_bucket": bucket_stats,
@@ -243,3 +258,12 @@ async def get_signal_score_impact():
             "better trade outcomes. Target > 0.20 after 50+ trades."
         )
     }
+
+    if not regime:
+        regimes = sorted({t.regime for t in trades if t.regime})
+        result["by_regime"] = {
+            r: _bucket_by_score([t for t in trades if t.regime == r])
+            for r in regimes
+        }
+
+    return result

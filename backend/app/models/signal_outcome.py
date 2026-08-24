@@ -75,6 +75,14 @@ class SignalOutcome(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+    # Market regime at signal generation time — enables a regime-bucketed
+    # performance ledger alongside the existing confidence buckets.
+    regime: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # equity_signal_engine.EQUITY_SCORING_VERSION at generation time — a
+    # lightweight provenance stamp; equity scoring has never had more than
+    # one version, so a full snapshot/versioning table isn't warranted yet.
+    signal_engine_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
     __table_args__ = (
         Index("idx_signal_outcomes_status", "status"),
         Index("idx_signal_outcomes_ticker", "ticker"),

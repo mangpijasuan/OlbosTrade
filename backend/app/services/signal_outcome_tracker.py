@@ -65,6 +65,7 @@ async def record_signal(signal: dict) -> Optional[str]:
     try:
         from app.core.database import AsyncSessionLocal
         from app.models.signal_outcome import SignalOutcome
+        from app.services.equity_signal_engine import EQUITY_SCORING_VERSION
 
         indicators = signal.get("indicators") or {}
         generated_at_raw = signal.get("generated_at")
@@ -97,6 +98,8 @@ async def record_signal(signal: dict) -> Optional[str]:
                     bb_pct_b=_dec_or_none(indicators.get("bb_pct_b")),
                     volume_ratio=_dec_or_none(indicators.get("volume_ratio")),
                     atr=_dec_or_none(indicators.get("atr")),
+                    regime=signal.get("regime"),
+                    signal_engine_version=EQUITY_SCORING_VERSION,
                 ))
         return str(row_id)
     except Exception as exc:
@@ -247,10 +250,27 @@ CONFIDENCE_BUCKETS = [
 ]
 
 
+def _confidence_buckets(outcomes: list[dict]) -> dict:
+    """Factored out so both the top-level result and the by_regime
+    breakdown reuse the exact same bucketing, not a second copy of it."""
+    by_confidence = {}
+    for label, lo, hi in CONFIDENCE_BUCKETS:
+        bucket = [o for o in outcomes if lo <= float(o["confidence"]) < hi]
+        b_target = [o for o in bucket if o["status"] == "target_hit"]
+        b_stop = [o for o in bucket if o["status"] == "stop_hit"]
+        b_decisive = len(b_target) + len(b_stop)
+        by_confidence[label] = {
+            "count": len(bucket),
+            "hit_rate": round(len(b_target) / b_decisive, 3) if b_decisive > 0 else None,
+        }
+    return by_confidence
+
+
 def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
     """
     Aggregate hit rate / days-to-resolve stats from a list of outcome dicts
-    (each with at least: status, confidence, days_to_resolve, ticker).
+    (each with at least: status, confidence, days_to_resolve, ticker,
+    regime).
 
     hit_rate excludes "expired" and "pending" from the denominator — it
     answers "of the signals that actually resolved one way or the other,
@@ -286,16 +306,13 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         })
     ticker_breakdown.sort(key=lambda x: x["total"], reverse=True)
 
-    by_confidence = {}
-    for label, lo, hi in CONFIDENCE_BUCKETS:
-        bucket = [o for o in outcomes if lo <= float(o["confidence"]) < hi]
-        b_target = [o for o in bucket if o["status"] == "target_hit"]
-        b_stop = [o for o in bucket if o["status"] == "stop_hit"]
-        b_decisive = len(b_target) + len(b_stop)
-        by_confidence[label] = {
-            "count": len(bucket),
-            "hit_rate": round(len(b_target) / b_decisive, 3) if b_decisive > 0 else None,
-        }
+    by_confidence = _confidence_buckets(outcomes)
+
+    regimes = sorted({o.get("regime") for o in outcomes if o.get("regime")})
+    by_regime = {
+        r: _confidence_buckets([o for o in outcomes if o.get("regime") == r])
+        for r in regimes
+    }
 
     return {
         "total": total,
@@ -307,5 +324,6 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         "avg_days_to_target": _avg_days(target_hit),
         "avg_days_to_stop": _avg_days(stop_hit),
         "by_confidence_bucket": by_confidence,
+        "by_regime": by_regime,
         "by_ticker": ticker_breakdown[:25],
     }

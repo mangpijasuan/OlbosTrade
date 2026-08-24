@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
 
+from app.services.equity_signal_engine import EQUITY_SCORING_VERSION
 from app.services.signal_outcome_tracker import (
     _resolve_one,
     check_pending_outcomes,
@@ -81,6 +82,56 @@ async def test_record_signal_inserts_row():
     assert inserted.ticker == "NVDA"
     assert inserted.status == "pending"
     assert float(inserted.entry_price) == 100.0
+
+
+@pytest.mark.asyncio
+async def test_record_signal_stamps_regime_and_engine_version():
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    begin = AsyncMock()
+    begin.__aenter__ = AsyncMock(return_value=session)
+    begin.__aexit__ = AsyncMock(return_value=False)
+    session.begin = MagicMock(return_value=begin)
+    session.add = MagicMock()
+
+    signal = {
+        "id": "sig-2", "ticker": "AMD", "action": "SELL", "confidence": 0.75,
+        "regime": "low_vol_trending",
+        "generated_at": "2026-01-05T14:30:00+00:00",
+        "trade_plan": {"entry_price": 50.0, "stop_price": 52.0, "target_price": 44.0},
+    }
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        await record_signal(signal)
+
+    inserted = session.add.call_args.args[0]
+    assert inserted.regime == "low_vol_trending"
+    assert inserted.signal_engine_version == EQUITY_SCORING_VERSION
+
+
+@pytest.mark.asyncio
+async def test_record_signal_regime_none_when_absent_from_signal():
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    begin = AsyncMock()
+    begin.__aenter__ = AsyncMock(return_value=session)
+    begin.__aexit__ = AsyncMock(return_value=False)
+    session.begin = MagicMock(return_value=begin)
+    session.add = MagicMock()
+
+    signal = {
+        "id": "sig-3", "ticker": "MSFT", "action": "BUY", "confidence": 0.75,
+        "generated_at": "2026-01-05T14:30:00+00:00",
+        "trade_plan": {"entry_price": 100.0, "stop_price": 96.0, "target_price": 108.0},
+    }
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        await record_signal(signal)
+
+    inserted = session.add.call_args.args[0]
+    assert inserted.regime is None
+    # signal_engine_version is stamped unconditionally, regardless of regime.
+    assert inserted.signal_engine_version == EQUITY_SCORING_VERSION
 
 
 @pytest.mark.asyncio
@@ -304,6 +355,40 @@ def test_compute_stats_confidence_bucket_boundaries():
     stats = compute_signal_outcome_stats(outcomes)
     assert stats["by_confidence_bucket"]["0.00-0.65"]["count"] == 1
     assert stats["by_confidence_bucket"]["0.80-1.00"]["count"] == 1
+
+
+def test_compute_stats_by_regime_groups_correctly():
+    outcomes = [
+        {"ticker": "A", "status": "target_hit", "confidence": 0.82, "days_to_resolve": 1,
+         "regime": "low_vol_trending"},
+        {"ticker": "B", "status": "stop_hit", "confidence": 0.71, "days_to_resolve": 2,
+         "regime": "low_vol_trending"},
+        {"ticker": "C", "status": "target_hit", "confidence": 0.90, "days_to_resolve": 1,
+         "regime": "high_vol"},
+    ]
+    stats = compute_signal_outcome_stats(outcomes)
+    assert set(stats["by_regime"].keys()) == {"low_vol_trending", "high_vol"}
+    # Same bucket shape as the top-level by_confidence_bucket, scoped to
+    # just that regime's outcomes.
+    assert stats["by_regime"]["low_vol_trending"]["0.80-1.00"]["count"] == 1
+    assert stats["by_regime"]["low_vol_trending"]["0.70-0.75"]["count"] == 1
+    assert stats["by_regime"]["high_vol"]["0.80-1.00"]["count"] == 1
+    assert stats["by_regime"]["high_vol"]["0.70-0.75"]["count"] == 0
+
+
+def test_compute_stats_by_regime_excludes_missing_regime():
+    outcomes = [
+        {"ticker": "A", "status": "target_hit", "confidence": 0.82, "days_to_resolve": 1,
+         "regime": "low_vol_trending"},
+        {"ticker": "B", "status": "target_hit", "confidence": 0.82, "days_to_resolve": 1},
+        {"ticker": "C", "status": "target_hit", "confidence": 0.82, "days_to_resolve": 1,
+         "regime": None},
+    ]
+    stats = compute_signal_outcome_stats(outcomes)
+    # Missing/None regime never becomes a spurious bucket key — those rows
+    # still count in by_confidence_bucket/by_ticker, just not by_regime.
+    assert set(stats["by_regime"].keys()) == {"low_vol_trending"}
+    assert stats["total"] == 3
 
 
 # ── Wiring into the equity scanner ───────────────────────────────────────────

@@ -41,20 +41,26 @@ async def _load_outcomes() -> list[dict]:
             "target_move_pct":   float(r.target_move_pct) if r.target_move_pct is not None else None,
             "max_favorable_pct": float(r.max_favorable_pct) if r.max_favorable_pct is not None else None,
             "max_adverse_pct":   float(r.max_adverse_pct) if r.max_adverse_pct is not None else None,
+            "regime":            r.regime,
         }
         for r in rows
     ]
 
 
 @router.get("/outcomes")
-async def get_signal_outcomes():
+async def get_signal_outcomes(regime: Optional[str] = Query(None)):
     """
     Hit rate / days-to-resolve breakdown across every tracked equity signal
     — not just the ones that were traded. See signal_outcome_tracker.py.
+
+    ``regime`` filters to one market regime. Omit it to also get a
+    ``by_regime`` breakdown alongside the unfiltered ``by_confidence_bucket``.
     """
     from app.services.signal_outcome_tracker import compute_signal_outcome_stats
 
     outcomes = await _load_outcomes()
+    if regime:
+        outcomes = [o for o in outcomes if o["regime"] == regime]
     if not outcomes:
         return {
             "message": (
