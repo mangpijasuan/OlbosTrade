@@ -65,11 +65,15 @@ def _chunked(items: list, size: int) -> "list[list]":
 
 
 # How long to wait for an IBKR historical-data response before giving up.
-# reqHistoricalDataAsync has no timeout of its own — a slow/stuck TWS
-# response hangs the caller (and, if called via the coordinator, leaks a
-# worker) indefinitely otherwise. get_bars()/get_index_bars() are the only
-# callers; on timeout they raise, and their one caller (DataFetcher.
-# fetch_ohlcv) already falls back to yfinance on any exception.
+# Neither qualifyContractsAsync nor reqHistoricalDataAsync has a timeout of
+# its own — either can hang the caller indefinitely on a slow/stuck TWS
+# response (confirmed live: a degraded connection hung qualifyContractsAsync
+# specifically, not just the reqHistoricalDataAsync call this was first
+# written to guard). get_bars()/get_index_bars() wrap their whole fetch body
+# (qualify + historical request) in one bounded wait_for so either step can
+# trip it. They're the only callers of this timeout; on timeout they raise,
+# and their one caller (DataFetcher.fetch_ohlcv) already falls back to
+# yfinance on any exception.
 HISTORICAL_DATA_TIMEOUT_SECONDS = 30.0
 
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
@@ -924,25 +928,25 @@ class IBKRClient(BrokerInterface):
         """
         self._require_connection()
         stock = Stock(ticker, "SMART", "USD")
-        await self.ib.qualifyContractsAsync(stock)
 
         # Format end date for IBKR: "YYYYMMDD 23:59:59" or "" for latest
         end_dt = ""
         if end_date:
             end_dt = end_date.replace("-", "") + " 23:59:59"
 
-        try:
-            bars_data = await asyncio.wait_for(
-                self.ib.reqHistoricalDataAsync(
-                    stock,
-                    endDateTime=end_dt,
-                    durationStr=f"{limit} D",
-                    barSizeSetting="1 day",
-                    whatToShow="TRADES",
-                    useRTH=True,
-                ),
-                timeout=HISTORICAL_DATA_TIMEOUT_SECONDS,
+        async def _fetch() -> list:
+            await self.ib.qualifyContractsAsync(stock)
+            return await self.ib.reqHistoricalDataAsync(
+                stock,
+                endDateTime=end_dt,
+                durationStr=f"{limit} D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=True,
             )
+
+        try:
+            bars_data = await asyncio.wait_for(_fetch(), timeout=HISTORICAL_DATA_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             raise asyncio.TimeoutError(
                 f"IBKR historical data request timed out after "
@@ -967,19 +971,20 @@ class IBKRClient(BrokerInterface):
         """
         self._require_connection()
         contract = Index(symbol, exchange, "USD")
-        await self.ib.qualifyContractsAsync(contract)
-        try:
-            bars_data = await asyncio.wait_for(
-                self.ib.reqHistoricalDataAsync(
-                    contract,
-                    endDateTime="",
-                    durationStr=f"{limit} D",
-                    barSizeSetting="1 day",
-                    whatToShow="TRADES",
-                    useRTH=True,
-                ),
-                timeout=HISTORICAL_DATA_TIMEOUT_SECONDS,
+
+        async def _fetch() -> list:
+            await self.ib.qualifyContractsAsync(contract)
+            return await self.ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime="",
+                durationStr=f"{limit} D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=True,
             )
+
+        try:
+            bars_data = await asyncio.wait_for(_fetch(), timeout=HISTORICAL_DATA_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             raise asyncio.TimeoutError(
                 f"IBKR historical data request timed out after "

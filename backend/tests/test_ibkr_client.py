@@ -282,6 +282,25 @@ async def test_get_bars_raises_clear_timeout_when_ibkr_hangs(client):
 
 
 @pytest.mark.asyncio
+async def test_get_bars_raises_clear_timeout_when_qualify_hangs(client):
+    """The timeout must cover qualifyContractsAsync too, not just
+    reqHistoricalDataAsync — confirmed live in production that a degraded
+    IBKR connection can hang at the qualify step specifically, before the
+    historical-data request is even sent."""
+    import asyncio as _asyncio
+
+    async def _never_returns(*args, **kwargs):
+        await _asyncio.sleep(3600)
+
+    client.ib.qualifyContractsAsync = _never_returns
+    client.ib.reqHistoricalDataAsync = AsyncMock(return_value=[])
+
+    with patch("app.broker.ibkr_client.HISTORICAL_DATA_TIMEOUT_SECONDS", 0.05):
+        with pytest.raises(_asyncio.TimeoutError, match="SPY"):
+            await client.get_bars("SPY", limit=5)
+
+
+@pytest.mark.asyncio
 async def test_get_index_bars_raises_clear_timeout_when_ibkr_hangs(client):
     """Same fix applies to get_index_bars() (VIX etc.) — identical
     unguarded reqHistoricalDataAsync call, same hang risk."""
