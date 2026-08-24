@@ -850,6 +850,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
       2. Guardrail risk check (fail closed — DB error = refused)
       2b. Portfolio gate — concentration / max positions / heat (Step 8)
       3. Duplicate guard
+      3b. Cooldown after close (fail closed on DB error)
       4. Broker submission (+ account mode + margin)
       5. Fill-confirmed recording (CRITICAL alert on failure)
     """
@@ -1109,6 +1110,49 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         # duplicate order through the one check meant to catch it.
         logger.error("Duplicate check failed for %s (fail closed): %s", ticker, _dup_exc)
         return _blocked(f"duplicate_check_error: {_dup_exc}")
+
+    # ── Stage 3b: Cooldown after close ──────────────────────────────────────────
+    # Any position close (stop, target, manual, rotation) sets a floor before the
+    # same (underlying, asset class) can be immediately re-entered — stops a name
+    # that just got stopped out from being whipsawed right back in. Keyed
+    # identically to Stage 3's duplicate guard via the same asset-class helpers.
+    from app.core.config import settings as _cd_cfg
+    _cooldown_hours = getattr(_cd_cfg, "position_cooldown_hours", 0)
+    if _cooldown_hours > 0:
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+            from app.services.trade_identity import asset_class_from_signal, asset_class_from_trade
+            from sqlalchemy import select
+            wanted = asset_class_from_signal({**signal, "asset_type": asset_type})
+            async with AsyncSessionLocal() as _db:
+                rows = (await _db.execute(
+                    select(Trade)
+                    .where(
+                        Trade.underlying == ticker,
+                        Trade.status == "closed",
+                        Trade.exit_date.isnot(None),
+                    )
+                    .order_by(Trade.exit_date.desc())
+                )).scalars().all()
+            recent_close = next(
+                (t for t in rows if asset_class_from_trade(t) == wanted),
+                None,
+            )
+            if recent_close is not None:
+                elapsed = datetime.now(timezone.utc) - recent_close.exit_date
+                if elapsed < timedelta(hours=_cooldown_hours):
+                    logger.info(
+                        "Skipping %s %s — closed %s ago, inside %sh cooldown",
+                        ticker, wanted, elapsed, _cooldown_hours,
+                    )
+                    return _skipped("cooldown_active")
+        except Exception as _cd_exc:
+            # Fail closed, matching Stage 3's own posture a few lines above — a
+            # DB blip here must not silently let a possible re-entry through the
+            # one check meant to catch it.
+            logger.error("Cooldown check failed for %s (fail closed): %s", ticker, _cd_exc)
+            return _blocked(f"cooldown_check_error: {_cd_exc}")
 
     # ── Stages 4+5: Broker submission + fill recording ─────────────────────────
     action = signal.get("action", "")

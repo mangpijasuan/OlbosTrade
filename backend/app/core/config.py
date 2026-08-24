@@ -179,6 +179,13 @@ class Settings(BaseSettings):
     # to even be eligible for closure; it never trades off against quality
     # score or confidence.
     position_rotation_winner_pnl_floor: float = Field(default=0.0)
+    # Hours after ANY position close (stop, target, manual, rotation) before
+    # the same (underlying, asset class) can be re-entered — stops a name
+    # that just got stopped out from being whipsawed right back in. 0 =
+    # disabled (skips the check entirely, no DB query). 2h spans several
+    # scan cycles (equity every 15min, options every 30min) without
+    # suppressing a legitimate same-day re-entry.
+    position_cooldown_hours: int = Field(default=2)
 
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)

@@ -4,7 +4,7 @@ and the options execution branch."""
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -548,6 +548,127 @@ async def test_duplicate_guard_allows_other_asset_class_same_underlying():
         res = await _execute_signal(_options_signal(), approved_by="manual")
     assert res["result"] == "submitted"
     broker.place_order.assert_awaited_once()
+
+
+def _dup_and_cooldown_session(dup_existing=None, cooldown_existing=None):
+    """Stage 3 (open/pending) executes first, Stage 3b (closed/cooldown)
+    second — session.execute must answer them in that order."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    dup_rows = [] if not dup_existing else (
+        dup_existing if isinstance(dup_existing, list) else [dup_existing]
+    )
+    cd_rows = [] if not cooldown_existing else (
+        cooldown_existing if isinstance(cooldown_existing, list) else [cooldown_existing]
+    )
+    dup_result = MagicMock()
+    dup_result.scalars.return_value = MagicMock(all=lambda: dup_rows)
+    cd_result = MagicMock()
+    cd_result.scalars.return_value = MagicMock(all=lambda: cd_rows)
+    session.execute = AsyncMock(side_effect=[dup_result, cd_result])
+    return session
+
+
+def _closed_trade(underlying="SPY", asset_class="options", exit_date=None):
+    t = MagicMock()
+    t.underlying = underlying
+    t.status = "closed"
+    t.exit_date = exit_date or datetime.now(timezone.utc)
+    if asset_class == "equity":
+        t.spread_type = "equity_long"
+        t.strategy = "equity"
+    else:
+        t.spread_type = "bull_put_spread"
+        t.strategy = "bull_put_spread"
+    return t
+
+
+@pytest.mark.asyncio
+async def test_cooldown_blocks_recently_closed_same_ticker_same_asset_class():
+    closed = _closed_trade(exit_date=datetime.now(timezone.utc) - timedelta(minutes=30))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_dup_and_cooldown_session(cooldown_existing=closed)), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "skipped" and "cooldown_active" in res["reason"]
+
+
+@pytest.mark.asyncio
+async def test_cooldown_allows_different_asset_class_same_underlying():
+    """A closed SPY equity trade must not cooldown-block a new SPY options
+    signal (and vice versa) — matches Stage 3's own asset-class carve-out."""
+    closed_equity = _closed_trade(
+        asset_class="equity", exit_date=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-cd", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_dup_and_cooldown_session(cooldown_existing=closed_equity)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-cd")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cooldown_allows_close_older_than_window():
+    closed = _closed_trade(exit_date=datetime.now(timezone.utc) - timedelta(hours=3))
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-old", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_dup_and_cooldown_session(cooldown_existing=closed)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-old")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_cooldown_disabled_skips_check():
+    closed = _closed_trade(exit_date=datetime.now(timezone.utc) - timedelta(minutes=1))
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-off", status="submitted"))
+    session = _dup_and_cooldown_session(cooldown_existing=closed)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 0), \
+         patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-off")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+    assert session.execute.call_count == 1  # only Stage 3's call — Stage 3b never ran
+
+
+@pytest.mark.asyncio
+async def test_cooldown_check_db_error_fails_closed():
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    dup_result = MagicMock()
+    dup_result.scalars.return_value = MagicMock(all=lambda: [])
+    session.execute = AsyncMock(side_effect=[dup_result, RuntimeError("db down")])
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "blocked" and "cooldown_check_error" in res["reason"]
 
 
 # ── Stage 1c: Equity Desk composer confidence-gate carve-out ──────────────────────
