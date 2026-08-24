@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Optional
@@ -16,6 +16,7 @@ from app.services.position_rotation import (
     close_options_trade,
     select_rotation_targets,
     rotate_for_new_equity_entry,
+    _options_unrealized_by_underlying,
 )
 
 
@@ -204,6 +205,47 @@ def test_skips_options_spread_types():
         count=2,
     )
     assert [p.trade_id for p in picks] == ["2", "3"]
+
+
+def test_accepts_put_and_call_spread_types():
+    """The widened candidate pool (5b) must accept real options spread_type
+    values ('put'/'call') — distinct from the arbitrary-string exclusion
+    test above, which uses 'bull_put_spread' (never a real Trade.spread_type
+    value for options)."""
+    picks = select_rotation_targets(
+        [
+            _c("1", "SPY", pnl=100, quality=1, spread="put"),   # winner — protected
+            _c("2", "QQQ", pnl=-50, quality=30, spread="call"),
+            _c("3", "IWM", pnl=-40, quality=70, spread="equity_long"),
+        ],
+        incoming_ticker="TSLA",
+        count=2,
+    )
+    assert [p.trade_id for p in picks] == ["2", "3"]
+
+
+@pytest.mark.asyncio
+async def test_options_unrealized_by_underlying_sums_legs_excludes_equity():
+    positions = [
+        SimpleNamespace(underlying="SPY", asset_type="option", unrealized_pnl=150.0),
+        SimpleNamespace(underlying="SPY", asset_type="option", unrealized_pnl=-40.0),
+        SimpleNamespace(underlying="AAPL", asset_type="equity", unrealized_pnl=999.0),
+        SimpleNamespace(underlying="QQQ", asset_type="option", unrealized_pnl=None),
+    ]
+    broker = MagicMock()
+    broker.get_positions = AsyncMock(return_value=positions)
+
+    totals = await _options_unrealized_by_underlying(broker)
+
+    assert totals == {"SPY": 110.0}
+
+
+@pytest.mark.asyncio
+async def test_options_unrealized_by_underlying_fetch_failure_returns_empty():
+    broker = MagicMock()
+    broker.get_positions = AsyncMock(side_effect=RuntimeError("broker down"))
+    totals = await _options_unrealized_by_underlying(broker)
+    assert totals == {}
 
 
 @pytest.mark.asyncio
@@ -433,3 +475,193 @@ async def test_close_options_trade_not_filled_skips_record_exit():
 
     record_mock.assert_not_awaited()
     assert out["status"] == "submitted"
+
+
+# ── rotate_for_new_equity_entry — widened (options-eligible) candidate pool ──
+
+def _open_option_row(tid, underlying, spread_type="put", signal_score=0.5,
+                      days_ago=0):
+    entry = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    if days_ago:
+        entry = entry - timedelta(days=days_ago)
+    return SimpleNamespace(
+        id=tid, underlying=underlying, spread_type=spread_type,
+        short_strike=Decimal("100"), long_strike=Decimal("95"),
+        quantity=2, credit_received=Decimal("1.5"), mae_pnl=None,
+        signal_score=signal_score, entry_date=entry,
+    )
+
+
+def _open_equity_row(tid, underlying, spread_type="equity_long",
+                      signal_score=0.5):
+    return SimpleNamespace(
+        id=tid, underlying=underlying, spread_type=spread_type,
+        quantity=10, credit_received=100, signal_score=signal_score,
+        entry_date=datetime(2026, 8, 20, tzinfo=timezone.utc),
+    )
+
+
+def _rotation_session(trades):
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.execute = AsyncMock(return_value=MagicMock(
+        scalars=MagicMock(return_value=MagicMock(all=lambda: trades)),
+    ))
+    return session
+
+
+@pytest.mark.asyncio
+async def test_rotate_closes_worst_options_position_via_close_options_trade(monkeypatch):
+    from app.core import config as cfg
+    monkeypatch.setattr(cfg.settings, "position_rotation_on_max", True)
+    monkeypatch.setattr(cfg.settings, "position_rotation_closes", 1)
+
+    trades = [
+        _open_option_row("t1", "SPY", signal_score=0.9),
+        _open_option_row("t2", "QQQ", signal_score=0.2),
+    ]
+    session = _rotation_session(trades)
+    closed: list[str] = []
+
+    async def fake_close(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.position_rotation._options_unrealized_by_underlying",
+               new=AsyncMock(return_value={"SPY": -80.0, "QQQ": -10.0})), \
+         patch("app.services.alpha_edge_engine.compute_options_hold_score",
+               side_effect=lambda t: {"SPY": 20, "QQQ": 60}[t.underlying]), \
+         patch("app.services.position_rotation.close_options_trade", side_effect=fake_close) as opt_mock, \
+         patch("app.services.position_rotation.close_equity_trade") as eq_mock:
+        out = await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+
+    assert closed == ["SPY"]  # worse hold score among the losers
+    opt_mock.assert_awaited_once()
+    eq_mock.assert_not_called()
+    assert len(out) == 1
+
+
+@pytest.mark.asyncio
+async def test_rotate_protects_profitable_options_position(monkeypatch):
+    from app.core import config as cfg
+    monkeypatch.setattr(cfg.settings, "position_rotation_on_max", True)
+    monkeypatch.setattr(cfg.settings, "position_rotation_closes", 1)
+
+    trades = [
+        _open_option_row("t1", "SPY", signal_score=0.1),   # profitable, weakest confidence
+        _open_option_row("t2", "QQQ", signal_score=0.9),   # loser
+    ]
+    session = _rotation_session(trades)
+    closed: list[str] = []
+
+    async def fake_close(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.position_rotation._options_unrealized_by_underlying",
+               new=AsyncMock(return_value={"SPY": 200.0, "QQQ": -30.0})), \
+         patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=50), \
+         patch("app.services.position_rotation.close_options_trade", side_effect=fake_close):
+        out = await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+
+    assert "SPY" not in closed
+    assert closed == ["QQQ"]
+
+
+@pytest.mark.asyncio
+async def test_rotate_fetches_broker_positions_exactly_once_for_options(monkeypatch):
+    from app.core import config as cfg
+    monkeypatch.setattr(cfg.settings, "position_rotation_on_max", True)
+    monkeypatch.setattr(cfg.settings, "position_rotation_closes", 2)
+
+    trades = [
+        _open_option_row("t1", "SPY", signal_score=0.9),
+        _open_option_row("t2", "QQQ", signal_score=0.2),
+        _open_option_row("t3", "IWM", signal_score=0.5),
+    ]
+    session = _rotation_session(trades)
+    broker = MagicMock()
+    broker.get_positions = AsyncMock(return_value=[])
+
+    async def fake_close(trade, **kwargs):
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=50), \
+         patch("app.services.position_rotation.close_options_trade", side_effect=fake_close):
+        await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=broker)
+
+    broker.get_positions.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rotate_mixed_pool_closes_worse_ranked_options_over_equity(monkeypatch):
+    from app.core import config as cfg
+    monkeypatch.setattr(cfg.settings, "position_rotation_on_max", True)
+    monkeypatch.setattr(cfg.settings, "position_rotation_closes", 1)
+
+    trades = [
+        _open_equity_row("t1", "AAPL", signal_score=0.9),
+        _open_option_row("t2", "SPY", signal_score=0.9),
+    ]
+    session = _rotation_session(trades)
+    closed: list[str] = []
+
+    async def fake_close_eq(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    async def fake_close_opt(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.position_rotation._mid_price", return_value=90.0), \
+         patch("app.services.alpha_edge_engine.compute_equity_hold_score", return_value=80), \
+         patch("app.services.position_rotation._options_unrealized_by_underlying",
+               new=AsyncMock(return_value={"SPY": -50.0})), \
+         patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=10), \
+         patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
+         patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
+        await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+
+    # SPY (options, quality=10) ranks worse than AAPL (equity, quality=80) -> SPY closed.
+    assert closed == ["SPY"]
+
+
+@pytest.mark.asyncio
+async def test_rotate_mixed_pool_closes_worse_ranked_equity_over_options(monkeypatch):
+    from app.core import config as cfg
+    monkeypatch.setattr(cfg.settings, "position_rotation_on_max", True)
+    monkeypatch.setattr(cfg.settings, "position_rotation_closes", 1)
+
+    trades = [
+        _open_equity_row("t1", "AAPL", signal_score=0.9),
+        _open_option_row("t2", "SPY", signal_score=0.9),
+    ]
+    session = _rotation_session(trades)
+    closed: list[str] = []
+
+    async def fake_close_eq(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    async def fake_close_opt(trade, **kwargs):
+        closed.append(trade.underlying)
+        return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.position_rotation._mid_price", return_value=90.0), \
+         patch("app.services.alpha_edge_engine.compute_equity_hold_score", return_value=5), \
+         patch("app.services.position_rotation._options_unrealized_by_underlying",
+               new=AsyncMock(return_value={"SPY": -50.0})), \
+         patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=90), \
+         patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
+         patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
+        await rotate_for_new_equity_entry(incoming_ticker="TSLA", broker=MagicMock())
+
+    # AAPL (equity, quality=5) ranks worse than SPY (options, quality=90) -> AAPL closed.
+    assert closed == ["AAPL"]

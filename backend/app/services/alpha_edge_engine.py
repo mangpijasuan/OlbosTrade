@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 NEW = "new"
 CONFIRMED = "confirmed"
@@ -165,6 +165,27 @@ def compute_options_exit_score(
         return 0
     adverse = abs(min(mae_pnl, 0.0))
     return round(_clamp(100 * adverse / max_loss_est))
+
+
+def compute_options_hold_score(trade: Any) -> Optional[int]:
+    """
+    Sync, no I/O — Position Quality Score building block for an already-held
+    options position, used by position_rotation.py. Mirrors
+    compute_equity_hold_score's naming for the candidate-building loop but
+    needs no await: everything is already on the Trade row (mae_pnl kept
+    live by trade_excursion_tracker's 60s scheduler job off real broker
+    marks). Never returns None — matches compute_options_exit_score's own
+    behavior (mae_pnl=None or non-positive max_loss_est yields exit_score=0,
+    i.e. hold_score=100), consistent with how compute_options_alpha_edge
+    already uses this same formula.
+    """
+    short_strike = float(getattr(trade, "short_strike", None) or 0)
+    long_strike = float(getattr(trade, "long_strike", None) or 0)
+    credit = float(getattr(trade, "credit_received", None) or 0)
+    mae = trade.mae_pnl
+    mae = float(mae) if mae is not None else None
+    exit_score = compute_options_exit_score(short_strike, long_strike, credit, mae)
+    return round(_clamp(100 - exit_score))
 
 
 def options_lifecycle_state(trade_status: Optional[str], exit_score: Optional[int]) -> str:

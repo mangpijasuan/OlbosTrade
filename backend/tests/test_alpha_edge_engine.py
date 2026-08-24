@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from types import SimpleNamespace
+
 from app.services.alpha_edge_engine import (
     CONFIRMED,
     DECAYING,
@@ -15,6 +17,7 @@ from app.services.alpha_edge_engine import (
     NEW,
     compute_equity_scores,
     compute_options_exit_score,
+    compute_options_hold_score,
     equity_lifecycle_state,
     equity_score_trend,
     options_lifecycle_state,
@@ -124,6 +127,28 @@ def test_options_exit_score_clamped_at_100_beyond_max_loss():
 def test_options_exit_score_zero_when_max_loss_non_positive():
     # credit >= width*100 → non-positive theoretical max loss
     assert compute_options_exit_score(450, 445, 10.0, -50.0) == 0
+
+
+# ── compute_options_hold_score ───────────────────────────────────────────────
+
+def _opt_trade(short=450, long=445, credit=1.5, mae=None):
+    return SimpleNamespace(short_strike=short, long_strike=long,
+                            credit_received=credit, mae_pnl=mae)
+
+
+def test_hold_score_options_no_mae_defaults_to_full_hold():
+    assert compute_options_hold_score(_opt_trade(mae=None)) == 100
+
+
+def test_hold_score_options_no_adverse_excursion():
+    assert compute_options_hold_score(_opt_trade(mae=0.0)) == 100
+
+
+def test_hold_score_options_scales_inversely_with_mae():
+    # max_loss = (450-445)*100 - 1.5*100 = 350; exit=50 at mae=-175 -> hold=50
+    assert compute_options_hold_score(_opt_trade(mae=-175.0)) == 50
+    # exit=100 at mae=-350 -> hold=0
+    assert compute_options_hold_score(_opt_trade(mae=-350.0)) == 0
 
 
 # ── options_lifecycle_state ──────────────────────────────────────────────────

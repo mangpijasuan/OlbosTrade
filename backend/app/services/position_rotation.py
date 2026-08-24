@@ -2,9 +2,12 @@
 Position rotation — free slots when at max concurrent opens.
 
 When a new equity entry is blocked by max_positions and
-``settings.position_rotation_on_max`` is True, close N open equity
-positions so the new trade can proceed. Winner Protection is a hard floor,
-not a ranking preference: a position with unrealized P&L above
+``settings.position_rotation_on_max`` is True, close N open positions so
+the new trade can proceed. The trigger stays equity-only (only an
+incoming equity signal can initiate rotation), but the candidate pool
+being closed may be equity OR options — whichever open position genuinely
+ranks worst. Winner Protection is a hard floor, not a ranking preference:
+a position with unrealized P&L above
 ``settings.position_rotation_winner_pnl_floor`` (default: any profit at
 all) is never a rotation target, full stop — it is excluded before any
 ranking happens, and if too few non-winners remain to free the requested
@@ -12,16 +15,18 @@ slots, rotation is skipped entirely rather than touching a winner.
 
 Among the eligible (non-winning) positions, closure order is:
 
-  1. Lowest Position Quality Score (``compute_equity_hold_score`` —
-     alpha_edge_engine.py's hold-score reused, not a new formula)
+  1. Lowest Position Quality Score (``compute_equity_hold_score`` for
+     equity, ``compute_options_hold_score`` for options — both
+     alpha_edge_engine.py's hold-score formulas reused, not new ones)
   2. Positions in a flagged correlation cluster close before non-clustered
      ties — a tiebreaker only, never overrides a real quality_score
      difference. Neutral/no-op when the correlation cache
-     (rotation_correlation_cache.py) is stale or doesn't cover the ticker.
+     (rotation_correlation_cache.py) is stale or doesn't cover the ticker
+     — always true for options tickers, since that cache is equity-only.
   3. Lowest entry ``signal_score`` among ties / missing quality score
   4. Oldest ``entry_date`` among ties / missing both
 
-Never closes the incoming ticker's underlying. Equity only (v1).
+Never closes the incoming ticker's underlying.
 """
 
 from __future__ import annotations
@@ -88,7 +93,7 @@ def select_rotation_targets(
     pool = [
         c for c in candidates
         if (c.underlying or "").upper() != incoming
-        and (c.spread_type or "").lower() in ("equity_long", "equity_short")
+        and (c.spread_type or "").lower() in ("equity_long", "equity_short", "put", "call")
     ]
 
     winner_floor = float(getattr(settings, "position_rotation_winner_pnl_floor", 0.0) or 0.0)
@@ -133,6 +138,35 @@ async def _mid_price(broker: Any, ticker: str) -> Optional[float]:
     except Exception as exc:
         logger.warning("rotation quote failed for %s: %s", ticker, exc)
         return None
+
+
+async def _options_unrealized_by_underlying(broker: Any) -> dict[str, float]:
+    """
+    One broker.get_positions() call, summed per underlying across option
+    legs only. A 2-leg spread's two Position rows share `underlying`, so
+    summing gives the correct net spread P&L — mirrors
+    trade_excursion_tracker.TradeExcursionTracker's own grouping. Called
+    directly (not through ibkr_coordinator) — matches every other
+    get_positions() call site in this codebase; only quote/order requests
+    go through the coordinator.
+    """
+    totals: dict[str, float] = {}
+    try:
+        positions = await broker.get_positions()
+    except Exception as exc:
+        logger.warning("rotation options position fetch failed: %s", exc)
+        return totals
+    for p in positions:
+        if getattr(p, "asset_type", None) != "option":
+            continue
+        pnl = getattr(p, "unrealized_pnl", None)
+        if pnl is None:
+            continue
+        key = (getattr(p, "underlying", "") or "").upper()
+        if not key:
+            continue
+        totals[key] = totals.get(key, 0.0) + float(pnl)
+    return totals
 
 
 async def close_equity_trade(
@@ -294,7 +328,11 @@ async def rotate_for_new_equity_entry(
     log_execution=None,
 ) -> list[dict]:
     """
-    Close configured number of equity positions to free a slot.
+    Close configured number of open positions to free a slot for a new
+    equity entry. Trigger stays equity-only — this is only ever called
+    when an incoming equity signal is blocked by max_positions — but the
+    candidate pool being closed may be equity OR options; whichever open
+    position genuinely ranks worst.
 
     Returns list of close receipts (may be empty if rotation not possible).
     """
@@ -311,36 +349,49 @@ async def rotate_for_new_equity_entry(
             await session.execute(select(Trade).where(Trade.status == "open"))
         ).scalars().all()
 
-    equity_opens = [
+    rotation_opens = [
         t for t in open_trades
-        if (t.spread_type or "").lower() in ("equity_long", "equity_short")
+        if (t.spread_type or "").lower() in ("equity_long", "equity_short", "put", "call")
     ]
-    if len(equity_opens) < n:
+    if len(rotation_opens) < n:
         logger.info(
-            "rotation skipped — need %d equity opens, have %d",
-            n, len(equity_opens),
+            "rotation skipped — need %d open positions, have %d",
+            n, len(rotation_opens),
         )
         return []
 
-    from app.services.alpha_edge_engine import compute_equity_hold_score
+    from app.services.alpha_edge_engine import compute_equity_hold_score, compute_options_hold_score
     from app.services.rotation_correlation_cache import in_flagged_cluster
 
     # Cache-only, synchronous, no I/O — safe to resolve once for every
     # candidate up front rather than inside the per-ticker await loop below.
-    cluster_membership = {t.underlying: in_flagged_cluster(t.underlying) for t in equity_opens}
+    # Options tickers are never covered by this cache (equity-only) and
+    # naturally resolve to None — a full no-op tiebreaker, not a bias.
+    cluster_membership = {t.underlying: in_flagged_cluster(t.underlying) for t in rotation_opens}
+    # One broker call up front for every options candidate, not one per candidate.
+    options_pnl_by_underlying = await _options_unrealized_by_underlying(broker)
 
     candidates: list[RotationCandidate] = []
-    for t in equity_opens:
-        mid = await _mid_price(broker, t.underlying)
-        # No quote → treat unrealized as 0 so we don't invent P&L
-        upnl = _equity_unrealized(t, mid) if mid is not None else 0.0
+    for t in rotation_opens:
+        st = (t.spread_type or "").lower()
         conf = float(t.signal_score) if t.signal_score is not None else None
-        direction = "BUY" if (t.spread_type or "").lower() == "equity_long" else "SELL"
-        try:
-            quality = await compute_equity_hold_score(t.underlying, direction)
-        except Exception as exc:
-            logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
-            quality = None
+        if st in ("equity_long", "equity_short"):
+            mid = await _mid_price(broker, t.underlying)
+            # No quote → treat unrealized as 0 so we don't invent P&L
+            upnl = _equity_unrealized(t, mid) if mid is not None else 0.0
+            direction = "BUY" if st == "equity_long" else "SELL"
+            try:
+                quality = await compute_equity_hold_score(t.underlying, direction)
+            except Exception as exc:
+                logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
+                quality = None
+        else:
+            upnl = options_pnl_by_underlying.get((t.underlying or "").upper(), 0.0)
+            try:
+                quality = compute_options_hold_score(t)
+            except Exception as exc:
+                logger.warning("rotation options quality score failed for %s: %s", t.underlying, exc)
+                quality = None
         candidates.append(
             RotationCandidate(
                 trade_id=str(t.id),
@@ -364,14 +415,19 @@ async def rotate_for_new_equity_entry(
         )
         return []
 
-    by_id = {str(t.id): t for t in equity_opens}
+    by_id = {str(t.id): t for t in rotation_opens}
     receipts: list[dict] = []
     for target in targets:
         trade = by_id.get(target.trade_id)
         if trade is None:
             continue
         try:
-            receipt = await close_equity_trade(
+            close_fn = (
+                close_options_trade
+                if (trade.spread_type or "").lower() in ("put", "call")
+                else close_equity_trade
+            )
+            receipt = await close_fn(
                 trade, broker=broker, closed_by="position_rotation",
             )
             # Decision-time ranking context — not on close_equity_trade()'s own
