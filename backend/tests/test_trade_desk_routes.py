@@ -551,8 +551,12 @@ async def test_duplicate_guard_allows_other_asset_class_same_underlying():
 
 
 def _dup_and_cooldown_session(dup_existing=None, cooldown_existing=None):
-    """Stage 3 (open/pending) executes first, Stage 3b (closed/cooldown)
-    second — session.execute must answer them in that order."""
+    """Three sequential AsyncSessionLocal() calls happen before Stage 3b can
+    run: Stage 2b's own portfolio-risk-state read (check_execution_portfolio
+    -> load_portfolio_risk_state, independent of the _fetch_portfolio_state
+    mock used for Stage 2), then Stage 3 (open/pending duplicate guard),
+    then Stage 3b (closed/cooldown). session.execute must answer them in
+    that order."""
     session = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
@@ -562,11 +566,13 @@ def _dup_and_cooldown_session(dup_existing=None, cooldown_existing=None):
     cd_rows = [] if not cooldown_existing else (
         cooldown_existing if isinstance(cooldown_existing, list) else [cooldown_existing]
     )
+    portfolio_result = MagicMock()
+    portfolio_result.scalars.return_value = MagicMock(all=lambda: [])
     dup_result = MagicMock()
     dup_result.scalars.return_value = MagicMock(all=lambda: dup_rows)
     cd_result = MagicMock()
     cd_result.scalars.return_value = MagicMock(all=lambda: cd_rows)
-    session.execute = AsyncMock(side_effect=[dup_result, cd_result])
+    session.execute = AsyncMock(side_effect=[portfolio_result, dup_result, cd_result])
     return session
 
 
@@ -651,7 +657,9 @@ async def test_cooldown_disabled_skips_check():
                new=AsyncMock(return_value="trade-off")):
         res = await _execute_signal(_options_signal(), approved_by="manual")
     assert res["result"] == "submitted"
-    assert session.execute.call_count == 1  # only Stage 3's call — Stage 3b never ran
+    # Stage 2b's own portfolio-state read + Stage 3's dup check — Stage 3b's
+    # DB call never happens since the cooldown is disabled.
+    assert session.execute.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -659,9 +667,11 @@ async def test_cooldown_check_db_error_fails_closed():
     session = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
+    portfolio_result = MagicMock()
+    portfolio_result.scalars.return_value = MagicMock(all=lambda: [])
     dup_result = MagicMock()
     dup_result.scalars.return_value = MagicMock(all=lambda: [])
-    session.execute = AsyncMock(side_effect=[dup_result, RuntimeError("db down")])
+    session.execute = AsyncMock(side_effect=[portfolio_result, dup_result, RuntimeError("db down")])
     with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
          patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
          patch("app.core.config.settings.position_cooldown_hours", 2), \
