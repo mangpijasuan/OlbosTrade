@@ -121,6 +121,47 @@ async def test_get_account_summary_concurrent_calls_subscribe_only_once(client):
 
 
 @pytest.mark.asyncio
+async def test_get_account_summary_hung_subscribe_releases_lock_for_retry(client):
+    """Second regression test for the same 2026-08-25 incident: the lock
+    fix above has a failure mode of its own if reqAccountUpdatesAsync
+    itself hangs (not just races) — the IBKRRequestCoordinator's own
+    wait_for(shield(...)) only bounds the CALLER's wait, not the underlying
+    task, so an unbounded hang inside the lock would hold it forever and
+    every later get_account_summary() call would queue up behind a lock
+    that can never release (observed live: zero successful ACCOUNT_SUMMARY
+    calls for minutes after the lock fix first deployed, worse than before
+    it). ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS bounds the subscribe call itself
+    so a hang raises, releases the lock via the `async with` block exiting,
+    and leaves _account_subscribed False — proving a second, later call can
+    still succeed instead of piling up behind a dead lock."""
+    client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+    client.ib.accountValues = MagicMock(return_value=[])
+
+    import asyncio as _asyncio
+
+    from app.broker import ibkr_client as _ibkr_client_module
+
+    async def _hangs_forever(_account: str) -> None:
+        await _asyncio.sleep(3600)
+
+    async def _succeeds(_account: str) -> None:
+        return None
+
+    client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=_hangs_forever)
+
+    with patch.object(_ibkr_client_module, "ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS", 0.05):
+        with pytest.raises(_asyncio.TimeoutError):
+            await client.get_account_summary()
+
+    assert client._account_subscribed is False  # first attempt's failure must not poison the flag
+
+    client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=_succeeds)
+    await client.get_account_summary()  # would hang here too if the lock were never released
+
+    assert client._account_subscribed is True
+
+
+@pytest.mark.asyncio
 async def test_get_account_summary_matches_real_ib_insync_signature(client):
     """A plain AsyncMock() doesn't enforce the real method's signature —
     that gap is exactly how a call passing 2 positional args into

@@ -76,6 +76,17 @@ def _chunked(items: list, size: int) -> "list[list]":
 # yfinance on any exception.
 HISTORICAL_DATA_TIMEOUT_SECONDS = 30.0
 
+# How long to wait for the one-shot reqAccountUpdatesAsync subscribe (inside
+# get_account_summary()'s lock) before giving up. Without this, a hung
+# subscribe call holds _account_subscribe_lock forever — the coordinator's
+# own wait_for(shield(...)) only bounds the CALLER's wait, not the
+# underlying task, so every later get_account_summary() call would queue up
+# behind a lock that can never release, turning one stuck call into a
+# permanent deadlock for the whole account-summary path (observed live).
+# On timeout, _account_subscribed stays False so the next caller gets a
+# fresh attempt instead of the whole path staying wedged until a restart.
+ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS = 5.0
+
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
 FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
@@ -1096,7 +1107,10 @@ class IBKRClient(BrokerInterface):
                 # right after acquiring it.
                 if not self._account_subscribed:
                     account_id_temp = (self.ib.managedAccounts() or [""])[0]
-                    await self.ib.reqAccountUpdatesAsync(account_id_temp)
+                    await asyncio.wait_for(
+                        self.ib.reqAccountUpdatesAsync(account_id_temp),
+                        timeout=ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS,
+                    )
                     self._account_subscribed = True
 
         account_values = self.ib.accountValues()
