@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from app.services.backtester import Backtester, BacktestResult
+from app.services.equity_signal_engine import EquitySignalParams
 
 
 class _FakeFetcher:
@@ -139,6 +140,42 @@ async def test_run_equity_bar_log_trade_fired_matches_an_actual_entry(fetcher):
     entry_dates = {t.entry_date.isoformat() for t in result.trades}
     fired_dates = {e["date"] for e in result.bar_log if e["trade_fired"]}
     assert fired_dates.issubset(entry_dates)
+
+
+# ── equity_params injection (Track 2D, equity side) ──────────────────────
+# Mirrors test_backtester_run_injection.py's spy_df/strategy_params tests
+# for the options side. run_equity() has no FillSimulator-driven random
+# fills (unlike run(), which shares FillSimulator's global RNG seed across
+# instances) — it's fully deterministic given the same synthetic data, so
+# calling it twice on the same Backtester instance is safe here.
+
+@pytest.mark.asyncio
+async def test_run_equity_no_equity_params_matches_explicit_default(fetcher):
+    bt = Backtester(fetcher)
+    no_params = await bt.run_equity("AAPL", "2023-06-01", "2023-12-29", starting_capital=25_000.0)
+    explicit_default = await bt.run_equity(
+        "AAPL", "2023-06-01", "2023-12-29", starting_capital=25_000.0,
+        equity_params=EquitySignalParams(),
+    )
+
+    assert no_params.ending_capital == explicit_default.ending_capital
+    assert len(no_params.trades) == len(explicit_default.trades)
+    assert no_params.equity_curve == explicit_default.equity_curve
+
+
+@pytest.mark.asyncio
+async def test_run_equity_non_default_equity_params_changes_result(fetcher):
+    """A drastically raised min_margin_to_fire must suppress virtually
+    every entry (proves the params are really threaded through to
+    score_equity_signal(), not silently ignored)."""
+    bt = Backtester(fetcher)
+    default_result = await bt.run_equity("AAPL", "2023-01-01", "2023-12-29")
+    strict_result = await bt.run_equity(
+        "AAPL", "2023-01-01", "2023-12-29",
+        equity_params=EquitySignalParams(min_margin_to_fire=0.99),
+    )
+
+    assert len(strict_result.trades) < len(default_result.trades)
 
 
 @pytest.mark.asyncio

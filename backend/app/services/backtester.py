@@ -25,6 +25,7 @@ from app.services.equity_signal_engine import (
     compute_indicators as compute_equity_indicators,
     score_equity_signal,
     compute_equity_trade_plan,
+    EquitySignalParams,
 )
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.options_pricer import BlackScholesPricer
@@ -713,6 +714,7 @@ class Backtester:
         start_date: str,
         end_date: str,
         starting_capital: float = 25000.0,
+        equity_params: Optional[EquitySignalParams] = None,
     ) -> BacktestResult:
         """
         Walk-forward equity backtest — reuses the exact live equity signal
@@ -720,6 +722,13 @@ class Backtester:
         compute_equity_trade_plan) and the live risk engine (GuardrailEngine
         via check_all()/get_signal_threshold()), not a parallel DSL. Works
         for any ticker, unlike run() which is SPY-only options spreads.
+
+        equity_params: optional tunable weights/thresholds for
+        score_equity_signal()/compute_equity_trade_plan() (see
+        EquitySignalParams). None reproduces today's exact hardcoded
+        behavior — mirrors run()'s strategy_params injection point,
+        added for the options side; inert until a future caller (an
+        eventual equity-side optimizer) passes a non-default value.
 
         Look-ahead guard: at bar N, indicators are computed from an
         expanding window covering bars [0, N) only — the prior bar's close
@@ -805,7 +814,7 @@ class Backtester:
             window = df.iloc[:idx]
             ind = compute_equity_indicators(window) if len(window) >= 30 else None
             if ind:
-                action, confidence, _reasons = score_equity_signal(ind)
+                action, confidence, _reasons = score_equity_signal(ind, params=equity_params)
             else:
                 action, confidence = "HOLD", None
 
@@ -890,7 +899,7 @@ class Backtester:
                 if guardrail_status.trading_allowed and action != "HOLD":
                     threshold = self.guardrails.get_signal_threshold(guardrail_status)
                     if confidence >= threshold:
-                        plan = compute_equity_trade_plan(ind, action, portfolio_value=portfolio_value)
+                        plan = compute_equity_trade_plan(ind, action, portfolio_value=portfolio_value, params=equity_params)
                         shares = int(plan.get("shares", 0) or 0)
                         if shares > 0:
                             # Fill at this bar's open — the first tradeable
