@@ -6,10 +6,22 @@
 # stops serving its API port (the classic IBKR daily-restart hang). When that
 # happens the backend logs endless "TimeoutError / Failed to connect to IBKR".
 #
-# This script does a REAL API liveness probe (an ib_insync handshake from inside
-# the backend container, which already has ib_insync) and restarts the gateway
-# container only when the API is actually dead — with a cooldown so it doesn't
-# restart again during the ~90s it takes the gateway to log back in.
+# This script checks liveness by reading the backend's own /api/health/detail
+# (already-running FastAPI process, no new socket to the gateway) and restarts
+# the gateway container only when that snapshot looks dead — with a cooldown so
+# it doesn't restart again during the ~90s it takes the gateway to log back in.
+#
+# PRIOR VERSION BUG (found 2026-08-25): this used to open a second, independent
+# ib_insync connection (clientId=99) as its liveness probe. Correlating gateway
+# logs against this cron's own schedule proved that connection was the direct
+# cause of "remove Client 2" disconnects on the app's real session — IB Gateway
+# kicked the existing clientId=2 session every single time this probe connected
+# (~286-288 collisions/day while the cron ran, essentially zero when it didn't;
+# see the plan doc's "Out-of-band incident" section for the full log analysis).
+# The fix opening a second connection was supposed to catch was real, but the
+# probe's own side effect was worse than the daily hang it existed to catch —
+# so this version checks the app's already-open connection's self-reported
+# state instead of ever dialing a second one.
 #
 # Intended to run from cron every few minutes (see install_ibkr_watchdog.sh).
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -21,9 +33,11 @@ VERBOSE=0
 
 GATEWAY="ibkr-gateway"
 BACKEND="olbostrade-backend"
-GW_HOST="ibkr-gateway"          # docker service name the backend connects to
-GW_PORT="4004"
-PROBE_CLIENT_ID="99"            # distinct from the app's clientId to avoid clashes
+# P0 queue depth above this, alongside a disconnected/degraded reading, is
+# treated as "stuck" rather than ordinary transient churn (normal operation
+# sits in the low single digits to low tens; the real incident this was
+# tuned against reached the hundreds/thousands).
+QUEUE_DEPTH_THRESHOLD=30
 COOLDOWN=900                    # seconds; don't restart again within 15 min
 STAMP="/tmp/ibkr-watchdog-last-restart"
 
@@ -52,26 +66,31 @@ if ! _running "$GATEWAY"; then
   exit 0
 fi
 
-# 2. Need the backend (has ib_insync) to run the probe; if it's down, skip.
+# 2. Need the backend running to read its own /api/health/detail; if it's
+#    down, skip (a dead backend isn't this watchdog's problem to fix).
 if ! _running "$BACKEND"; then
   echo "$(ts) watchdog: $BACKEND not running — skipping probe"
   exit 0
 fi
 
-# 3. Real API liveness probe — an actual IBKR handshake.
+# 3. Liveness check via the backend's own already-open connection — reads
+#    /api/health/detail from inside the backend container (no new socket to
+#    the gateway, so this can never itself disturb the app's live session).
+#    "DEAD" means either the app's socket reports disconnected, or the P0
+#    queue is stuck deep enough that the connection is unresponsive in
+#    practice even if isConnected() hasn't noticed yet.
 probe=$(docker exec -i "$BACKEND" python3 - <<PY 2>/dev/null
-import asyncio
-async def main():
-    try:
-        from ib_insync import IB
-        ib = IB()
-        await ib.connectAsync("$GW_HOST", $GW_PORT, clientId=$PROBE_CLIENT_ID, timeout=8)
-        ok = ib.isConnected()
-        ib.disconnect()
-        return ok
-    except Exception:
-        return False
-print("OK" if asyncio.run(main()) else "DEAD")
+import json, urllib.request
+try:
+    with urllib.request.urlopen("http://127.0.0.1:8000/api/health/detail", timeout=8) as r:
+        data = json.load(r)
+    ibkr = data.get("ibkr", {}) or {}
+    connected = bool(ibkr.get("connected"))
+    queue_depth = float((ibkr.get("coordinator", {}) or {}).get("queue_depth", {}).get("P0", 0) or 0)
+    ok = connected and queue_depth < $QUEUE_DEPTH_THRESHOLD
+except Exception:
+    ok = False
+print("OK" if ok else "DEAD")
 PY
 )
 probe=$(printf '%s' "$probe" | tr -d '[:space:]')
