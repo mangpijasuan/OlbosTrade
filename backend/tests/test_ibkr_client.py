@@ -93,6 +93,34 @@ async def test_get_account_summary_subscribes_once_not_every_call(client):
 
 
 @pytest.mark.asyncio
+async def test_get_account_summary_concurrent_calls_subscribe_only_once(client):
+    """Regression test for a real production incident (2026-08-25): several
+    IBKRRequestCoordinator workers can all call get_account_summary() at
+    once right after a fresh connect() (when _account_subscribed is still
+    False and a burst of ACCOUNT_SUMMARY jobs typically lands together).
+    Without a lock around the check-then-subscribe, every one of them sees
+    False and fires its own reqAccountUpdatesAsync concurrently on the same
+    shared `ib` connection — observed live as every coordinator worker
+    piling up and never completing. An artificial delay on the mocked call
+    holds the race window open long enough that, without the lock, this
+    test would see more than one call."""
+    client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+    client.ib.accountValues = MagicMock(return_value=[])
+
+    import asyncio as _asyncio
+
+    async def _slow_subscribe(_account: str) -> None:
+        await _asyncio.sleep(0.05)
+
+    client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=_slow_subscribe)
+
+    await _asyncio.gather(*(client.get_account_summary() for _ in range(6)))
+
+    client.ib.reqAccountUpdatesAsync.assert_called_once_with("DU123456")
+    assert client._account_subscribed is True
+
+
+@pytest.mark.asyncio
 async def test_get_account_summary_matches_real_ib_insync_signature(client):
     """A plain AsyncMock() doesn't enforce the real method's signature —
     that gap is exactly how a call passing 2 positional args into

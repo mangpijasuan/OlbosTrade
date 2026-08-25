@@ -143,6 +143,18 @@ class IBKRClient(BrokerInterface):
         # flag was never explicitly cleared by an intervening disconnect()
         # (e.g. a silent connection drop caught by the reconnect watchdog).
         self._account_subscribed = False
+        # Guards the check-then-subscribe below — without it, several
+        # IBKRRequestCoordinator workers can all see _account_subscribed
+        # still False right after a fresh connect() (when a burst of
+        # ACCOUNT_SUMMARY jobs typically lands at once) and each fire their
+        # own concurrent reqAccountUpdatesAsync() on the same shared `ib`
+        # connection, which isn't a reqId-keyed call and doesn't appear to
+        # resolve cleanly when raced this way — observed live as every
+        # worker piling up on it and never completing. Created lazily (not
+        # here) since asyncio.Lock() on Python <3.10 binds to whatever
+        # event loop is current at construction time, and __init__ can run
+        # before this client's real event loop is active.
+        self._account_subscribe_lock = None
 
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
@@ -1072,10 +1084,20 @@ class IBKRClient(BrokerInterface):
         """
         self._require_connection()
 
+        if self._account_subscribe_lock is None:
+            self._account_subscribe_lock = asyncio.Lock()
+
         if not self._account_subscribed:
-            account_id_temp = (self.ib.managedAccounts() or [""])[0]
-            await self.ib.reqAccountUpdatesAsync(account_id_temp)
-            self._account_subscribed = True
+            async with self._account_subscribe_lock:
+                # Re-check inside the lock: another coordinator worker may
+                # have already subscribed while this one was waiting for
+                # the lock — without this, the second-through-Nth worker to
+                # arrive would still redundantly call reqAccountUpdatesAsync
+                # right after acquiring it.
+                if not self._account_subscribed:
+                    account_id_temp = (self.ib.managedAccounts() or [""])[0]
+                    await self.ib.reqAccountUpdatesAsync(account_id_temp)
+                    self._account_subscribed = True
 
         account_values = self.ib.accountValues()
         values: Dict[str, str] = {}
