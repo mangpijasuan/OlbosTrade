@@ -3,6 +3,7 @@ Paper trading routes — wired to live broker positions + DB trade history.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -17,6 +18,10 @@ from app.services.trade_identity import asset_class_from_trade, position_identit
 
 router = APIRouter()
 
+# get_account_summary() has no timeout of its own; this route is polled by
+# the frontend every 30s (usePaperTrade.ts).
+ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
+
 
 # ── Portfolio summary ─────────────────────────────────────────────────────────
 
@@ -26,7 +31,7 @@ async def get_portfolio():
     broker_data: dict = {}
     try:
         broker = get_broker()
-        acct = await broker.get_account_summary()
+        acct = await asyncio.wait_for(broker.get_account_summary(), timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS)
         broker_data = {
             "account_value": float(acct.net_liquidation),
             "cash":          float(acct.cash_balance),

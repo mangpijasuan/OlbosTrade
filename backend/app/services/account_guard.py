@@ -23,6 +23,13 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# ibkr_coordinator's own default (30s) is too slow here: this check runs on
+# every execution attempt (trade_desk.py's gate stages), so a degraded
+# connection would add up to 30s to every single trade attempt. Fail closed
+# faster instead — the fail-closed *behavior* on timeout is unchanged and
+# correct; only how long it takes to reach that verdict shrinks.
+ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
+
 
 def account_is_paper(account_id: str | None) -> bool:
     """True if the IBKR account number is a paper (simulated) account.
@@ -51,7 +58,7 @@ async def verify_account_mode(broker) -> tuple[bool, str]:
         from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         acct = await ibkr_coordinator.submit(
             Priority.P0, broker.get_account_summary,
-            req_type="ACCOUNT_SUMMARY",
+            req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
         account_id = (acct.account_id or "").strip()
     except Exception as exc:

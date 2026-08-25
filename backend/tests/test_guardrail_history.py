@@ -356,7 +356,7 @@ async def test_guardrail_status_survives_hung_account_summary():
 
     with patch("app.core.database.AsyncSessionLocal", return_value=_guardrail_status_db_session()), \
          patch("app.broker.broker_factory.get_broker", return_value=fake_broker), \
-         patch.object(main_mod, "GUARDRAIL_STATUS_ACCOUNT_SUMMARY_TIMEOUT_SECONDS", 0.05):
+         patch.object(main_mod, "ACCOUNT_SUMMARY_ROUTE_TIMEOUT_SECONDS", 0.05):
         result = await _asyncio.wait_for(main_mod.guardrail_status(), timeout=5.0)
 
     # Falls back to starting_capital (the existing except-clause behavior)

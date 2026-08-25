@@ -2367,7 +2367,7 @@ async def _maybe_log_guardrail_event(status: GuardrailStatus, portfolio: Portfol
 # route (interval 30s, timeout 10s) — kept well under that so a slow/stuck
 # IBKR connection can't hang the healthcheck and mark the container
 # unhealthy. Module-level so tests can patch it down for speed.
-GUARDRAIL_STATUS_ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
+ACCOUNT_SUMMARY_ROUTE_TIMEOUT_SECONDS = 5.0
 
 
 @app.get("/api/guardrails/status", tags=["Guardrails"])
@@ -2418,7 +2418,7 @@ async def guardrail_status():
         from app.broker.broker_factory import get_broker
         acct = await _asyncio.wait_for(
             get_broker().get_account_summary(),
-            timeout=GUARDRAIL_STATUS_ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+            timeout=ACCOUNT_SUMMARY_ROUTE_TIMEOUT_SECONDS,
         )
         current_value = float(acct.net_liquidation)
     except Exception:
@@ -2554,6 +2554,7 @@ async def dashboard_summary():
             from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
             acct = await ibkr_coordinator.submit(
                 Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+                timeout=ACCOUNT_SUMMARY_ROUTE_TIMEOUT_SECONDS,
             )
             nl = float(acct.net_liquidation or 0)
             if nl > 0:

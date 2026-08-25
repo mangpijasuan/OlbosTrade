@@ -18,6 +18,11 @@ from app.core.database import AsyncSessionLocal
 from app.models.reconciliation_snapshot import ReconciliationSnapshot
 from app.models.trade import Trade
 from app.models.risk_state import PortfolioSnapshot
+
+# ibkr_coordinator's own default (30s) is too slow for these polled UI
+# routes — get_account_summary() can stall for the full default when the
+# broker connection is degraded, making the route itself look hung.
+ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
 from app.services.kill_switch import kill_switch_service
 from app.services.position_reconciler import PositionReconciler, ReconciliationError
 
@@ -58,6 +63,7 @@ async def get_portfolio_state():
         broker = get_broker()
         acct   = await ibkr_coordinator.submit(
             Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+            timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
         acct_value    = float(acct.net_liquidation)
         buying_power  = float(acct.buying_power)
@@ -467,7 +473,7 @@ async def get_var(confidence: float = 0.95, horizon_days: int = 1):
         from app.broker.broker_factory import get_broker
         from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         acct = await ibkr_coordinator.submit(
-            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY",
+            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
         pv = float(acct.net_liquidation)
     except Exception:
@@ -504,7 +510,7 @@ async def get_margin():
         from app.broker.broker_factory import get_broker
         from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         acct = await ibkr_coordinator.submit(
-            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY",
+            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
