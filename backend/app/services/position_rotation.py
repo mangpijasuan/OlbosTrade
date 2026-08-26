@@ -180,6 +180,21 @@ async def close_equity_trade(
     """
     Submit an equity close for an open Trade row. Shared by manual close and rotation.
     Does not check kill switch (closing reduces risk).
+
+    Side and quantity come from the broker's OWN live position (via
+    get_equity_positions() — a local ib.portfolio() cache read, not a
+    network round-trip, same convention already used above by
+    _options_unrealized_by_underlying), never from trade.spread_type/
+    trade.quantity. Root-caused in production on 2026-08-26: the DB's
+    recorded quantity can drift from the broker's real holding (a partial
+    fill never fully reconciled, an earlier close that itself misfired,
+    etc.) — trading on that stale number is exactly what produced several
+    real orphaned positions, discovered when a "closed" Trade row's ticker
+    still showed a live broker position, in three cases flipped to the
+    *opposite* side entirely (a close order sized larger than the real
+    holding oversold straight through zero). Sourcing the live quantity
+    here makes every close self-correcting regardless of any prior drift,
+    rather than compounding it.
     """
     from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
     from app.services.trade_recorder import trade_recorder
@@ -188,10 +203,21 @@ async def close_equity_trade(
     if spread_type not in ("equity_long", "equity_short"):
         raise ValueError(f"equity close only; got spread_type={spread_type!r}")
 
-    close_side = "SELL" if spread_type == "equity_long" else "BUY"
     ticker = trade.underlying
-    qty = int(trade.quantity or 1)
     trade_id = str(trade.id)
+
+    live_positions = await broker.get_equity_positions()
+    live_qty = next(
+        (int(p.quantity) for p in live_positions if p.symbol == ticker), 0
+    )
+    if live_qty == 0:
+        raise RuntimeError(
+            f"{ticker} is already flat at the broker — nothing to close "
+            f"(trade_id={trade_id})"
+        )
+
+    close_side = "SELL" if live_qty > 0 else "BUY"
+    qty = abs(live_qty)
 
     cancelled = await broker.cancel_open_orders(ticker)
     result = await ibkr_coordinator.submit(

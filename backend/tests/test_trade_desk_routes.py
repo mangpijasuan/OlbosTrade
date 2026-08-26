@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -305,6 +306,12 @@ async def test_close_position_long_submits_sell_and_cancels_bracket():
     session = _fake_trade_session(_open_trade(spread_type="equity_long", quantity=10))
     broker = MagicMock()
     broker.cancel_open_orders = AsyncMock(return_value=2)
+    # close_equity_trade() sizes and sides the close from the broker's own
+    # live position, not the DB's spread_type/quantity — see that
+    # function's docstring for the 2026-08-26 incident this guards against.
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="AAPL", quantity=10)]
+    )
     broker.place_equity_order = AsyncMock(return_value=MagicMock(
         status="filled", order_id="ord-1", fill_price=101.5,
     ))
@@ -334,6 +341,9 @@ async def test_close_position_short_submits_buy():
     session = _fake_trade_session(_open_trade(spread_type="equity_short", quantity=5))
     broker = MagicMock()
     broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="AAPL", quantity=-5)]
+    )
     broker.place_equity_order = AsyncMock(return_value=MagicMock(
         status="submitted", order_id="ord-2", fill_price=None,
     ))

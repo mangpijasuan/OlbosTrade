@@ -13,6 +13,7 @@ import pytest
 from app.services import rotation_correlation_cache
 from app.services.position_rotation import (
     RotationCandidate,
+    close_equity_trade,
     close_options_trade,
     select_rotation_targets,
     rotate_for_blocked_entry,
@@ -378,6 +379,101 @@ async def test_rotate_quality_lookup_failure_falls_back_to_confidence(monkeypatc
 
     # Quality lookup failed for both -> falls back to lowest confidence (MSFT, 0.2).
     assert closed == ["MSFT"]
+
+
+# ── close_equity_trade ────────────────────────────────────────────────────
+# Regression tests for a real production incident (2026-08-26): several
+# "closed" Trade rows still had live, non-zero positions at the broker
+# months later — some flipped to the opposite side entirely — because the
+# old close_equity_trade() sized/directed the closing order from the DB's
+# trade.quantity/spread_type, which can silently drift from the broker's
+# real holding (a partial fill, an earlier close that itself misfired,
+# etc.). These tests pin the fix: side and size must come from the
+# broker's own live position, never from the DB row.
+
+def _eq_trade(spread_type="equity_long", quantity=10, underlying="AAPL"):
+    return SimpleNamespace(
+        id="cccccccc-cccc-cccc-cccc-ccccccccccc1",
+        underlying=underlying, spread_type=spread_type, quantity=quantity,
+    )
+
+
+@pytest.mark.asyncio
+async def test_close_equity_trade_uses_live_broker_quantity_not_db_quantity():
+    """DB says 86 shares; the broker's real holding is 599 — the closing
+    order must be sized 599, matching the real production MRVL mismatch
+    (broker=599 db=86) the reconciler was actively flagging."""
+    trade = _eq_trade(spread_type="equity_long", quantity=86)
+    broker = MagicMock()
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="AAPL", quantity=599)]
+    )
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(
+        status="filled", order_id="ord-eq-1", fill_price=101.0,
+    ))
+    with patch("app.services.trade_recorder.trade_recorder.record_exit",
+               new=AsyncMock(return_value=True)):
+        out = await close_equity_trade(trade, broker=broker)
+
+    broker.place_equity_order.assert_awaited_once()
+    assert broker.place_equity_order.await_args.kwargs["qty"] == 599
+    assert broker.place_equity_order.await_args.kwargs["side"] == "SELL"
+    assert out["quantity"] == 599
+
+
+@pytest.mark.asyncio
+async def test_close_equity_trade_uses_live_side_not_db_spread_type():
+    """DB still records this as equity_long (implying SELL to close), but
+    the broker's live position is now negative (short) — the close must
+    follow the LIVE sign (BUY to cover), not the stale DB direction. This
+    is the exact mechanism that flipped COST/EXC/META to the wrong side in
+    production: a stale-direction SELL oversold straight through zero."""
+    trade = _eq_trade(spread_type="equity_long", quantity=21)
+    broker = MagicMock()
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="AAPL", quantity=-27)]
+    )
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(
+        status="filled", order_id="ord-eq-2", fill_price=99.0,
+    ))
+    with patch("app.services.trade_recorder.trade_recorder.record_exit",
+               new=AsyncMock(return_value=True)):
+        await close_equity_trade(trade, broker=broker)
+
+    assert broker.place_equity_order.await_args.kwargs["side"] == "BUY"
+    assert broker.place_equity_order.await_args.kwargs["qty"] == 27
+
+
+@pytest.mark.asyncio
+async def test_close_equity_trade_already_flat_raises_without_submitting():
+    """If the broker shows no live position at all for this ticker, there
+    is nothing real to close — raise rather than submit a fabricated
+    order sized from a stale DB quantity."""
+    trade = _eq_trade(spread_type="equity_long", quantity=11)
+    broker = MagicMock()
+    broker.get_equity_positions = AsyncMock(return_value=[])
+    broker.place_equity_order = AsyncMock()
+    with pytest.raises(RuntimeError):
+        await close_equity_trade(trade, broker=broker)
+    broker.place_equity_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_equity_trade_no_live_match_for_ticker_raises():
+    """get_equity_positions() returns real positions, just none matching
+    this trade's ticker — must be treated the same as flat, not crash on
+    a missing match."""
+    trade = _eq_trade(spread_type="equity_long", quantity=11, underlying="AAPL")
+    broker = MagicMock()
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="MSFT", quantity=50)]
+    )
+    broker.place_equity_order = AsyncMock()
+    with pytest.raises(RuntimeError):
+        await close_equity_trade(trade, broker=broker)
+    broker.place_equity_order.assert_not_awaited()
 
 
 # ── close_options_trade ──────────────────────────────────────────────────
