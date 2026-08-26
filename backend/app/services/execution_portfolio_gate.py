@@ -216,6 +216,19 @@ async def load_portfolio_risk_state(portfolio_value: float) -> PortfolioRiskStat
     Build PortfolioRiskState from open trades (same dollars/sectors as /api/portfolio/heat).
     On DB failure returns empty exposures with open_position_count=0 and logs a warning
     (caller treats that as fail-open for this gate only).
+
+    open_position_count is the max of the DB's tracked open-Trade count and
+    the broker's own live distinct-underlying position count. The DB count
+    alone can silently undercount whenever a position exists at the broker
+    with no matching Trade row — confirmed live in production 2026-08-26,
+    where several untracked positions consumed real margin/risk capacity
+    while this gate believed only 3 positions were open, since every
+    position-count check here only ever queried the Trade table. The
+    broker read (get_positions(), used below) is a local ib.portfolio()
+    cache lookup, not a network round-trip — same convention already used
+    by position_rotation.py/kill_switch.py — so this adds no meaningful
+    latency and needs no coordinator/timeout handling. A broker-read
+    failure fails open to the DB-only count rather than blocking the gate.
     """
     by_underlying: dict[str, float] = {}
     by_sector: dict[str, float] = {}
@@ -236,6 +249,21 @@ async def load_portfolio_risk_state(portfolio_value: float) -> PortfolioRiskStat
             r = position_risk_dollars(t)
             by_underlying[u] = by_underlying.get(u, 0.0) + r
             by_sector[s] = by_sector.get(s, 0.0) + r
+
+        try:
+            from app.broker.broker_factory import get_broker
+            live_positions = await get_broker().get_positions()
+            broker_open_count = len({
+                (p.underlying or "").upper()
+                for p in live_positions
+                if p.quantity != 0
+            })
+            open_count = max(open_count, broker_open_count)
+        except Exception as broker_exc:
+            logger.warning(
+                "portfolio gate: could not cross-check live broker position "
+                "count (using DB-tracked count only): %s", broker_exc,
+            )
     except Exception as exc:
         logger.warning(
             "portfolio gate: could not load open positions (fail open for this gate): %s",
