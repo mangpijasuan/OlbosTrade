@@ -187,6 +187,22 @@ class Settings(BaseSettings):
     # suppressing a legitimate same-day re-entry.
     position_cooldown_hours: int = Field(default=2)
 
+    # ── Reconciliation: auto-adopt untracked broker positions ─────────────
+    # When the periodic reconciler (_reconcile_positions, main.py) finds a
+    # live equity position at the broker with no matching open Trade row,
+    # write one in automatically (strategy="adopted_untracked") so it stops
+    # being invisible to every DB-derived guardrail (max_positions,
+    # concentration, heat — see execution_portfolio_gate.py). Confirmed
+    # live in production 2026-08-26: several untracked equity positions
+    # consumed real margin/risk capacity while every position-count check
+    # believed far fewer positions were open. Options positions are
+    # deliberately NOT auto-adopted — reconstructing a 2-leg spread's
+    # short/long strikes from raw broker legs is a real, harder problem
+    # (see close_options_trade's own leg-reconstruction design); an
+    # untracked options position is logged for manual review instead.
+    # Rollback: set false.
+    reconciliation_auto_adopt_untracked: bool = Field(default=True)
+
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)
     signal_score_preservation_mode: float = Field(default=0.80)

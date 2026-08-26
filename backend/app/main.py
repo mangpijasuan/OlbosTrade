@@ -2157,6 +2157,105 @@ async def _reconcile_positions() -> None:
             phantom_in_db=result.phantom_in_db,
             warnings=result.warnings,
         )
+        if result.untracked_at_broker:
+            from app.core.config import settings
+            if getattr(settings, "reconciliation_auto_adopt_untracked", True):
+                await _adopt_untracked_positions(result.untracked_at_broker)
+
+
+async def _adopt_untracked_positions(untracked: list[str]) -> None:
+    """
+    Write a Trade row for each live broker equity position that has none —
+    see reconciliation_auto_adopt_untracked's config docstring for why this
+    exists (2026-08-26 incident: untracked positions were invisible to
+    every DB-derived guardrail).
+
+    Equity only. An untracked position that doesn't show up in
+    get_equity_positions() is assumed to be an options position — closing
+    an options spread requires knowing its paired short/long strikes, which
+    can't be reconstructed from a reconciliation mismatch alone; it's
+    logged for manual review instead of guessed at.
+
+    Re-checks open Trade rows under the same DB session immediately before
+    inserting, so this can't race a legitimate concurrent entry that closed
+    the gap between the reconciler's read and this write.
+
+    The adopted row's entry_date/short_strike/long_strike are discovery-time
+    placeholders, not the position's real historical entry — this is a
+    known, accepted limitation (logged clearly below), not a claim of
+    historical accuracy. credit_received is set to the live avg_cost
+    specifically because position_risk_dollars() (portfolio_engine.py)
+    reads credit_received×quantity as an equity trade's risk dollars — this
+    is the field that makes the adopted row actually count for guardrails.
+    """
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+
+    from sqlalchemy import select
+
+    from app.broker.broker_factory import get_broker
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.observability import observability
+
+    try:
+        positions = await get_broker().get_equity_positions()
+    except Exception as exc:
+        logger.error("adopt-untracked: could not fetch live equity positions: %s", exc)
+        return
+
+    by_symbol = {p.symbol.upper(): p for p in positions if p.quantity}
+
+    adopted: list[str] = []
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            open_trades = (
+                await session.execute(select(Trade).where(Trade.status == "open"))
+            ).scalars().all()
+            already_tracked = {str(t.underlying).upper() for t in open_trades}
+
+            for ticker in untracked:
+                symbol = ticker.upper()
+                if symbol in already_tracked:
+                    continue  # closed by a legitimate concurrent entry since the check ran
+
+                pos = by_symbol.get(symbol)
+                if pos is None:
+                    logger.warning(
+                        "adopt-untracked: %s not found among live equity positions "
+                        "(likely an untracked OPTIONS position) — skipping auto-adopt, "
+                        "manual review required",
+                        symbol,
+                    )
+                    continue
+
+                price = Decimal(str(pos.avg_cost))
+                session.add(Trade(
+                    strategy="adopted_untracked",
+                    underlying=symbol,
+                    spread_type="equity_long" if pos.quantity > 0 else "equity_short",
+                    short_strike=price,
+                    long_strike=price,
+                    expiration=date.today(),
+                    entry_date=datetime.now(timezone.utc),
+                    credit_received=price,
+                    mfe_pnl=Decimal("0"),
+                    mae_pnl=Decimal("0"),
+                    status="open",
+                    quantity=abs(int(pos.quantity)),
+                    approved_by="reconciler_adopt",
+                ))
+                adopted.append(symbol)
+
+    if adopted:
+        logger.critical(
+            "Auto-adopted %d untracked broker position(s) into DB as Trade rows: %s "
+            "— entry_date/strikes are discovery-time placeholders, not real "
+            "historical entry data. strategy=adopted_untracked.",
+            len(adopted), adopted,
+        )
+        observability.incr("reconciliation.auto_adopted")
+        observability.event("reconciliation_auto_adopted", tickers=adopted)
 
 
 async def _refresh_rotation_correlation_cache() -> None:
