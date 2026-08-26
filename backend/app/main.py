@@ -2161,6 +2161,80 @@ async def _reconcile_positions() -> None:
             from app.core.config import settings
             if getattr(settings, "reconciliation_auto_adopt_untracked", True):
                 await _adopt_untracked_positions(result.untracked_at_broker)
+        if result.quantity_mismatch_tickers:
+            from app.core.config import settings
+            if getattr(settings, "reconciliation_auto_correct_quantity", True):
+                await _correct_quantity_mismatches(result.quantity_mismatch_tickers)
+
+
+async def _correct_quantity_mismatches(mismatched: list[str]) -> None:
+    """
+    Correct a tracked Trade row's quantity when it disagrees with the
+    broker's live quantity for that underlying — see
+    reconciliation_auto_correct_quantity's config docstring for why this
+    exists (2026-08-26: MRVL/SNDK rows still held stale quantities from
+    before the close_equity_trade() sizing bug was fixed in commit
+    1cc3eb8 — that fix stops new mismatches, it never retroactively
+    corrected rows it had already damaged).
+
+    The broker is always the source of truth (position_reconciler.py's own
+    design principle). Equity only, and only when there is exactly one
+    open equity Trade row for the ticker — with zero or more than one open
+    row it's ambiguous which one the broker's single summed quantity
+    belongs to, so it's skipped and logged for manual review rather than
+    guessed at. Only quantity is touched; entry price/P&L fields are left
+    alone since this corrects share count, not cost basis.
+    """
+    from sqlalchemy import select
+
+    from app.broker.broker_factory import get_broker
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.observability import observability
+
+    try:
+        positions = await get_broker().get_equity_positions()
+    except Exception as exc:
+        logger.error("correct-quantity-mismatch: could not fetch live equity positions: %s", exc)
+        return
+
+    live_qty = {p.symbol.upper(): abs(int(p.quantity)) for p in positions if p.quantity}
+
+    corrected: list[str] = []
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            for ticker in mismatched:
+                symbol = ticker.upper()
+                if symbol not in live_qty:
+                    continue  # not a live equity position — likely an options mismatch, out of scope
+
+                rows = (await session.execute(
+                    select(Trade).where(
+                        Trade.underlying == symbol,
+                        Trade.status == "open",
+                    )
+                )).scalars().all()
+                equity_rows = [t for t in rows if (t.spread_type or "").lower().startswith("equity")]
+                if len(equity_rows) != 1:
+                    logger.warning(
+                        "correct-quantity-mismatch: %s has %d open equity Trade row(s) "
+                        "(expected exactly 1) — skipping auto-correct, manual review required",
+                        symbol, len(equity_rows),
+                    )
+                    continue
+
+                trade = equity_rows[0]
+                old_qty = trade.quantity
+                trade.quantity = live_qty[symbol]
+                corrected.append(symbol)
+                logger.critical(
+                    "Corrected quantity mismatch for %s: db=%s -> broker=%s (trade_id=%s)",
+                    symbol, old_qty, live_qty[symbol], trade.id,
+                )
+
+    if corrected:
+        observability.incr("reconciliation.quantity_corrected")
+        observability.event("reconciliation_quantity_corrected", tickers=corrected)
 
 
 async def _adopt_untracked_positions(untracked: list[str]) -> None:

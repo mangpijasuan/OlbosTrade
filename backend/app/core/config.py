@@ -202,6 +202,17 @@ class Settings(BaseSettings):
     # untracked options position is logged for manual review instead.
     # Rollback: set false.
     reconciliation_auto_adopt_untracked: bool = Field(default=True)
+    # When the reconciler finds an open Trade row whose tracked quantity
+    # disagrees with the broker's live quantity for that underlying,
+    # correct the DB row to match the broker (source of truth) -- confirmed
+    # live 2026-08-26: MRVL/SNDK rows still held stale quantities from
+    # before the close_equity_trade() sizing bug was fixed (commit
+    # 1cc3eb8); that fix stops new mismatches but never retroactively
+    # corrected rows it had already damaged. Only corrects when there is
+    # exactly one open equity Trade row for the ticker -- ambiguous
+    # (multiple open rows, or an options position) cases are skipped and
+    # logged for manual review. Rollback: set false.
+    reconciliation_auto_correct_quantity: bool = Field(default=True)
 
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)

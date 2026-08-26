@@ -150,6 +150,7 @@ async def test_reconcile_positions_calls_adopt_when_untracked_and_flag_on():
     mock_reconciler = MagicMock()
     mock_reconciler.check = AsyncMock(return_value=SimpleNamespace(
         clean=False, untracked_at_broker=["MRVL"], phantom_in_db=[], warnings=[],
+        quantity_mismatch_tickers=[],
     ))
 
     with patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
@@ -169,6 +170,7 @@ async def test_reconcile_positions_skips_adopt_when_flag_off():
     mock_reconciler = MagicMock()
     mock_reconciler.check = AsyncMock(return_value=SimpleNamespace(
         clean=False, untracked_at_broker=["MRVL"], phantom_in_db=[], warnings=[],
+        quantity_mismatch_tickers=[],
     ))
 
     with patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
@@ -188,6 +190,7 @@ async def test_reconcile_positions_skips_adopt_when_nothing_untracked():
     mock_reconciler = MagicMock()
     mock_reconciler.check = AsyncMock(return_value=SimpleNamespace(
         clean=False, untracked_at_broker=[], phantom_in_db=["ghost-id"], warnings=[],
+        quantity_mismatch_tickers=[],
     ))
 
     with patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \

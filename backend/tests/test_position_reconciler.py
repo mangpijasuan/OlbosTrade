@@ -122,6 +122,7 @@ async def test_check_quantity_mismatch_warns(mock_broker):
         _wire_db(mock_db, [t])
         res = await reconciler.check()
     assert res.clean is False and any("QUANTITY MISMATCH" in w for w in res.warnings)
+    assert res.quantity_mismatch_tickers == ["SPY"]
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ def _result(clean: bool, **kwargs) -> SimpleNamespace:
         untracked_at_broker=kwargs.get("untracked_at_broker", []),
         phantom_in_db=kwargs.get("phantom_in_db", []),
         warnings=kwargs.get("warnings", []),
+        quantity_mismatch_tickers=kwargs.get("quantity_mismatch_tickers", []),
     )
 
 
