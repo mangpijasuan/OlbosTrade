@@ -98,12 +98,13 @@ async def test_get_account_summary_concurrent_calls_subscribe_only_once(client):
     IBKRRequestCoordinator workers can all call get_account_summary() at
     once right after a fresh connect() (when _account_subscribed is still
     False and a burst of ACCOUNT_SUMMARY jobs typically lands together).
-    Without a lock around the check-then-subscribe, every one of them sees
-    False and fires its own reqAccountUpdatesAsync concurrently on the same
-    shared `ib` connection — observed live as every coordinator worker
-    piling up and never completing. An artificial delay on the mocked call
-    holds the race window open long enough that, without the lock, this
-    test would see more than one call."""
+    Without single-flight coordination, every one of them sees False and
+    fires its own reqAccountUpdatesAsync concurrently on the same shared
+    `ib` connection — observed live as every coordinator worker piling up
+    and never completing. An artificial delay on the mocked call holds the
+    race window open long enough that, without single-flighting the real
+    attempt via self._account_subscribe_task, this test would see more
+    than one call."""
     client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
     client.ib.accountValues = MagicMock(return_value=[])
 
@@ -121,19 +122,14 @@ async def test_get_account_summary_concurrent_calls_subscribe_only_once(client):
 
 
 @pytest.mark.asyncio
-async def test_get_account_summary_hung_subscribe_releases_lock_for_retry(client):
-    """Second regression test for the same 2026-08-25 incident: the lock
-    fix above has a failure mode of its own if reqAccountUpdatesAsync
-    itself hangs (not just races) — the IBKRRequestCoordinator's own
-    wait_for(shield(...)) only bounds the CALLER's wait, not the underlying
-    task, so an unbounded hang inside the lock would hold it forever and
-    every later get_account_summary() call would queue up behind a lock
-    that can never release (observed live: zero successful ACCOUNT_SUMMARY
-    calls for minutes after the lock fix first deployed, worse than before
-    it). ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS bounds the subscribe call itself
-    so a hang raises, releases the lock via the `async with` block exiting,
-    and leaves _account_subscribed False — proving a second, later call can
-    still succeed instead of piling up behind a dead lock."""
+async def test_get_account_summary_hung_subscribe_allows_retry_after_giving_up(client):
+    """Second regression test for the same 2026-08-25 incident: the shared
+    subscribe task itself must eventually give up if IBKR genuinely never
+    responds — ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS bounds the ONE real
+    attempt (self._account_subscribe_task), so a permanent hang ends that
+    task with an exception rather than leaving it pending forever. Once
+    it's .done(), the next caller must discard it and start a fresh
+    attempt instead of re-attaching to a dead task forever."""
     client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
     client.ib.accountValues = MagicMock(return_value=[])
 
@@ -154,11 +150,52 @@ async def test_get_account_summary_hung_subscribe_releases_lock_for_retry(client
             await client.get_account_summary()
 
     assert client._account_subscribed is False  # first attempt's failure must not poison the flag
+    assert client._account_subscribe_task.done()
 
     client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=_succeeds)
-    await client.get_account_summary()  # would hang here too if the lock were never released
+    await client.get_account_summary()  # would hang here too if the dead task were reused
 
     assert client._account_subscribed is True
+
+
+@pytest.mark.asyncio
+async def test_get_account_summary_caller_timeout_does_not_kill_shared_subscribe(client):
+    """The single-flight design's core guarantee, and the specific gap a
+    lock-based design doesn't cover: one caller giving up on ITS OWN
+    timeout must never cancel the shared subscribe task for anyone else
+    still waiting on it (or arriving right after) — asyncio.shield() is
+    what makes this hold. Mirrors paper_trade.py/account_state.py, which
+    wrap get_account_summary() in a bare asyncio.wait_for() with no shield
+    of their own — if the shared task weren't shielded, THEIR timeout
+    would cancel the one real in-flight IBKR request, forcing yet another
+    redundant resend for whoever calls next (the exact production
+    pathology this design replaces)."""
+    client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
+    client.ib.accountValues = MagicMock(return_value=[])
+
+    import asyncio as _asyncio
+
+    async def _slow_but_succeeds(_account: str) -> None:
+        await _asyncio.sleep(0.08)
+
+    client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=_slow_but_succeeds)
+
+    # First caller times out on ITS OWN bare wait_for, well before the
+    # real subscribe attempt (still running in the background) finishes.
+    with pytest.raises(_asyncio.TimeoutError):
+        await _asyncio.wait_for(client.get_account_summary(), timeout=0.02)
+
+    assert client._account_subscribed is False  # not resolved yet — still legitimately in flight
+
+    # Give the shared task time to finish on its own, unmolested by the
+    # first caller's cancelled wait.
+    await _asyncio.sleep(0.1)
+    assert client._account_subscribed is True
+
+    # A second, later caller must reuse that same completed result rather
+    # than triggering a second real subscribe attempt.
+    await client.get_account_summary()
+    client.ib.reqAccountUpdatesAsync.assert_called_once_with("DU123456")
 
 
 @pytest.mark.asyncio
@@ -199,6 +236,25 @@ async def test_connect_resets_account_subscription_flag():
          patch.object(client.ib, "reqMarketDataType"):
         await client.connect()
     assert client._account_subscribed is False
+
+
+@pytest.mark.asyncio
+async def test_connect_cancels_stale_subscribe_task():
+    """A subscribe task tied to the old socket's Future will never resolve
+    on a fresh connection — connect() must discard (and cancel) it rather
+    than leave it referenced, or get_account_summary() would incorrectly
+    treat a subscribe as still legitimately in flight forever."""
+    import asyncio as _asyncio
+
+    client = IBKRClient()
+    stale_task = _asyncio.ensure_future(_asyncio.sleep(3600))
+    client._account_subscribe_task = stale_task
+    with patch.object(client.ib, "connectAsync", new_callable=AsyncMock), \
+         patch.object(client.ib, "reqMarketDataType"):
+        await client.connect()
+    assert client._account_subscribe_task is None
+    await _asyncio.sleep(0)  # let the event loop actually deliver the cancellation
+    assert stale_task.cancelled()
 
 
 @pytest.mark.asyncio

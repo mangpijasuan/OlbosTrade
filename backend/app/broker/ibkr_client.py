@@ -76,16 +76,24 @@ def _chunked(items: list, size: int) -> "list[list]":
 # yfinance on any exception.
 HISTORICAL_DATA_TIMEOUT_SECONDS = 30.0
 
-# How long to wait for the one-shot reqAccountUpdatesAsync subscribe (inside
-# get_account_summary()'s lock) before giving up. Without this, a hung
-# subscribe call holds _account_subscribe_lock forever — the coordinator's
-# own wait_for(shield(...)) only bounds the CALLER's wait, not the
-# underlying task, so every later get_account_summary() call would queue up
-# behind a lock that can never release, turning one stuck call into a
-# permanent deadlock for the whole account-summary path (observed live).
-# On timeout, _account_subscribed stays False so the next caller gets a
-# fresh attempt instead of the whole path staying wedged until a restart.
-ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS = 5.0
+# Overall bound on the ONE real, shared reqAccountUpdatesAsync attempt that
+# backs get_account_summary()'s subscribe (see that method's docstring for
+# the single-flight design this guards). ib_insync's reqAccountUpdatesAsync
+# is not idempotent — every call sends a fresh IBKR message and creates a
+# fresh Future under a shared fixed key, silently orphaning any earlier
+# still-outstanding attempt's Future (confirmed by reading ib_insync's own
+# Wrapper.startReq(), which does `self._futures[key] = future`, no reuse).
+# Retrying independently every few seconds (the previous design here)
+# compounded this: each retry sent another redundant request and abandoned
+# the previous one, so a real IBKR response arriving late would resolve
+# whichever attempt happened to currently hold the key — not the one that
+# sent it — observed live as wildly variable multi-second delays that had
+# nothing to do with any per-caller timeout. 30s matches this module's
+# existing convention for a generous real IBKR round-trip bound (see
+# HISTORICAL_DATA_TIMEOUT_SECONDS) — long enough that a genuinely slow but
+# live response still resolves normally instead of being needlessly
+# abandoned and retried, since retrying here is the expensive part.
+ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS = 30.0
 
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
@@ -154,22 +162,23 @@ class IBKRClient(BrokerInterface):
         # flag was never explicitly cleared by an intervening disconnect()
         # (e.g. a silent connection drop caught by the reconnect watchdog).
         self._account_subscribed = False
-        # Guards the check-then-subscribe below — without it, several
-        # IBKRRequestCoordinator workers can all see _account_subscribed
-        # still False right after a fresh connect() (when a burst of
-        # ACCOUNT_SUMMARY jobs typically lands at once) and each fire their
-        # own concurrent reqAccountUpdatesAsync() on the same shared `ib`
-        # connection, which isn't a reqId-keyed call and doesn't appear to
-        # resolve cleanly when raced this way — observed live as every
-        # worker piling up on it and never completing. Created lazily (not
-        # here) since asyncio.Lock() on Python <3.10 binds to whatever
-        # event loop is current at construction time, and __init__ can run
-        # before this client's real event loop is active.
-        self._account_subscribe_lock = None
+        # Single-flight handle for the in-progress subscribe attempt, if
+        # any — see get_account_summary()'s docstring for why this exists
+        # instead of a lock around independent per-caller attempts.
+        self._account_subscribe_task = None
+
+    def _reset_account_subscription(self) -> None:
+        """Discard any in-flight subscribe attempt tied to the old socket —
+        its Future will never resolve on a fresh connection, so leaving it
+        referenced would just leak a permanently-pending task."""
+        self._account_subscribed = False
+        if self._account_subscribe_task is not None:
+            self._account_subscribe_task.cancel()
+            self._account_subscribe_task = None
 
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
-        self._account_subscribed = False
+        self._reset_account_subscription()
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 await self.ib.connectAsync(
@@ -214,7 +223,7 @@ class IBKRClient(BrokerInterface):
         if self._connected:
             self.ib.disconnect()
             self._connected = False
-            self._account_subscribed = False
+            self._reset_account_subscription()
             logger.info("IBKR disconnected")
 
     def _require_connection(self) -> None:
@@ -1072,6 +1081,20 @@ class IBKRClient(BrokerInterface):
             timestamp=datetime.now(timezone.utc),
         )
 
+    async def _subscribe_account_updates(self) -> None:
+        """The ONE real reqAccountUpdatesAsync attempt backing
+        get_account_summary()'s subscribe — see that method's docstring
+        for why every caller must share this single attempt rather than
+        each firing an independent one. Bounded here (not per-caller) so
+        the shared task itself eventually gives up and lets a later caller
+        start a fresh attempt if IBKR genuinely never responds."""
+        account_id_temp = (self.ib.managedAccounts() or [""])[0]
+        await asyncio.wait_for(
+            self.ib.reqAccountUpdatesAsync(account_id_temp),
+            timeout=ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS,
+        )
+        self._account_subscribed = True
+
     async def get_account_summary(self) -> AccountSummary:
         """
         Return account summary from IBKR.
@@ -1092,26 +1115,36 @@ class IBKRClient(BrokerInterface):
         Subscribing once and holding it open avoids error 322 (which comes
         from *repeated* subscribe calls, not from one that stays open) while
         keeping the cache genuinely live for the life of the connection.
+
+        Single-flight, not a lock: reqAccountUpdatesAsync is not idempotent
+        — ib_insync's own implementation (Wrapper.startReq) creates a fresh
+        Future under a shared fixed key on every call, silently orphaning
+        any earlier still-outstanding attempt's Future. A per-caller retry
+        loop (even one serialized behind a lock) would have each attempt
+        send its own redundant IBKR message and abandon the previous one,
+        so a real-but-slow IBKR response ends up resolving whichever
+        attempt happens to currently hold the key — not the one that sent
+        it — producing wildly variable, effectively random per-caller
+        delays (confirmed live). Instead: at most one real subscribe
+        attempt is ever in flight (self._account_subscribe_task); every
+        caller that arrives while one is outstanding awaits that SAME
+        task via asyncio.shield() rather than starting its own — shield()
+        matters here specifically because callers race their own outer
+        timeout against this call (some via the coordinator's
+        wait_for(shield(job)), some via a bare wait_for with no shield of
+        their own, e.g. paper_trade.py/account_state.py) — without it, the
+        first caller to give up on ITS OWN timeout would cancel the shared
+        attempt for everyone else still waiting on it, forcing yet another
+        redundant resend — exactly the problem this design replaces.
         """
         self._require_connection()
 
-        if self._account_subscribe_lock is None:
-            self._account_subscribe_lock = asyncio.Lock()
-
         if not self._account_subscribed:
-            async with self._account_subscribe_lock:
-                # Re-check inside the lock: another coordinator worker may
-                # have already subscribed while this one was waiting for
-                # the lock — without this, the second-through-Nth worker to
-                # arrive would still redundantly call reqAccountUpdatesAsync
-                # right after acquiring it.
-                if not self._account_subscribed:
-                    account_id_temp = (self.ib.managedAccounts() or [""])[0]
-                    await asyncio.wait_for(
-                        self.ib.reqAccountUpdatesAsync(account_id_temp),
-                        timeout=ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS,
-                    )
-                    self._account_subscribed = True
+            if self._account_subscribe_task is None or self._account_subscribe_task.done():
+                self._account_subscribe_task = asyncio.ensure_future(
+                    self._subscribe_account_updates()
+                )
+            await asyncio.shield(self._account_subscribe_task)
 
         account_values = self.ib.accountValues()
         values: Dict[str, str] = {}
