@@ -168,6 +168,13 @@ export default function Landing() {
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <section className="landing-section landing-hero" id="product">
           <div className="landing-container">
+            <img
+              className="landing-hero-banner"
+              src="/olbos-hero.png"
+              alt="Olbos Trade — Algorithmic Trading System"
+              width={1024}
+              height={559}
+            />
             <div className="landing-eyebrow">Systematic Options Execution</div>
             <h1 className="landing-h1">
               Systematic options execution with risk controls built into every decision.
