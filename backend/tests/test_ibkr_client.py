@@ -539,3 +539,67 @@ def test_safe_int_and_safe_decimal_handle_nan_and_none():
     assert _safe_decimal(None) == Decimal("0")
     assert _safe_decimal(1.5) == Decimal("1.5")
     assert not math.isnan(float(_safe_decimal(float("nan"))))
+
+
+# ── Account-updates pre-cancel (2026-08-27 blackout) ──────────────────────────
+# reqAccountUpdates is a subscription and IBKR allows one per connection. When
+# it believes one is already open it silently ignores a new request — accepted,
+# never answered — so wait_for cancels the inner future at the timeout and
+# raises TimeoutError with no error from IBKR at all. Every account read failed
+# this way for a full day. Cancelling first makes the request go out from a
+# known-clean state.
+
+@pytest.mark.asyncio
+async def test_subscribe_cancels_any_existing_subscription_first():
+    client = IBKRClient()
+    client._connected = True
+    client.ib = MagicMock()
+    client.ib.isConnected = MagicMock(return_value=True)
+    client.ib.managedAccounts = MagicMock(return_value=["DU6720"])
+    client.ib.reqAccountUpdates = MagicMock()
+    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
+
+    await client._subscribe_account_updates()
+
+    client.ib.reqAccountUpdates.assert_called_once_with(False, "DU6720")
+    client.ib.reqAccountUpdatesAsync.assert_awaited_once_with("DU6720")
+    assert client._account_subscribed is True
+
+
+@pytest.mark.asyncio
+async def test_subscribe_proceeds_when_the_pre_cancel_raises():
+    """The cancel is a best-effort reset, not a precondition — a failure there
+    must not block the subscribe it exists to enable."""
+    client = IBKRClient()
+    client._connected = True
+    client.ib = MagicMock()
+    client.ib.isConnected = MagicMock(return_value=True)
+    client.ib.managedAccounts = MagicMock(return_value=["DU6720"])
+    client.ib.reqAccountUpdates = MagicMock(side_effect=Exception("no active sub"))
+    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
+
+    await client._subscribe_account_updates()
+
+    client.ib.reqAccountUpdatesAsync.assert_awaited_once_with("DU6720")
+    assert client._account_subscribed is True
+
+
+@pytest.mark.asyncio
+async def test_pre_cancel_happens_before_the_subscribe_not_after():
+    """Ordering is the whole point: cancelling after would leave the new
+    subscription torn down, and cancelling nothing would not clear the wedge."""
+    client = IBKRClient()
+    client._connected = True
+    calls: list[str] = []
+    client.ib = MagicMock()
+    client.ib.isConnected = MagicMock(return_value=True)
+    client.ib.managedAccounts = MagicMock(return_value=["DU6720"])
+    client.ib.reqAccountUpdates = MagicMock(side_effect=lambda *a: calls.append("cancel"))
+
+    async def _sub(_acct):
+        calls.append("subscribe")
+    client.ib.reqAccountUpdatesAsync = _sub
+
+    await client._subscribe_account_updates()
+
+    assert calls == ["cancel", "subscribe"], calls

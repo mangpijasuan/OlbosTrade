@@ -1089,6 +1089,29 @@ class IBKRClient(BrokerInterface):
         the shared task itself eventually gives up and lets a later caller
         start a fresh attempt if IBKR genuinely never responds."""
         account_id_temp = (self.ib.managedAccounts() or [""])[0]
+
+        # Cancel any subscription IBKR may still consider open before asking
+        # for a new one. reqAccountUpdates is a *subscription* and IBKR allows
+        # only one active account-updates subscription per connection: if it
+        # believes one is already open, a fresh request is silently ignored —
+        # accepted, never answered, so wait_for below cancels the inner future
+        # at the timeout and raises TimeoutError with no error from IBKR at
+        # all. Confirmed live 2026-08-27: every account read failed this way
+        # for a full day (net_liquidation None, equity unavailable) after ~90
+        # gateway restarts left the subscription state indeterminate.
+        #
+        # This is the plain sync call, not the *Async variant: the cancel is
+        # fire-and-forget (IBKR sends no acknowledgement for it, so there is
+        # nothing to await) and it must not be able to hang ahead of the real
+        # request. Wrapped because a cancel that fails is not a reason to skip
+        # the subscribe — it is a best-effort reset, not a precondition.
+        try:
+            self.ib.reqAccountUpdates(False, account_id_temp)
+        except Exception as exc:
+            logger.debug(
+                "Account-updates pre-cancel failed (continuing to subscribe): %s", exc,
+            )
+
         await asyncio.wait_for(
             self.ib.reqAccountUpdatesAsync(account_id_temp),
             timeout=ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS,
