@@ -23,6 +23,26 @@
 # so this version checks the app's already-open connection's self-reported
 # state instead of ever dialing a second one.
 #
+# PRIOR VERSION BUG #2 (found 2026-08-27): the fix above also added a second
+# condition to the probe — `queue_depth.P0 < 30` — on the theory that a deep
+# queue meant the connection was unresponsive even if isConnected() hadn't
+# noticed. That predicate is self-reinforcing and cannot clear itself:
+# restarting the GATEWAY cannot drain an APP-side queue, it deepens it (the
+# restart drops the connection, in-flight coordinator requests are shielded so
+# they hang rather than cancel, and the scanners keep enqueueing). Once the
+# queue crossed 30 the probe could never return OK again, so this watchdog
+# restarted the gateway every COOLDOWN seconds indefinitely — 9 restarts
+# between 02:20 and 07:00 alone, each exactly 15 minutes apart. Downstream that
+# produced a 99.3% ACCOUNT_SUMMARY timeout rate, a fabricated Total Equity on
+# the dashboard (the summary route silently falls back to capital + realized
+# P&L when the broker read fails), and margin guardrails running blind while
+# autopilot was on. Two lessons, both now encoded below:
+#   1. Only restart on a condition the restart can actually fix. For a gateway
+#      restart that is exactly one thing: the socket is down.
+#   2. Any unattended remediation needs a circuit breaker. If N restarts in a
+#      window all fail to restore health, restarting is not the answer —
+#      stop and surface it rather than loop forever.
+#
 # Intended to run from cron every few minutes (see install_ibkr_watchdog.sh).
 # ═══════════════════════════════════════════════════════════════════════════════
 set -uo pipefail
@@ -33,26 +53,47 @@ VERBOSE=0
 
 GATEWAY="ibkr-gateway"
 BACKEND="olbostrade-backend"
-# P0 queue depth above this, alongside a disconnected/degraded reading, is
-# treated as "stuck" rather than ordinary transient churn (normal operation
-# sits in the low single digits to low tens; the real incident this was
-# tuned against reached the hundreds/thousands).
-QUEUE_DEPTH_THRESHOLD=30
 COOLDOWN=900                    # seconds; don't restart again within 15 min
 STAMP="/tmp/ibkr-watchdog-last-restart"
+# Circuit breaker: if this many restarts inside the window have all failed to
+# bring the probe back to OK, restarting plainly isn't the remedy — stop and
+# escalate to a human instead of hammering the gateway forever. See the
+# 2026-08-27 bug note in the header for why this exists. History is cleared on
+# any OK probe, so the breaker only ever trips on *repeated ineffective*
+# restarts, never on a series of genuine hangs that each recovered.
+MAX_RESTARTS=4
+BREAKER_WINDOW=21600            # seconds (6h)
+HISTORY="/tmp/ibkr-watchdog-restart-history"
 
 ts() { date -u +%FT%TZ; }
 vsay() { [ "$VERBOSE" = 1 ] && echo "$(ts) $*"; return 0; }
 
 _running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || echo false)" = "true" ]; }
 
-mark_restart() { date +%s > "$STAMP"; }
+mark_restart() {
+  date +%s > "$STAMP"
+  date +%s >> "$HISTORY"
+}
 
 in_cooldown() {
   [ -f "$STAMP" ] || return 1
   local last now; last=$(cat "$STAMP" 2>/dev/null || echo 0); now=$(date +%s)
   [ $((now - last)) -lt "$COOLDOWN" ]
 }
+
+# Count restarts still inside the breaker window, pruning older entries.
+restarts_in_window() {
+  [ -f "$HISTORY" ] || { echo 0; return 0; }
+  local now cutoff kept
+  now=$(date +%s); cutoff=$((now - BREAKER_WINDOW))
+  kept=$(awk -v c="$cutoff" '$1 ~ /^[0-9]+$/ && $1 >= c' "$HISTORY" 2>/dev/null)
+  printf '%s\n' "$kept" | grep -c '[0-9]' || true
+  printf '%s\n' "$kept" > "$HISTORY"
+}
+
+# A healthy probe means whatever we did (or nothing) worked — forget the
+# restart history so a later, unrelated hang gets its full budget again.
+clear_history() { : > "$HISTORY"; }
 
 # 1. Gateway container missing or stopped → just (re)start it.
 if ! _running "$GATEWAY"; then
@@ -76,35 +117,51 @@ fi
 # 3. Liveness check via the backend's own already-open connection — reads
 #    /api/health/detail from inside the backend container (no new socket to
 #    the gateway, so this can never itself disturb the app's live session).
-#    "DEAD" means either the app's socket reports disconnected, or the P0
-#    queue is stuck deep enough that the connection is unresponsive in
-#    practice even if isConnected() hasn't noticed yet.
-probe=$(docker exec -i "$BACKEND" python3 - <<PY 2>/dev/null
+#    "DEAD" means only one thing: the app's socket to the gateway reports
+#    disconnected. That is the sole condition a *gateway* restart can
+#    actually remedy.
+#
+#    The P0 queue depth is reported alongside for the log line but is
+#    deliberately NOT part of the verdict — see the 2026-08-27 bug note in
+#    the header. Queue depth is app-side backlog; restarting the gateway
+#    makes it strictly worse (drops the connection, strands in-flight
+#    requests, scanners keep enqueueing), so using it as a restart trigger
+#    is self-reinforcing and can never clear itself.
+probe=$(docker exec -i "$BACKEND" python3 - <<'PY' 2>/dev/null
 import json, urllib.request
+depth = "?"
 try:
     with urllib.request.urlopen("http://127.0.0.1:8000/api/health/detail", timeout=8) as r:
         data = json.load(r)
     ibkr = data.get("ibkr", {}) or {}
-    connected = bool(ibkr.get("connected"))
-    queue_depth = float((ibkr.get("coordinator", {}) or {}).get("queue_depth", {}).get("P0", 0) or 0)
-    ok = connected and queue_depth < $QUEUE_DEPTH_THRESHOLD
+    ok = bool(ibkr.get("connected"))
+    depth = (ibkr.get("coordinator", {}) or {}).get("queue_depth", {}).get("P0", "?")
 except Exception:
     ok = False
-print("OK" if ok else "DEAD")
+print(("OK" if ok else "DEAD") + " " + str(depth))
 PY
 )
-probe=$(printf '%s' "$probe" | tr -d '[:space:]')
+depth=$(printf '%s' "$probe" | awk '{print $2}')
+probe=$(printf '%s' "$probe" | awk '{print $1}' | tr -d '[:space:]')
 
 if [ "$probe" = "OK" ]; then
-  vsay "watchdog: gateway healthy (IBKR API probe=OK)"
+  clear_history
+  vsay "watchdog: gateway healthy (IBKR API probe=OK, p0_queue=${depth:-?})"
   exit 0   # healthy — nothing to do
 fi
 
-# 4. Probe failed → restart the gateway, respecting the cooldown.
+# 4. Probe failed → restart the gateway, respecting cooldown + breaker.
 if in_cooldown; then
   echo "$(ts) watchdog: probe=${probe:-empty} but within cooldown — gateway likely still logging in"
   exit 0
 fi
-echo "$(ts) watchdog: IBKR API probe=${probe:-empty} — restarting $GATEWAY"
+
+recent=$(restarts_in_window)
+if [ "${recent:-0}" -ge "$MAX_RESTARTS" ]; then
+  echo "$(ts) watchdog: CIRCUIT BREAKER OPEN — ${recent} restarts in the last $((BREAKER_WINDOW/3600))h did not restore the connection (p0_queue=${depth:-?}). NOT restarting again; this needs manual investigation."
+  exit 0
+fi
+
+echo "$(ts) watchdog: IBKR API probe=${probe:-empty} p0_queue=${depth:-?} — restarting $GATEWAY (${recent}/${MAX_RESTARTS} in window)"
 docker restart "$GATEWAY" >/dev/null 2>&1 || true
 mark_restart
