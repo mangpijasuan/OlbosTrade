@@ -2752,7 +2752,7 @@ async def dashboard_summary():
         if broker_ok:
             from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
             acct = await ibkr_coordinator.submit(
-                Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+                Priority.P0, broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
                 timeout=ACCOUNT_SUMMARY_ROUTE_TIMEOUT_SECONDS,
             )
             nl = float(acct.net_liquidation or 0)

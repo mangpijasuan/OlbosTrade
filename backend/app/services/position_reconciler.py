@@ -361,7 +361,7 @@ class PositionReconciler:
 
         positions = await self.broker.get_positions()
         account = await ibkr_coordinator.submit(
-            Priority.P0, self.broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+            Priority.P0, self.broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
         )
 
         async with AsyncSessionLocal() as session:

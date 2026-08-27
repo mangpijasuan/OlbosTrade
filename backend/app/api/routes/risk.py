@@ -62,7 +62,7 @@ async def get_portfolio_state():
         from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         broker = get_broker()
         acct   = await ibkr_coordinator.submit(
-            Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+            Priority.P0, broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
             timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
         acct_value    = float(acct.net_liquidation)
@@ -473,7 +473,7 @@ async def get_var(confidence: float = 0.95, horizon_days: int = 1):
         from app.broker.broker_factory import get_broker
         from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         acct = await ibkr_coordinator.submit(
-            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+            Priority.P0, get_broker().get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
         pv = float(acct.net_liquidation)
     except Exception:
@@ -510,7 +510,7 @@ async def get_margin():
         from app.broker.broker_factory import get_broker
         from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         acct = await ibkr_coordinator.submit(
-            Priority.P0, get_broker().get_account_summary, req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+            Priority.P0, get_broker().get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         return {"available": False, "reason": str(exc)}

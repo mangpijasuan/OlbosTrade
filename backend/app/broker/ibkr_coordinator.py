@@ -162,13 +162,26 @@ class IBKRRequestCoordinator:
         self.start()
 
         if key is not None:
+            # Resolve leader-vs-follower under the lock, but never await the
+            # result while holding it. The previous version returned
+            # `await ...` from inside the `async with`, so the first follower
+            # held this lock for the whole in-flight request and every other
+            # keyed submission — regardless of key — serialized behind it.
+            # Measured 2026-08-27: of 25 concurrent same-key callers only one
+            # ever reached the dedup branch; the other 23 were stuck on the
+            # lock until the leader finished, then each started a fresh
+            # round-trip. That defeated dedup precisely when load was highest.
+            existing: "Optional[asyncio.Future]" = None
             async with self._in_flight_lock:
-                existing = self._in_flight.get(key)
-                if existing is not None and not existing.done():
-                    observability.incr(f"ibkr.request.{priority.name.lower()}.dedup")
-                    return await asyncio.wait_for(asyncio.shield(existing), timeout=timeout)
-                future: "asyncio.Future" = asyncio.get_event_loop().create_future()
-                self._in_flight[key] = future
+                inflight = self._in_flight.get(key)
+                if inflight is not None and not inflight.done():
+                    existing = inflight
+                else:
+                    future: "asyncio.Future" = asyncio.get_event_loop().create_future()
+                    self._in_flight[key] = future
+            if existing is not None:
+                observability.incr(f"ibkr.request.{priority.name.lower()}.dedup")
+                return await asyncio.wait_for(asyncio.shield(existing), timeout=timeout)
         else:
             future = asyncio.get_event_loop().create_future()
 

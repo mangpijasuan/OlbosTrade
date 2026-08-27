@@ -1186,7 +1186,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             from app.services.margin_monitor import evaluate_margin
             from app.core.config import settings as _mg_cfg
             _acct = await ibkr_coordinator.submit(
-                Priority.P0, broker.get_account_summary, req_type="ACCOUNT_SUMMARY",
+                Priority.P0, broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
                 timeout=5.0,  # bounded well under the coordinator's 30s default — this
                 # runs on every execution attempt, and the surrounding try/except already
                 # fails open on any error (including a timeout) per this guard's own design

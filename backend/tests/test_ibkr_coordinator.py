@@ -303,3 +303,81 @@ async def test_run_job_log_line_itself_carries_the_request_id(make_coordinator, 
     assert ibkr_records[0].request_id == "log-line-check-42"
     # And the ordering fix must not leak the job's ID past _run_job either.
     assert request_id_var.get() == "-"
+
+
+# ── ACCOUNT_SUMMARY dedup (2026-08-27 P0 saturation) ──────────────────────────
+# Production ran ~73 ACCOUNT_SUMMARY/min, every one a separate HTTP request
+# enqueueing its own round-trip because no call site passed `key`. With 6
+# workers and a 5s timeout the arrival rate exceeded max throughput, so the P0
+# queue grew without bound (429 -> 904 while observed) and every account read
+# timed out. Sharing one in-flight request per key is what keeps arrivals
+# bounded regardless of how many panels poll.
+
+@pytest.mark.asyncio
+async def test_concurrent_same_key_requests_execute_fn_once(make_coordinator):
+    """All callers overlapping one in-flight request share its single result.
+
+    Note this is dedup, not caching: it collapses callers that overlap in
+    time. A request arriving after the previous one completed starts a fresh
+    round-trip. The fn here blocks on an Event so every caller is provably
+    still in flight when the assertion is made — an earlier draft used a
+    short sleep, and jobs completed mid-submission, giving 13 calls instead
+    of 1 and testing timing rather than dedup.
+    """
+    from app.broker.ibkr_coordinator import Priority
+
+    coord = make_coordinator()
+    calls = 0
+    release = asyncio.Event()
+
+    async def blocking_account_summary():
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return "acct"
+
+    tasks = [
+        asyncio.create_task(coord.submit(
+            Priority.P0, blocking_account_summary,
+            key="account_summary", req_type="ACCOUNT_SUMMARY", timeout=5))
+        for _ in range(25)
+    ]
+    # Wait until all 24 non-leader callers have provably registered as dedup
+    # hits before releasing. A bare sleep is not a synchronisation primitive:
+    # with one, late tasks reached the dedup check *after* the leader finished
+    # and the key was cleared, so they each started a fresh round-trip (13
+    # calls instead of 1) — the test then measured scheduling luck, not dedup.
+    from app.services.observability import observability
+
+    def _dedup_hits():
+        return observability.snapshot()["counters"].get("ibkr.request.p0.dedup", 0)
+
+    start_hits = _dedup_hits()
+    for _ in range(200):
+        if _dedup_hits() - start_hits >= 24:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail(f"only {_dedup_hits() - start_hits}/24 callers deduped before timeout")
+
+    assert calls <= 1, f"a second round-trip started while one was in flight: {calls}"
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert results == ["acct"] * 25
+    assert calls == 1, f"25 overlapping callers should share one round-trip, got {calls}"
+
+
+@pytest.mark.asyncio
+async def test_every_account_summary_call_site_passes_a_dedup_key():
+    """Regression guard: an un-keyed ACCOUNT_SUMMARY submission reintroduces
+    the saturation, and it is a one-word omission that reviews miss."""
+    import pathlib, re
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "app"
+    offenders = []
+    for path in root.rglob("*.py"):
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            if 'req_type="ACCOUNT_SUMMARY"' in line and 'key=' not in line:
+                offenders.append(f"{path.relative_to(root)}:{i}")
+    assert not offenders, f"ACCOUNT_SUMMARY submitted without a dedup key: {offenders}"
