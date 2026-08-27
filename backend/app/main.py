@@ -2371,6 +2371,25 @@ async def health_detail() -> dict:
     if hasattr(_broker, "ib"):
         _ib_connected = _ib_connected and _broker.ib.isConnected()
 
+    # Which IBKR account is this process actually logged into? Added 2026-08-27
+    # after a position-count disagreement (app reported 9 open, the operator's
+    # brokerage view showed 6) survived a full backend restart — ruling out a
+    # stale local cache and leaving "the gateway is on a different account than
+    # the one being looked at" as a live hypothesis that nothing in the logs or
+    # any route could confirm. ib.managedAccounts() is a plain local read of
+    # the account list IBKR pushes at connect time — no network round-trip, no
+    # coordinator, nothing to time out. Masked to the last 4 characters because
+    # this endpoint is unauthenticated; the last 4 are enough to compare
+    # against a brokerage view without publishing the full account number.
+    _accounts: list[str] = []
+    try:
+        for _acct in (_broker.ib.managedAccounts() or []) if hasattr(_broker, "ib") else []:
+            _acct = str(_acct).strip()
+            if _acct:
+                _accounts.append(f"****{_acct[-4:]}" if len(_acct) > 4 else "****")
+    except Exception:
+        _accounts = []
+
     _db_connected = True
     try:
         from app.core.database import AsyncSessionLocal
@@ -2393,6 +2412,13 @@ async def health_detail() -> dict:
         "observability": observability.snapshot(),
         "ibkr": {
             "connected": _ib_connected,
+            "trading_mode": settings.ibkr_trading_mode,
+            # Masked (last 4) account identifiers this process is logged into.
+            # More than one entry means the login has access to multiple
+            # accounts, in which case position reads may not be scoped to the
+            # account being compared against — see the block above.
+            "accounts": _accounts,
+            "account_count": len(_accounts),
             "coordinator": ibkr_coordinator.health_snapshot(),
             "options_chain_cache": options_chain_cache.stats(),
         },
