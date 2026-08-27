@@ -2412,6 +2412,20 @@ async def health_detail() -> dict:
     except Exception:
         _account_value_count = -1  # -1 distinguishes "read failed" from "empty"
 
+    # Age of that cache. A populated cache says nothing about whether TWS is
+    # still pushing into it, so the count above cannot distinguish live data
+    # from data frozen at the moment the stream died — this is the field that
+    # can. None means nothing has ever arrived on this connection.
+    _account_values_age = None
+    _account_values_stale = False
+    try:
+        if hasattr(_broker, "account_values_age_seconds"):
+            _age_raw = _broker.account_values_age_seconds()
+            _account_values_age = round(_age_raw, 1) if _age_raw is not None else None
+            _account_values_stale = _broker.account_values_are_stale()
+    except Exception:
+        pass
+
     _db_connected = True
     try:
         from app.core.database import AsyncSessionLocal
@@ -2443,6 +2457,8 @@ async def health_detail() -> dict:
             "account_count": len(_accounts),
             "account_values_cached": _account_value_count,
             "account_value_tags_present": _account_value_tags,
+            "account_values_age_seconds": _account_values_age,
+            "account_values_stale": _account_values_stale,
             "coordinator": ibkr_coordinator.health_snapshot(),
             "options_chain_cache": options_chain_cache.stats(),
         },

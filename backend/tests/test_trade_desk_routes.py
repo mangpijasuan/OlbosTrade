@@ -965,3 +965,90 @@ async def test_liquidity_gate_passes_healthy_spread():
                new=AsyncMock(return_value="trade-healthy")):
         res = await _execute_signal(sig, approved_by="manual")
     assert res["result"] == "submitted"
+
+
+# ── margin guard: stale account values must not clear it ─────────────────────
+# The guard reads figures out of IBKR's locally-cached push stream. A dead
+# stream still answers, with the complete margin picture from whenever it
+# died — so the guard's one dangerous failure is reading "margin is fine" off
+# numbers that predate the blow-up it exists to catch.
+
+def _submit_router(acct):
+    """Stand in for ibkr_coordinator.submit.
+
+    The coordinator is the single door for ACCOUNT_SUMMARY *and* PLACE_ORDER,
+    so a blanket stub would hand the order path an AccountSummary. Route by
+    req_type and let anything that isn't an account read run for real.
+    """
+    async def _submit(priority, fn, *args, req_type=None, **kwargs):
+        if req_type == "ACCOUNT_SUMMARY":
+            return acct
+        res = fn(*args) if args else fn()
+        return await res if hasattr(res, "__await__") else res
+    return AsyncMock(side_effect=_submit)
+
+
+def _acct_summary(*, is_stale: bool, age: float, maint: float = 10_000.0):
+    from decimal import Decimal
+    from app.broker.broker_interface import AccountSummary
+    return AccountSummary(
+        account_id="DU123456",
+        net_liquidation=Decimal("100000"),
+        cash_balance=Decimal("50000"),
+        buying_power=Decimal("200000"),
+        maintenance_margin=Decimal(str(maint)),
+        excess_liquidity=Decimal("50000"),
+        init_margin=Decimal("20000"),
+        data_age_seconds=age,
+        is_stale=is_stale,
+    )
+
+
+@pytest.mark.asyncio
+async def test_margin_guard_is_skipped_when_account_values_are_stale():
+    """Stale figures are treated as absent, not as an all-clear.
+
+    evaluate_margin must never even run: a frozen snapshot can be wrong in
+    either direction — a false 'fine' that lets a trade through during a real
+    margin event, or a false 'critical' that blocks after recovery.
+    """
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-1", status="submitted"))
+
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.api.routes.trade_desk.ibkr_coordinator.submit",
+               new=_submit_router(_acct_summary(is_stale=True, age=1800.0, maint=99_000.0))), \
+         patch("app.services.margin_monitor.evaluate_margin") as eval_mock, \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-1")):
+        res = await _execute_signal(_options_signal(), approved_by="autopilot")
+
+    eval_mock.assert_not_called()
+    # maint=99k against nl=100k would be a hard 'critical' block if evaluated —
+    # proving the skip is what let this through, not a benign margin picture.
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_margin_guard_still_blocks_on_fresh_critical_figures():
+    """Regression pin for the other direction: the staleness check must not
+    have quietly disabled the guard for live data."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-2", status="submitted"))
+
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.api.routes.trade_desk.ibkr_coordinator.submit",
+               new=_submit_router(_acct_summary(is_stale=False, age=12.0, maint=99_000.0))):
+        res = await _execute_signal(_options_signal(), approved_by="autopilot")
+
+    assert res["result"] == "blocked"
+    assert "margin_critical" in res["reason"]
+    broker.place_order.assert_not_awaited()

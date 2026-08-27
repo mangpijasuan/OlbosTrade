@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import math as _math
+import time
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from ib_insync import IB, Contract, Index, LimitOrder, Option, Stock
 
@@ -95,6 +96,24 @@ HISTORICAL_DATA_TIMEOUT_SECONDS = 30.0
 # abandoned and retried, since retrying here is the expensive part.
 ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS = 30.0
 
+# How old the account-values cache may get before it stops counting as live.
+#
+# ib.accountValues() is a local dict TWS pushes into; nothing about reading it
+# can fail or time out, so a dead push stream is indistinguishable from a quiet
+# one by inspection alone — the last-known numbers are returned forever, with
+# full confidence, at any age. That is the failure this bound exists to make
+# visible: on 2026-08-27 the subscribe had been failing all day while the cache
+# still held 184 values, and once get_account_summary() started serving that
+# cache (correctly — the data was live, confirmed by watching NetLiquidation
+# move) the only thing left separating "live" from "frozen" was that nobody was
+# looking at the clock.
+#
+# reqAccountUpdates pushes on change and re-sends the full set about every 3
+# minutes, so 10 minutes is roughly three missed cycles — long enough that
+# ordinary jitter or a genuinely idle account never trips it, short enough that
+# a stream which has actually stopped is caught inside one scan interval.
+ACCOUNT_VALUES_STALE_AFTER_SECONDS = 600.0
+
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
 FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
@@ -166,6 +185,47 @@ class IBKRClient(BrokerInterface):
         # any — see get_account_summary()'s docstring for why this exists
         # instead of a lock around independent per-caller attempts.
         self._account_subscribe_task = None
+        # When TWS last pushed an account value, as a monotonic timestamp.
+        # None means "nothing has ever arrived on this client" — distinct
+        # from an old timestamp, which means the stream ran and then stopped.
+        self._account_values_last_push: Optional[float] = None
+        # Registered on the IB object rather than per-connection: self.ib
+        # outlives every connect()/disconnect() cycle (they reuse the same
+        # instance), so hooking once here avoids stacking a duplicate handler
+        # on every reconnect — ib_insync's Event would call each copy.
+        self.ib.accountValueEvent += self._on_account_value
+
+    def _on_account_value(self, _value: Any = None) -> None:
+        """Stamp the arrival of a pushed account value.
+
+        Runs inside ib_insync's event dispatch, so it must never raise: an
+        exception here would propagate into the client's message loop, which
+        is a far worse failure than a missing timestamp.
+        """
+        try:
+            self._account_values_last_push = time.monotonic()
+        except Exception:  # pragma: no cover — defensive only
+            pass
+
+    def account_values_age_seconds(self) -> Optional[float]:
+        """Seconds since TWS last pushed an account value, or None if it never
+        has on this client. Local read of a monotonic clock — no I/O."""
+        if self._account_values_last_push is None:
+            return None
+        return max(0.0, time.monotonic() - self._account_values_last_push)
+
+    def account_values_are_stale(self) -> bool:
+        """True when the push stream has gone quiet past the point where the
+        cache can still be trusted as live.
+
+        A never-populated cache is NOT stale — it is empty, which callers
+        already handle as "no data". Staleness is specifically the dangerous
+        case: real-looking numbers that stopped being true.
+        """
+        age = self.account_values_age_seconds()
+        if age is None:
+            return False
+        return age > ACCOUNT_VALUES_STALE_AFTER_SECONDS
 
     def _reset_account_subscription(self) -> None:
         """Discard any in-flight subscribe attempt tied to the old socket —
@@ -175,6 +235,10 @@ class IBKRClient(BrokerInterface):
         if self._account_subscribe_task is not None:
             self._account_subscribe_task.cancel()
             self._account_subscribe_task = None
+        # The push timestamp belongs to the old socket's stream. Carrying it
+        # across a reconnect would report the new, empty cache as freshly
+        # updated — the precise lie this tracking exists to prevent.
+        self._account_values_last_push = None
 
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
@@ -1216,6 +1280,24 @@ class IBKRClient(BrokerInterface):
                     )
 
         account_values = self.ib.accountValues()
+
+        # Age the numbers before returning them. Reading this cache cannot
+        # fail, so without an explicit clock a stopped push stream is
+        # indistinguishable from a calm market: the last-known figures keep
+        # being served, forever, with no signal that they stopped tracking
+        # reality. Callers get the age and a verdict; nothing is withheld
+        # here, because a stale figure is still the best available answer for
+        # display — it just must never be mistaken for a current one.
+        _age = self.account_values_age_seconds()
+        _stale = self.account_values_are_stale()
+        if _stale:
+            logger.warning(
+                "Account values are stale — last push %.0fs ago (limit %.0fs). "
+                "Serving them for display, but margin and risk checks must not "
+                "treat these figures as current.",
+                _age or 0.0, ACCOUNT_VALUES_STALE_AFTER_SECONDS,
+            )
+
         values: Dict[str, str] = {}
         account_id = (self.ib.managedAccounts() or ["unknown"])[0]
         for v in account_values:
@@ -1238,4 +1320,6 @@ class IBKRClient(BrokerInterface):
             maintenance_margin=_dec("MaintMarginReq", "FullMaintMarginReq"),
             excess_liquidity=_dec("ExcessLiquidity", "FullExcessLiquidity"),
             init_margin=_dec("InitMarginReq", "FullInitMarginReq"),
+            data_age_seconds=_age,
+            is_stale=_stale,
         )

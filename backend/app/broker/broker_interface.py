@@ -135,6 +135,13 @@ class AccountSummary(BaseModel):
     maintenance_margin: Decimal | None = None
     excess_liquidity: Decimal | None = None
     init_margin: Decimal | None = None
+    # How long ago the broker last refreshed these figures, and whether that
+    # is long enough ago to stop trusting them. IBKR serves account data from
+    # a locally-cached push stream, so a read always succeeds and always looks
+    # authoritative — even when the stream died hours earlier. None means the
+    # broker doesn't report an age (non-IBKR brokers), not that it is fresh.
+    data_age_seconds: float | None = None
+    is_stale: bool = False
 
 
 class Bar(BaseModel):

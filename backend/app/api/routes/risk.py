@@ -527,7 +527,16 @@ async def get_margin():
         warn_pct=settings.margin_warn_pct,
         critical_pct=settings.margin_critical_pct,
     )
-    return {"available": True, **status.to_dict()}
+    # Age travels with the figures. The utilization number reads as a live
+    # measurement whether or not it still is one, so the reader needs the
+    # clock alongside it to tell a current 57% from a 57% that stopped
+    # updating an hour ago.
+    return {
+        "available": True,
+        **status.to_dict(),
+        "data_age_seconds": acct.data_age_seconds,
+        "is_stale": acct.is_stale,
+    }
 
 
 @router.get("/reconciliation")

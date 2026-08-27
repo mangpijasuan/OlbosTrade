@@ -1191,7 +1191,22 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 # runs on every execution attempt, and the surrounding try/except already
                 # fails open on any error (including a timeout) per this guard's own design
             )
-            if _acct.maintenance_margin is not None:
+            if _acct.is_stale:
+                # Stale figures cannot clear this guard. IBKR serves account
+                # data from a cached push stream, so a dead stream still
+                # returns a complete, confident-looking margin picture — the
+                # one from whenever it died. Evaluating it risks the guard's
+                # only dangerous error: reading "margin is fine" off numbers
+                # that predate the blow-up it exists to catch. Treated as
+                # absent rather than as a block, which keeps this guard's
+                # documented fail-open contract intact (it blocks only on a
+                # positively-detected critical state) while refusing to draw
+                # an all-clear from data that cannot support one.
+                logger.warning(
+                    "Margin guard skipped for %s — account values stale (%.0fs old)",
+                    ticker, _acct.data_age_seconds or 0.0,
+                )
+            elif _acct.maintenance_margin is not None:
                 _m = evaluate_margin(
                     net_liquidation=float(_acct.net_liquidation or 0),
                     maintenance_margin=float(_acct.maintenance_margin or 0),
