@@ -2740,8 +2740,16 @@ async def dashboard_summary():
     except Exception:
         db_ok = False
 
-    # ── Equity from broker (fall back to capital + realized P&L) ────────────
-    total_equity = cap + total_pnl
+    # ── Equity from broker — no synthetic fallback ──────────────────────────
+    # This used to default to `cap + total_pnl` and only overwrite on success,
+    # so a failed broker read produced a plausible, authoritative-looking
+    # number that was pure arithmetic. Confirmed live 2026-08-27: the account
+    # read failed 100% of the day and the dashboard showed $245,494.81
+    # (250,000 starting capital + -4,505.19 DB P&L) while IBKR actually held
+    # $254,029.86 — an $8.5k gap presented with no staleness indicator,
+    # because the timeout also surfaced as an empty broker_error string.
+    # Unknown must read as unknown: None here renders as "—" in the UI.
+    total_equity: Optional[float] = None
     broker_ok = False
     broker_detail = "Disconnected"
     try:
@@ -2792,7 +2800,10 @@ async def dashboard_summary():
     issues = sum(1 for h in health if h["status"] != "ok")
 
     return {
-        "total_equity":  round(total_equity, 2),
+        # None (not a number) when the broker read failed — the UI renders
+        # "—" rather than asserting a value it does not have.
+        "total_equity":  round(total_equity, 2) if total_equity is not None else None,
+        "total_equity_source": "broker" if total_equity is not None else "unavailable",
         "total_pnl":     round(total_pnl, 2),
         "total_pnl_pct": round(total_pnl / cap * 100, 2) if cap else 0.0,
         "day_pnl":       round(day_pnl, 2),

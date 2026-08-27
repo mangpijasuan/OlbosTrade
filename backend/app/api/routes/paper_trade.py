@@ -38,7 +38,11 @@ async def get_portfolio():
             "buying_power":  float(acct.buying_power),
         }
     except Exception as exc:
-        broker_data = {"broker_error": str(exc)}
+        # str(asyncio.TimeoutError()) is "" — an empty message reads as falsy
+        # to every `if (broker_error)` check downstream, so a timeout silently
+        # presented as "no error" (confirmed live 2026-08-27). Always carry a
+        # non-empty description.
+        broker_data = {"broker_error": str(exc) or type(exc).__name__}
 
     try:
         async with AsyncSessionLocal() as session:
@@ -69,7 +73,9 @@ async def get_portfolio():
         total_pnl    = float(stats.total_pnl or 0)
         wins         = int(stats.wins or 0)
         win_rate     = round(wins / total_trades, 3) if total_trades > 0 else 0.0
-        acct_value   = broker_data.get("account_value", settings.starting_capital + total_pnl)
+        # No synthetic substitute: when the broker read fails, return_pct is
+        # unknown rather than computed off starting capital + DB P&L.
+        acct_value   = broker_data.get("account_value")
 
         return {"portfolio": {
             **broker_data,
@@ -79,7 +85,10 @@ async def get_portfolio():
             "open_positions":   open_count,
             "trades_today":     trades_today,
             "starting_capital": settings.starting_capital,
-            "return_pct":       round((acct_value - settings.starting_capital) / settings.starting_capital * 100, 2),
+            "return_pct":       (
+                round((acct_value - settings.starting_capital) / settings.starting_capital * 100, 2)
+                if acct_value is not None else None
+            ),
         }}
     except Exception as exc:
         return {"portfolio": {**broker_data, "db_error": str(exc)}}

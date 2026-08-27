@@ -40,7 +40,9 @@ const Icon = ({ name, size = 14, color = "currentColor" }: { name: string; size?
 // ── Types ───────────────────────────────────────────────────────────────────
 type Health = { name: string; status: "ok" | "warn" | "error"; detail: string };
 interface Summary {
-  total_equity: number; total_pnl: number; total_pnl_pct: number;
+  // null when the broker read failed — never substitute a computed value.
+  total_equity: number | null; total_equity_source?: "broker" | "unavailable";
+  total_pnl: number; total_pnl_pct: number;
   day_pnl: number; day_pnl_pct: number; health: Health[]; issues: number;
 }
 interface Performance {
@@ -276,7 +278,12 @@ export default function ExecutiveSummary() {
 
       {/* KPI cards */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-        <Kpi label="Total Equity" icon="dollar" value={s ? plain(s.total_equity) : "—"} />
+        <Kpi
+          label="Total Equity"
+          icon="dollar"
+          value={s && s.total_equity != null ? plain(s.total_equity) : "—"}
+          sub={s && s.total_equity == null ? "Broker unavailable" : undefined}
+        />
         <Kpi label="Total P&L" icon="pnl"
           value={s ? money(s.total_pnl) : "—"} color={s ? pnlColor(s.total_pnl) : undefined}
           sub={s ? `${pct(s.total_pnl_pct)} since open` : undefined} />
