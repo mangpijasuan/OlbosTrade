@@ -5,8 +5,10 @@ Run with: pytest tests/test_ibkr_client.py -v
 
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
+import asyncio
 import pytest
 
 from app.broker.ibkr_client import IBKRClient
@@ -603,3 +605,54 @@ async def test_pre_cancel_happens_before_the_subscribe_not_after():
     await client._subscribe_account_updates()
 
     assert calls == ["cancel", "subscribe"], calls
+
+
+# ── Subscribe failure must not withhold already-cached data ───────────────────
+# 2026-08-27: get_account_summary() awaited the subscribe before reading, so a
+# failing subscribe meant the read below was never reached. It failed for a full
+# day while accountValues() held 184 entries including NetLiquidation. Every
+# account read returned nothing and the margin guardrails ran blind. The
+# subscribe only has to succeed once per connection to populate the cache; a
+# later failure says nothing about whether the numbers are readable.
+
+def _acct_val(tag, value, currency="USD"):
+    return SimpleNamespace(tag=tag, value=str(value), currency=currency, account="DU6720")
+
+
+def _client_with_failing_subscribe(cached):
+    client = IBKRClient()
+    client._connected = True
+    client._account_subscribed = False
+    client.ib = MagicMock()
+    client.ib.isConnected = MagicMock(return_value=True)
+    client.ib.managedAccounts = MagicMock(return_value=["DU6720"])
+    client.ib.accountValues = MagicMock(return_value=cached)
+    client.ib.reqAccountUpdates = MagicMock()
+    client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=asyncio.TimeoutError())
+    return client
+
+
+@pytest.mark.asyncio
+async def test_cached_values_are_served_when_the_subscribe_fails():
+    cached = [
+        _acct_val("NetLiquidation", "254029.86"),
+        _acct_val("TotalCashValue", "-87618.91"),
+        _acct_val("BuyingPower", "380535.17"),
+    ]
+    client = _client_with_failing_subscribe(cached)
+
+    summary = await client.get_account_summary()
+
+    assert float(summary.net_liquidation) == 254029.86, (
+        "a failed subscribe must not withhold account values IBKR already streamed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_failure_still_raises_when_nothing_is_cached():
+    """The guard only covers the case where data exists. With an empty cache
+    there is nothing to serve, so the failure must still surface."""
+    client = _client_with_failing_subscribe([])
+
+    with pytest.raises(Exception):
+        await client.get_account_summary()

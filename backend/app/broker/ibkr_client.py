@@ -1167,7 +1167,33 @@ class IBKRClient(BrokerInterface):
                 self._account_subscribe_task = asyncio.ensure_future(
                     self._subscribe_account_updates()
                 )
-            await asyncio.shield(self._account_subscribe_task)
+            try:
+                await asyncio.shield(self._account_subscribe_task)
+            except Exception as exc:
+                # A failed subscribe is not a reason to withhold data IBKR has
+                # already streamed. The subscribe only needs to succeed *once*
+                # per connection to populate accountValues(); if the cache is
+                # already populated, a later failed re-subscribe tells us
+                # nothing about whether the numbers are readable.
+                #
+                # This await used to propagate, so the read below was never
+                # reached. Confirmed live 2026-08-27: the subscribe had been
+                # failing for a full day while accountValues() held 184 entries
+                # including NetLiquidation, TotalCashValue, BuyingPower,
+                # MaintMarginReq and ExcessLiquidity. Every account read
+                # returned nothing, margin guardrails ran blind with autopilot
+                # on, and the dashboard fell back to a synthetic equity figure
+                # ~$8.5k below the real account value — all because the code
+                # refused to read data it already had.
+                #
+                # Fail only when there is genuinely nothing to return.
+                if not self.ib.accountValues():
+                    raise
+                logger.warning(
+                    "Account-updates subscribe failed (%s) — serving %d already-cached "
+                    "account values; the push stream may be stale",
+                    exc or type(exc).__name__, len(self.ib.accountValues()),
+                )
 
         account_values = self.ib.accountValues()
         values: Dict[str, str] = {}
