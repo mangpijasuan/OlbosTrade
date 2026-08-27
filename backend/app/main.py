@@ -2390,6 +2390,28 @@ async def health_detail() -> dict:
     except Exception:
         _accounts = []
 
+    # Does the account-values cache hold anything despite the subscribe
+    # timing out? get_account_summary() reads ib.accountValues() *after*
+    # awaiting the subscribe, so when the subscribe raises we never find
+    # out whether the data was there all along. If this is non-zero the
+    # subscribe may be unnecessary and the blackout is a control-flow bug,
+    # not a data problem. Local read of an already-populated list — no
+    # network round-trip, same as managedAccounts() above.
+    _account_value_count = 0
+    _account_value_tags: list[str] = []
+    try:
+        _vals = (_broker.ib.accountValues() or []) if hasattr(_broker, "ib") else []
+        _account_value_count = len(_vals)
+        _account_value_tags = sorted({
+            str(getattr(v, "tag", "")) for v in _vals
+            if str(getattr(v, "tag", "")) in (
+                "NetLiquidation", "TotalCashValue", "BuyingPower",
+                "MaintMarginReq", "ExcessLiquidity",
+            )
+        })
+    except Exception:
+        _account_value_count = -1  # -1 distinguishes "read failed" from "empty"
+
     _db_connected = True
     try:
         from app.core.database import AsyncSessionLocal
@@ -2419,6 +2441,8 @@ async def health_detail() -> dict:
             # account being compared against — see the block above.
             "accounts": _accounts,
             "account_count": len(_accounts),
+            "account_values_cached": _account_value_count,
+            "account_value_tags_present": _account_value_tags,
             "coordinator": ibkr_coordinator.health_snapshot(),
             "options_chain_cache": options_chain_cache.stats(),
         },
