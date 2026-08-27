@@ -1167,33 +1167,53 @@ class IBKRClient(BrokerInterface):
                 self._account_subscribe_task = asyncio.ensure_future(
                     self._subscribe_account_updates()
                 )
-            try:
-                await asyncio.shield(self._account_subscribe_task)
-            except Exception as exc:
-                # A failed subscribe is not a reason to withhold data IBKR has
-                # already streamed. The subscribe only needs to succeed *once*
-                # per connection to populate accountValues(); if the cache is
-                # already populated, a later failed re-subscribe tells us
-                # nothing about whether the numbers are readable.
-                #
-                # This await used to propagate, so the read below was never
-                # reached. Confirmed live 2026-08-27: the subscribe had been
-                # failing for a full day while accountValues() held 184 entries
-                # including NetLiquidation, TotalCashValue, BuyingPower,
-                # MaintMarginReq and ExcessLiquidity. Every account read
-                # returned nothing, margin guardrails ran blind with autopilot
-                # on, and the dashboard fell back to a synthetic equity figure
-                # ~$8.5k below the real account value — all because the code
-                # refused to read data it already had.
-                #
-                # Fail only when there is genuinely nothing to return.
-                if not self.ib.accountValues():
-                    raise
-                logger.warning(
-                    "Account-updates subscribe failed (%s) — serving %d already-cached "
-                    "account values; the push stream may be stale",
-                    exc or type(exc).__name__, len(self.ib.accountValues()),
+            # Only block on the subscribe when there is nothing to serve
+            # without it. The subscribe takes up to
+            # ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS (30s) to fail, while callers
+            # bound this call far tighter — paper_trade.py and the dashboard
+            # route both use ~5s. Awaiting a doomed subscribe therefore
+            # produced the right answer ~25s after every caller had already
+            # given up: the fall-through below fired correctly and the data
+            # still never reached the UI (confirmed live 2026-08-27, the log
+            # line "serving 184 already-cached account values" appearing while
+            # every route still reported None). When accountValues() is
+            # already populated there is nothing to wait for — read it now and
+            # let the subscribe keep retrying in the background to refresh the
+            # stream.
+            _cached = self.ib.accountValues()
+            if _cached:
+                logger.debug(
+                    "Account-updates subscribe still in flight — serving %d "
+                    "already-cached values without waiting", len(_cached),
                 )
+            else:
+                try:
+                    await asyncio.shield(self._account_subscribe_task)
+                except Exception as exc:
+                    # A failed subscribe is not a reason to withhold data IBKR has
+                    # already streamed. The subscribe only needs to succeed *once*
+                    # per connection to populate accountValues(); if the cache is
+                    # already populated, a later failed re-subscribe tells us
+                    # nothing about whether the numbers are readable.
+                    #
+                    # This await used to propagate, so the read below was never
+                    # reached. Confirmed live 2026-08-27: the subscribe had been
+                    # failing for a full day while accountValues() held 184 entries
+                    # including NetLiquidation, TotalCashValue, BuyingPower,
+                    # MaintMarginReq and ExcessLiquidity. Every account read
+                    # returned nothing, margin guardrails ran blind with autopilot
+                    # on, and the dashboard fell back to a synthetic equity figure
+                    # ~$8.5k below the real account value — all because the code
+                    # refused to read data it already had.
+                    #
+                    # Fail only when there is genuinely nothing to return.
+                    if not self.ib.accountValues():
+                        raise
+                    logger.warning(
+                        "Account-updates subscribe failed (%s) — serving %d already-cached "
+                        "account values; the push stream may be stale",
+                        exc or type(exc).__name__, len(self.ib.accountValues()),
+                    )
 
         account_values = self.ib.accountValues()
         values: Dict[str, str] = {}

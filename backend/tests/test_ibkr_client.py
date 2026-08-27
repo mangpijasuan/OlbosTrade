@@ -74,11 +74,27 @@ async def test_get_account_summary_subscribes_once_not_every_call(client):
     at a single point-in-time snapshot forever. Two consecutive calls must
     read live values without triggering a second subscribe."""
     client.ib.managedAccounts = MagicMock(return_value=["DU123456"])
-    client.ib.reqAccountUpdatesAsync = AsyncMock(return_value=None)
 
     first_snapshot = [MagicMock(tag="NetLiquidation", value="25000.00", currency="USD")]
     second_snapshot = [MagicMock(tag="NetLiquidation", value="25500.00", currency="USD")]
-    client.ib.accountValues = MagicMock(side_effect=[first_snapshot, second_snapshot])
+
+    # Model the real lifecycle rather than a fixed call count: accountValues()
+    # is EMPTY until a subscribe succeeds, then reflects the live push. A
+    # plain side_effect list assumed exactly one read per call and seeded a
+    # populated cache on a fresh client — impossible in practice, and it broke
+    # when get_account_summary() gained a cache check before the subscribe.
+    _state = {"subscribed": False, "reads": 0}
+
+    async def _subscribe(_acct):
+        _state["subscribed"] = True
+    client.ib.reqAccountUpdatesAsync = AsyncMock(side_effect=_subscribe)
+
+    def _account_values():
+        if not _state["subscribed"]:
+            return []
+        _state["reads"] += 1
+        return first_snapshot if _state["reads"] == 1 else second_snapshot
+    client.ib.accountValues = MagicMock(side_effect=_account_values)
 
     first = await client.get_account_summary()
     second = await client.get_account_summary()
@@ -656,3 +672,35 @@ async def test_subscribe_failure_still_raises_when_nothing_is_cached():
 
     with pytest.raises(Exception):
         await client.get_account_summary()
+
+
+@pytest.mark.asyncio
+async def test_populated_cache_returns_without_waiting_for_the_subscribe():
+    """The previous fix served cached values but still awaited the doomed
+    subscribe first — 30s, against caller timeouts of ~5s. It produced the
+    right answer long after everyone stopped listening. A populated cache
+    must short-circuit the wait entirely."""
+    client = IBKRClient()
+    client._connected = True
+    client._account_subscribed = False
+    client.ib = MagicMock()
+    client.ib.isConnected = MagicMock(return_value=True)
+    client.ib.managedAccounts = MagicMock(return_value=["DU6720"])
+    client.ib.accountValues = MagicMock(return_value=[
+        _acct_val("NetLiquidation", "254029.86"),
+        _acct_val("TotalCashValue", "-87618.91"),
+        _acct_val("BuyingPower", "380535.17"),
+    ])
+    client.ib.reqAccountUpdates = MagicMock()
+
+    subscribe_started = asyncio.Event()
+
+    async def _never_returns(_acct):
+        subscribe_started.set()
+        await asyncio.sleep(3600)      # stands in for the 30s timeout path
+    client.ib.reqAccountUpdatesAsync = _never_returns
+
+    # Hard bound: if this awaits the subscribe at all, it cannot finish in 1s.
+    summary = await asyncio.wait_for(client.get_account_summary(), timeout=1.0)
+
+    assert float(summary.net_liquidation) == 254029.86
