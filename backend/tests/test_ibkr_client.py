@@ -716,6 +716,11 @@ async def test_populated_cache_returns_without_waiting_for_the_subscribe():
 # crash. It masked real failures: watching the first autopilot scan, the
 # tracebacks flooded the log filter and had to be excluded by hand.
 
+def _own(caplog):
+    """Only this module's log records — caplog collects the whole process."""
+    return [r for r in caplog.records if r.name == "app.broker.ibkr_client"]
+
+
 async def _raise(exc):
     raise exc
 
@@ -738,7 +743,10 @@ async def test_subscribe_timeout_is_retrieved_and_logged_at_debug(caplog):
     # The actual anti-noise assertion: asyncio only logs the traceback for a
     # task whose exception was never retrieved.
     assert task._log_traceback is False
-    assert not [r for r in caplog.records if r.levelno >= 30]
+    # Scoped to this logger — caplog captures every logger in the process, so
+    # an unrelated warning from another test's teardown would otherwise fail
+    # this (it did, in the full-suite run).
+    assert not [r for r in _own(caplog) if r.levelno >= 30]
 
 
 @pytest.mark.asyncio
@@ -749,7 +757,7 @@ async def test_unexpected_subscribe_failure_still_warns(caplog):
     with caplog.at_level("DEBUG", logger="app.broker.ibkr_client"):
         IBKRClient._on_subscribe_task_done(task)
 
-    warnings = [r for r in caplog.records if r.levelno >= 30]
+    warnings = [r for r in _own(caplog) if r.levelno >= 30]
     assert len(warnings) == 1
     assert "gateway rejected the subscription" in warnings[0].getMessage()
     assert task._log_traceback is False

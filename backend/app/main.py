@@ -1983,6 +1983,10 @@ async def _poll_fills() -> None:
 
         now = datetime.now(timezone.utc)
 
+        # Symbols whose trade rows this pass books closed or cancels — their
+        # resting orders have to be cancelled too, see the sweep at the end.
+        closed_symbols: set[str] = set()
+
         # ── Entry-side reconciliation: resolve pending (working) orders ─────────
         # A pending trade is promoted to `open` once its position shows at the
         # broker (or a fill execution is found). If, after the grace window, there
@@ -2016,6 +2020,12 @@ async def _poll_fills() -> None:
                 await trade_recorder.cancel_pending(
                     trade_id=tid, reason="order_unfilled_timeout",
                 )
+                # cancel_pending only flips the DB row to "cancelled" — it does
+                # not tell the broker anything. The comment above assumed the
+                # order had already terminated on its own (DAY expiry), but
+                # nothing here can distinguish "terminated" from "still
+                # working", so the sweep below cancels it for real.
+                closed_symbols.add(underlying)
 
         still_missing: set[str] = set()
 
@@ -2032,6 +2042,7 @@ async def _poll_fills() -> None:
                 continue  # still open at broker
 
             still_missing.add(tid)
+            closed_symbols.add(underlying)
 
             spread_type = (trade.spread_type or "").lower()
             is_equity   = (trade.strategy == "equity") or spread_type.startswith("equity")
@@ -2072,6 +2083,61 @@ async def _poll_fills() -> None:
         for tid in list(_close_pending.keys()):
             if tid not in still_missing:
                 _close_pending.pop(tid, None)
+
+        # ── Cancel the resting bracket of anything booked closed above ──────────
+        # Booking the Trade row closed does nothing to the protective children
+        # still working at IBKR. Every *deliberate* close cancels them first
+        # (close_equity_trade, close_options_trade, close_untracked_position all
+        # call broker.cancel_open_orders); this broker-detected path did not, so
+        # the bracket outlived its position. Confirmed in production 2026-08-28:
+        # 20 orphaned orders across ASML/EXC/INTU/MU, every one traced to an
+        # exit_reason of position_closed_at_broker, while EXC's two
+        # position_rotation closes on the same ticker left none. An orphan is
+        # not inert — it is a live stop that, if touched, opens a brand-new
+        # unintended position (EXC's was a BUY STP for 906 shares).
+        #
+        # Guarded, because cancelling by symbol is blunt: a symbol can hold
+        # several bracket tranches, and cancelling all of them while another
+        # tranche is still live would strip a real position of its stop — the
+        # opposite and worse failure. So only sweep a symbol the broker no
+        # longer holds AND that has no open/pending Trade row left. The DB is
+        # re-read here rather than reusing all_trades because the loop above
+        # has since closed rows.
+        for symbol in sorted(closed_symbols):
+            try:
+                if symbol in live_symbols:
+                    continue  # broker still holds it — its bracket is doing its job
+                # func.upper, not a bare ==: `symbol` was upper-cased on the
+                # way in, and a case mismatch here would return no rows and so
+                # cancel a live position's stop. This comparison's failure mode
+                # has to be "skip the cancel", never "cancel anyway".
+                from sqlalchemy import func as _sa_func
+                async with AsyncSessionLocal() as session:
+                    remaining = (await session.execute(
+                        select(Trade).where(
+                            _sa_func.upper(Trade.underlying) == symbol,
+                            Trade.status.in_(["open", "pending"]),
+                        )
+                    )).scalars().all()
+                if remaining:
+                    logger.info(
+                        "Not cancelling %s orders — %d trade(s) still open/pending "
+                        "on that symbol", symbol, len(remaining),
+                    )
+                    continue
+                cancelled = await broker.cancel_open_orders(symbol)
+                if cancelled:
+                    logger.info(
+                        "Cancelled %d orphaned order(s) for %s — no position "
+                        "and no open/pending trade left", cancelled, symbol,
+                    )
+            except Exception as _cancel_exc:
+                # Never let a failed cancel abort reconciliation — the orphan
+                # survives to the next pass, which is the status quo, not worse.
+                logger.error(
+                    "Failed to cancel orders for %s after close: %s",
+                    symbol, _cancel_exc,
+                )
 
     except Exception as exc:
         logger.debug("_poll_fills: %s", exc)  # non-fatal

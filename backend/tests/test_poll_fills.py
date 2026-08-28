@@ -189,3 +189,143 @@ async def test_connected_ibkr_broker_still_reconciles_normally():
 
     broker.get_positions.assert_awaited_once()
     cancel.assert_awaited_once()
+
+
+# ── Orphaned-bracket cleanup ─────────────────────────────────────────────────
+#
+# Booking a Trade row closed does nothing to the protective children still
+# working at IBKR. Every deliberate close cancels them first
+# (close_equity_trade / close_options_trade / close_untracked_position all call
+# broker.cancel_open_orders); this broker-detected path did not.
+#
+# Production, 2026-08-28: 20 orphaned orders across ASML/EXC/INTU/MU, every one
+# from a position_closed_at_broker exit, while EXC's two position_rotation
+# closes on the same ticker left none. An orphan is a live stop with nothing
+# behind it — EXC's was a BUY STP for 906 shares that, if touched, opens a
+# fresh unintended position rather than closing anything.
+#
+# The guard matters as much as the cancel: cancelling by symbol is blunt, and
+# doing it while another tranche is still live would strip a real position of
+# its stop — a worse failure than the one being fixed.
+
+
+def _sequenced_session(*result_rows):
+    """A session whose successive .execute() calls return successive row
+    lists — _poll_fills reads the trade table once up front, then again per
+    closed symbol in the cleanup sweep."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    results = []
+    for rows in result_rows:
+        r = MagicMock()
+        r.scalars.return_value = MagicMock(all=lambda rows=rows: rows)
+        results.append(r)
+    session.execute = AsyncMock(side_effect=results)
+    return session
+
+
+def _cancelling_broker(positions=None, cancel_count=2):
+    broker = _fake_broker(positions)
+    broker.cancel_open_orders = AsyncMock(return_value=cancel_count)
+    return broker
+
+
+_RECENT = datetime.now(timezone.utc) - timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_broker_detected_close_cancels_the_orphaned_bracket():
+    trade = _open_trade("EXC", _RECENT)
+    broker = _cancelling_broker()
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_sequenced_session([trade], [])), \
+         patch.object(m, "_compute_exit_price", return_value=41.5), \
+         patch.object(trade_recorder, "record_exit", new=AsyncMock()) as rec:
+        await m._poll_fills()
+
+    rec.assert_awaited_once()
+    assert rec.await_args.kwargs["exit_reason"] == "position_closed_at_broker"
+    broker.cancel_open_orders.assert_awaited_once_with("EXC")
+
+
+@pytest.mark.asyncio
+async def test_cancel_skipped_while_another_trade_is_still_open_on_the_symbol():
+    """The guard. MRVL held 599 shares across 7 bracket tranches — cancelling
+    every MRVL order because one tranche closed would leave a live position
+    with no stop at all."""
+    closing = _open_trade("MRVL", _RECENT)
+    survivor = _open_trade("MRVL", _RECENT)
+    survivor.id = "open-MRVL-tranche-2"
+    broker = _cancelling_broker()
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_sequenced_session([closing], [survivor])), \
+         patch.object(m, "_compute_exit_price", return_value=300.0), \
+         patch.object(trade_recorder, "record_exit", new=AsyncMock()):
+        await m._poll_fills()
+
+    broker.cancel_open_orders.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_symbol_the_broker_still_holds_is_never_cancelled():
+    """Two trades, one gone from the broker and one still held — only the
+    gone one may have its orders cancelled."""
+    gone = _open_trade("INTU", _RECENT)
+    held = _open_trade("LITE", _RECENT)
+    live = MagicMock(symbol="LITE", underlying="LITE", unrealized_pnl=None, quantity=68)
+    broker = _cancelling_broker(positions=[live])
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_sequenced_session([gone, held], [])), \
+         patch.object(m, "_compute_exit_price", return_value=277.0), \
+         patch.object(trade_recorder, "record_exit", new=AsyncMock()), \
+         patch.object(trade_recorder, "update_excursion", new=AsyncMock()):
+        await m._poll_fills()
+
+    cancelled = [c.args[0] for c in broker.cancel_open_orders.await_args_list]
+    assert cancelled == ["INTU"]
+    assert "LITE" not in cancelled
+
+
+@pytest.mark.asyncio
+async def test_unfilled_pending_order_is_cancelled_at_the_broker_too():
+    """cancel_pending() only flips the DB row. The comment above it claimed
+    the order was cancelled 'so it never becomes a phantom' — nothing here can
+    tell a DAY-expired order from one still working, so it must really cancel."""
+    stale = datetime.now(timezone.utc) - timedelta(seconds=m.FILL_GRACE_SECONDS + 60)
+    trade = _pending_trade(stale, underlying="ASML")
+    broker = _cancelling_broker()
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_sequenced_session([trade], [])), \
+         patch.object(trade_recorder, "cancel_pending", new=AsyncMock()) as cancel:
+        await m._poll_fills()
+
+    cancel.assert_awaited_once()
+    broker.cancel_open_orders.assert_awaited_once_with("ASML")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cancel_does_not_abort_reconciliation():
+    """The orphan surviving to the next pass is the status quo. Losing the
+    close booking on top of it would be a regression."""
+    trade = _open_trade("MU", _RECENT)
+    broker = _fake_broker()
+    broker.cancel_open_orders = AsyncMock(side_effect=ConnectionError("gateway down"))
+
+    with patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_sequenced_session([trade], [])), \
+         patch.object(m, "_compute_exit_price", return_value=820.0), \
+         patch.object(trade_recorder, "record_exit", new=AsyncMock()) as rec:
+        await m._poll_fills()   # must not raise
+
+    rec.assert_awaited_once()
+    broker.cancel_open_orders.assert_awaited_once()
