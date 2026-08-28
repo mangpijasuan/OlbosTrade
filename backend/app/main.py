@@ -80,6 +80,7 @@ from app.api.routes import (
 )
 from app.api.routes import equity
 from app.api.routes import trade_desk
+from app.api.routes import rotation
 from app.api.routes import symphony
 from app.api.routes import options
 from app.api.routes import alpha_edge
@@ -201,6 +202,7 @@ app.include_router(trade_desk.router,  prefix="/api/trade-desk",   tags=["Trade 
 app.include_router(symphony.router,    prefix="/api/symphony",     tags=["Symphony"])
 app.include_router(options.router,     prefix="/api/options",      tags=["Options"])
 app.include_router(portfolio.router,   prefix="/api/portfolio",    tags=["Portfolio"])
+app.include_router(rotation.router,    prefix="/api/rotation",     tags=["Rotation"])
 app.include_router(options_csp.router, prefix="/api/options/csp",   tags=["Options Income"])
 app.include_router(options_decision.router, prefix="/api/options-decision", tags=["Options Decision"])
 app.include_router(intel.router,       prefix="/api/intel",        tags=["Intelligence Hub"])
