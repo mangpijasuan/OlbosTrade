@@ -179,6 +179,12 @@ class Settings(BaseSettings):
     # to even be eligible for closure; it never trades off against quality
     # score or confidence.
     position_rotation_winner_pnl_floor: float = Field(default=0.0)
+    # How far the challenger's composite must exceed the incumbent's before a
+    # replacement is even recommended (0-100 scale). Two heuristics differing
+    # by a point or two is noise, and acting on noise churns capital and pays
+    # spread twice. Raise it to make reviews rarer and more decisive; 0 would
+    # recommend on any positive difference and is not advised.
+    rotation_review_materiality_margin: float = Field(default=15.0)
     # Hours after ANY position close (stop, target, manual, rotation) before
     # the same (underlying, asset class) can be re-entered — stops a name
     # that just got stopped out from being whipsawed right back in. 0 =

@@ -165,6 +165,19 @@ def _stage_2b_env(*, rotation_enabled=True, broker=None):
         patch("app.core.config.settings.position_rotation_on_max", rotation_enabled),
         patch("app.broker.broker_factory.get_broker",
               return_value=broker if broker is not None else _broker()),
+        # Stage 2b gathers incumbent facts (DB + quotes) and persists the
+        # review. Both are real I/O; stub them so the branch logic is what is
+        # under test. Note the review build sits inside a try whose return is
+        # unconditional — test_stage_2b_returns_pending_approval_and_closes_nothing
+        # deliberately leaves these unstubbed to prove a failed review still
+        # stops the signal rather than falling through to execution.
+        patch("app.services.position_rotation.propose_rotation_incumbent",
+              new=AsyncMock(return_value=SimpleNamespace(
+                  trade_id="trade-1", underlying="MRVL", spread_type="equity_long",
+                  quality_score=41.0, confidence=0.62, in_flagged_cluster=False,
+                  unrealized_pnl=-11239.22))),
+        patch("app.api.routes.trade_desk._queue_rotation_review",
+              new=AsyncMock(return_value="rev-1")),
     ]
 
 
@@ -336,3 +349,186 @@ async def test_neither_execution_mode_can_bypass_the_close_guard():
                     _trade(), broker=b, closed_by=ROTATION_CLOSED_BY,
                 )
     b.place_equity_order.assert_not_called()
+
+
+# ── The approval path: the only route that may close via rotation ────────────
+#
+# This is the one place in the system where a rotation-sourced close is
+# permitted, so each precondition is pinned separately rather than covered by
+# one happy-path test.
+
+from fastapi import HTTPException
+
+
+def _review(review_id="rev-1", incumbent_trade_id="trade-1"):
+    return {
+        "kind": "ROTATION_REVIEW", "review_id": review_id, "ticker": "TSLA",
+        "asset_type": "equity", "incumbent_trade_id": incumbent_trade_id,
+        "challenger_signal": _signal(),
+        "review": {"recommendation": "replace", "requires_approval": True},
+    }
+
+
+def _open_trade_session(trade):
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    res = MagicMock()
+    res.scalars.return_value = MagicMock(first=lambda: trade)
+    session.execute = AsyncMock(return_value=res)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_approval_is_single_use():
+    """_resolve_rotation_review returns None once already resolved, so a
+    replayed approval cannot close the same incumbent twice."""
+    import app.api.routes.trade_desk as td
+    with patch.object(td, "_resolve_rotation_review", new=AsyncMock(return_value=None)):
+        with pytest.raises(HTTPException) as exc:
+            await td.approve_rotation_review("rev-1")
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approval_refused_while_kill_switch_engaged():
+    """The kill switch outranks an operator's approval — a review approved
+    before it was thrown must not still send an order."""
+    import app.api.routes.trade_desk as td
+    with patch.object(td, "_resolve_rotation_review",
+                      new=AsyncMock(return_value=_review())), \
+         patch.object(td, "_is_kill_switch_active", return_value=True), \
+         patch("app.services.position_rotation.close_equity_trade",
+               new=AsyncMock()) as close_eq:
+        with pytest.raises(HTTPException) as exc:
+            await td.approve_rotation_review("rev-1")
+    assert exc.value.status_code == 423
+    close_eq.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approval_refused_when_incumbent_already_closed():
+    """The review may be minutes old. If the incumbent closed in the
+    meantime, approving must not close something else."""
+    import app.api.routes.trade_desk as td
+    with patch.object(td, "_resolve_rotation_review",
+                      new=AsyncMock(return_value=_review())), \
+         patch.object(td, "_is_kill_switch_active", return_value=False), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_open_trade_session(None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=_broker()), \
+         patch("app.services.position_rotation.close_equity_trade",
+               new=AsyncMock()) as close_eq:
+        with pytest.raises(HTTPException) as exc:
+            await td.approve_rotation_review("rev-1")
+    assert exc.value.status_code == 409
+    close_eq.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_close_does_not_enter_the_challenger():
+    """If the slot was never freed, entering would breach max_positions —
+    the constraint that triggered the review in the first place."""
+    import app.api.routes.trade_desk as td
+    trade = _trade()
+    trade.status = "open"
+    with patch.object(td, "_resolve_rotation_review",
+                      new=AsyncMock(return_value=_review())), \
+         patch.object(td, "_is_kill_switch_active", return_value=False), \
+         patch.object(td, "_log_execution", new=AsyncMock()), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_open_trade_session(trade)), \
+         patch("app.broker.broker_factory.get_broker", return_value=_broker()), \
+         patch("app.services.position_rotation.close_equity_trade",
+               new=AsyncMock(side_effect=RuntimeError("broker rejected"))), \
+         patch.object(td, "_execute_signal", new=AsyncMock()) as execute:
+        with pytest.raises(HTTPException) as exc:
+            await td.approve_rotation_review("rev-1")
+    assert exc.value.status_code == 502
+    execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approval_closes_incumbent_with_a_token_then_enters_challenger():
+    import app.api.routes.trade_desk as td
+    trade = _trade()
+    trade.status = "open"
+    with patch.object(td, "_resolve_rotation_review",
+                      new=AsyncMock(return_value=_review())), \
+         patch.object(td, "_is_kill_switch_active", return_value=False), \
+         patch.object(td, "_log_execution", new=AsyncMock()), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_open_trade_session(trade)), \
+         patch("app.broker.broker_factory.get_broker", return_value=_broker()), \
+         patch("app.services.position_rotation.close_equity_trade",
+               new=AsyncMock(return_value={"ticker": "MRVL", "status": "filled"})) as close_eq, \
+         patch.object(td, "_execute_signal",
+                      new=AsyncMock(return_value={"result": "submitted"})) as execute:
+        out = await td.approve_rotation_review("rev-1")
+
+    assert out["result"] == "approved"
+    # The token is the review id, which exists only after the atomic
+    # pending→approved transition — it cannot be forged or replayed.
+    assert close_eq.await_args.kwargs["rotation_approval"] == "rev-1"
+    assert close_eq.await_args.kwargs["closed_by"] == "position_rotation"
+    execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reject_closes_nothing_and_enters_nothing():
+    import app.api.routes.trade_desk as td
+    with patch.object(td, "_resolve_rotation_review",
+                      new=AsyncMock(return_value=_review())), \
+         patch.object(td, "_log_execution", new=AsyncMock()), \
+         patch("app.services.position_rotation.close_equity_trade",
+               new=AsyncMock()) as close_eq, \
+         patch.object(td, "_execute_signal", new=AsyncMock()) as execute:
+        out = await td.reject_rotation_review("rev-1")
+
+    assert out["result"] == "rejected"
+    close_eq.assert_not_called()
+    execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reject_is_also_single_use():
+    import app.api.routes.trade_desk as td
+    with patch.object(td, "_resolve_rotation_review", new=AsyncMock(return_value=None)):
+        with pytest.raises(HTTPException) as exc:
+            await td.reject_rotation_review("rev-1")
+    assert exc.value.status_code == 404
+
+
+# ── Materiality margin (increment 5) ─────────────────────────────────────────
+
+def test_materiality_margin_is_configurable_and_gates_the_recommendation():
+    from app.services.rotation_review import PositionFacts, build_rotation_review
+
+    inc = PositionFacts(ticker="MRVL", side="incumbent", quality_score=50.0)
+    chal = PositionFacts(ticker="TSLA", side="challenger", quality_score=60.0,
+                         liquidity_ok=True, in_flagged_cluster=False)
+
+    # +10 against the default 15.0 margin — not material enough.
+    tight = build_rotation_review(incumbent=inc, challenger=chal,
+                                  portfolio_heat_pct=0.1)
+    assert tight["recommendation"] == "hold"
+
+    # Same pair, a margin it does clear.
+    loose = build_rotation_review(incumbent=inc, challenger=chal,
+                                  portfolio_heat_pct=0.1, materiality_margin=5.0)
+    assert loose["recommendation"] == "replace"
+
+
+def test_unknown_hard_constraints_block_rather_than_pass():
+    """Unverifiable liquidity or heat must veto — the cost of a wrong
+    'proceed' is a real position closed and a real order sent."""
+    from app.services.rotation_review import PositionFacts, build_rotation_review
+
+    out = build_rotation_review(
+        incumbent=PositionFacts(ticker="MRVL", side="incumbent", quality_score=10.0),
+        challenger=PositionFacts(ticker="TSLA", side="challenger", quality_score=90.0),
+        portfolio_heat_pct=None,
+    )
+    assert out["recommendation"] == "hold"
+    assert "portfolio_heat_unknown" in out["hard_constraint_failures"]
+    assert "challenger_liquidity_unknown" in out["hard_constraint_failures"]

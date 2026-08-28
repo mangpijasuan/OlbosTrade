@@ -413,6 +413,90 @@ async def close_options_trade(
     }
 
 
+async def build_rotation_candidates(broker: Any) -> list[RotationCandidate]:
+    """Read-only. Gather ranking facts for every open rotation-eligible
+    position. Closes nothing, submits nothing, and is safe to call from a
+    review path — the reason it exists is so building a ROTATION_REVIEW never
+    has to go anywhere near rotate_for_blocked_entry()'s closing loop.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        open_trades = (
+            await session.execute(select(Trade).where(Trade.status == "open"))
+        ).scalars().all()
+
+    rotation_opens = [
+        t for t in open_trades
+        if (t.spread_type or "").lower() in ("equity_long", "equity_short", "put", "call")
+    ]
+    if not rotation_opens:
+        return []
+
+    from app.services.alpha_edge_engine import compute_equity_hold_score, compute_options_hold_score
+    from app.services.rotation_correlation_cache import in_flagged_cluster
+
+    cluster_membership = {t.underlying: in_flagged_cluster(t.underlying) for t in rotation_opens}
+    options_pnl_by_underlying = await _options_unrealized_by_underlying(broker)
+
+    candidates: list[RotationCandidate] = []
+    for t in rotation_opens:
+        st = (t.spread_type or "").lower()
+        conf = float(t.signal_score) if t.signal_score is not None else None
+        if st in ("equity_long", "equity_short"):
+            mid = await _mid_price(broker, t.underlying)
+            # No quote → None ("unknown"), never 0.0. Winner Protection
+            # excludes unknowns outright rather than treating them as break-even.
+            upnl = _equity_unrealized(t, mid) if mid is not None else None
+            direction = "BUY" if st == "equity_long" else "SELL"
+            try:
+                quality = await compute_equity_hold_score(t.underlying, direction)
+            except Exception as exc:
+                logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
+                quality = None
+        else:
+            # No default: a symbol absent from the broker's option legs means
+            # unknown, not flat. Same reasoning as the equity branch above.
+            upnl = options_pnl_by_underlying.get((t.underlying or "").upper())
+            try:
+                quality = compute_options_hold_score(t)
+            except Exception as exc:
+                logger.warning("rotation options quality score failed for %s: %s", t.underlying, exc)
+                quality = None
+        candidates.append(
+            RotationCandidate(
+                trade_id=str(t.id),
+                underlying=t.underlying,
+                unrealized_pnl=upnl,
+                confidence=conf,
+                entry_date=t.entry_date,
+                spread_type=t.spread_type or "",
+                quality_score=quality,
+                in_flagged_cluster=cluster_membership.get(t.underlying),
+            )
+        )
+    return candidates
+
+
+async def propose_rotation_incumbent(
+    *, incoming_ticker: str, broker: Any
+) -> Optional[RotationCandidate]:
+    """The single worst-ranked eligible position, or None. Read-only.
+
+    Deliberately one, not position_rotation_closes. Freeing one slot needs one
+    close; the old auto path closed two to free one, which over-rotated every
+    time it fired. The approval path fixes that by construction — an operator
+    approves one replacement, so exactly one incumbent is proposed.
+    """
+    candidates = await build_rotation_candidates(broker)
+    targets = select_rotation_targets(
+        candidates, incoming_ticker=incoming_ticker, count=1,
+    )
+    return targets[0] if targets else None
+
+
 async def rotate_for_blocked_entry(
     *,
     incoming_ticker: str,

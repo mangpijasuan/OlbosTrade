@@ -175,6 +175,30 @@ async def _queue_pending_approval(signal: dict) -> None:
             ))
 
 
+async def _queue_rotation_review(entry: dict) -> str:
+    """Persist a ROTATION_REVIEW awaiting approval. Same table and same
+    pending→resolved lifecycle as _queue_pending_approval, under a distinct
+    kind so the two queues stay separately addressable."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+
+    review_id = str(uuid.uuid4())
+    entry["review_id"] = review_id
+    entry["queued_at"] = datetime.now(timezone.utc).isoformat()
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            session.add(ExecutionEvent(
+                kind="rotation_review",
+                signal_id=review_id,
+                ticker=entry.get("ticker"),
+                asset_type=entry.get("asset_type"),
+                status="pending",
+                payload=entry,
+            ))
+    return review_id
+
+
 async def _get_pending_approvals() -> list[dict]:
     from app.core.database import AsyncSessionLocal
     from app.models.execution_event import ExecutionEvent
@@ -608,6 +632,144 @@ async def approve_signal(signal_id: str):
     result = await _execute_signal(signal, approved_by="user")
     await _log_execution({**result, "signal_id": signal_id, "approved_by": "user"})
     return result
+
+
+@router.get("/rotation-reviews")
+async def get_rotation_reviews():
+    """Pending ROTATION_REVIEW intents awaiting approval. Read-only."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(ExecutionEvent)
+                .where(ExecutionEvent.kind == "rotation_review",
+                       ExecutionEvent.status == "pending")
+                .order_by(ExecutionEvent.created_at.desc())
+                .limit(50)
+            )).scalars().all()
+    except Exception as exc:
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}", "reviews": []}
+    return {"status": "ok", "reviews": [r.payload for r in rows]}
+
+
+async def _resolve_rotation_review(review_id: str, resolution: str) -> Optional[dict]:
+    """Atomically flip a pending rotation review to approved/rejected.
+
+    Returns None if it does not exist or was already resolved — which is what
+    makes an approval single-use. Two concurrent approvals cannot both close
+    the same incumbent, because only the first transition finds status
+    'pending'.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            row = (await session.execute(
+                select(ExecutionEvent).where(
+                    ExecutionEvent.kind == "rotation_review",
+                    ExecutionEvent.signal_id == review_id,
+                    ExecutionEvent.status == "pending",
+                ).with_for_update()
+            )).scalars().first()
+            if row is None:
+                return None
+            row.status = resolution
+            return dict(row.payload or {})
+
+
+@router.post("/rotation-review/{review_id}/approve",
+             dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def approve_rotation_review(review_id: str):
+    """Approve a replacement: close the incumbent, then enter the challenger.
+
+    Everything here is deliberate rather than convenient:
+
+    * The review is re-validated, not trusted. It may be minutes old; prices
+      move, the kill switch may have been thrown, the incumbent may already
+      be gone. Approving a stale document must not send a stale order.
+    * The incumbent closes first. If that fails, the challenger is NOT
+      entered — the slot was never freed, so entering would breach
+      max_positions, which is the constraint that started all this.
+    * If the close succeeds but the entry fails, that is reported plainly.
+      The slot is free and unused, which is a safe state, not a silent one.
+    """
+    review = await _resolve_rotation_review(review_id, "approved")
+    if review is None:
+        raise HTTPException(404, "Rotation review not found, or already resolved")
+
+    if _is_kill_switch_active():
+        raise HTTPException(423, "Kill switch engaged — no orders may be sent")
+
+    incumbent_trade_id = review.get("incumbent_trade_id")
+    if not incumbent_trade_id:
+        raise HTTPException(
+            400, "Review has no incumbent to close (recommendation was not actionable)")
+
+    from sqlalchemy import select
+    from app.broker.broker_factory import get_broker
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.position_rotation import ROTATION_CLOSED_BY, close_equity_trade, close_options_trade
+
+    async with AsyncSessionLocal() as session:
+        trade = (await session.execute(
+            select(Trade).where(Trade.id == incumbent_trade_id,
+                                Trade.status == "open")
+        )).scalars().first()
+    if trade is None:
+        raise HTTPException(
+            409, "Incumbent is no longer open — it closed since this review was raised")
+
+    broker = get_broker()
+    spread_type = (trade.spread_type or "").lower()
+    close_fn = close_options_trade if spread_type in ("put", "call") else close_equity_trade
+    try:
+        # review_id is the approval token: it exists only after the atomic
+        # pending→approved transition above, so it cannot be replayed and
+        # cannot be forged by a caller who never went through this route.
+        close_receipt = await close_fn(
+            trade, broker=broker, closed_by=ROTATION_CLOSED_BY,
+            rotation_approval=review_id,
+        )
+    except Exception as exc:
+        await _log_execution({"kind": "ROTATION_REVIEW", "review_id": review_id,
+                              "result": "close_failed", "error": str(exc)})
+        raise HTTPException(502, f"Incumbent close failed, challenger not entered: {exc}")
+
+    challenger = review.get("challenger_signal") or {}
+    entry_result = await _execute_signal(challenger, approved_by=f"rotation_review:{review_id}")
+
+    out = {
+        "kind": "ROTATION_REVIEW",
+        "review_id": review_id,
+        "result": "approved",
+        "closed": close_receipt,
+        "entered": entry_result,
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _log_execution(out)
+    return out
+
+
+@router.post("/rotation-review/{review_id}/reject",
+             dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def reject_rotation_review(review_id: str):
+    """Decline a replacement. Nothing is closed and nothing is entered."""
+    review = await _resolve_rotation_review(review_id, "rejected")
+    if review is None:
+        raise HTTPException(404, "Rotation review not found, or already resolved")
+    out = {
+        "kind": "ROTATION_REVIEW", "review_id": review_id, "result": "rejected",
+        "ticker": review.get("ticker"),
+        "rejected_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _log_execution(out)
+    return out
 
 
 @router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key), Depends(rate_limit)])
@@ -1065,13 +1227,34 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         and getattr(_rot_cfg, "position_rotation_on_max", False)
     ):
         try:
+            from app.broker.broker_factory import get_broker
+            from app.services.position_rotation import propose_rotation_incumbent
             from app.services.rotation_review import PositionFacts, build_rotation_review
+
+            incumbent = await propose_rotation_incumbent(
+                incoming_ticker=ticker, broker=get_broker(),
+            )
             _tp = signal.get("trade_plan") or {}
-            _entry = _tp.get("entry_price")
-            _stop = _tp.get("stop_price")
-            _target = _tp.get("target_price")
+            _entry, _stop, _target = (
+                _tp.get("entry_price"), _tp.get("stop_price"), _tp.get("target_price"),
+            )
             review = build_rotation_review(
-                incumbent=PositionFacts(ticker="(incumbent pool)", side="incumbent"),
+                incumbent=(
+                    PositionFacts(
+                        ticker=incumbent.underlying, side="incumbent",
+                        direction=incumbent.spread_type,
+                        quality_score=incumbent.quality_score,
+                        confidence=incumbent.confidence,
+                        in_flagged_cluster=incumbent.in_flagged_cluster,
+                        unrealized_pnl_context_only=incumbent.unrealized_pnl,
+                    )
+                    if incumbent is not None
+                    # No eligible incumbent (Winner Protection, or unknown
+                    # P&L). An empty-facts incumbent yields
+                    # "insufficient_data", which is the honest answer — not a
+                    # comparison against a fabricated average position.
+                    else PositionFacts(ticker="(none eligible)", side="incumbent")
+                ),
                 challenger=PositionFacts(
                     ticker=ticker,
                     side="challenger",
@@ -1086,16 +1269,27 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                         abs(float(_target) - float(_entry))
                         if _entry is not None and _target is not None else None
                     ),
+                    liquidity_ok=True if signal.get("volume_ratio") else None,
                 ),
+                materiality_margin=float(getattr(
+                    _rot_cfg, "rotation_review_materiality_margin", 15.0)),
             )
-            await _log_execution({
+            entry = {
                 "kind": "ROTATION_REVIEW",
                 "ticker": ticker,
                 "asset_type": asset_type,
                 "result": "pending_approval",
                 "blocked_by": "max_positions",
+                "incumbent_trade_id": incumbent.trade_id if incumbent else None,
+                "challenger_signal": signal,
                 "review": review,
-            })
+            }
+            await _log_execution(entry)
+            # Persisted to the same pending-approval queue the Copilot path
+            # uses, so there is one approval concept in this system rather
+            # than two. _resolve_pending_approval's atomic pending→resolved
+            # flip is what makes an approval single-use.
+            await _queue_rotation_review(entry)
         except Exception as _rev_exc:
             # A review is advisory. Failing to build one must not become a
             # path to executing anything, so this only logs — the return
