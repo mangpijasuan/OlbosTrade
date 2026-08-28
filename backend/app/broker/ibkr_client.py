@@ -1150,6 +1150,46 @@ class IBKRClient(BrokerInterface):
             timestamp=datetime.now(timezone.utc),
         )
 
+    @staticmethod
+    def _on_subscribe_task_done(task: "asyncio.Task") -> None:
+        """Retrieve the background subscribe's exception so asyncio stops
+        logging it as an unhandled error.
+
+        Against this gateway the subscribe reliably fails to return inside
+        ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS, and get_account_summary() handles
+        that by reading the already-populated cache instead. But an
+        un-awaited task's exception surfaces as an ERROR-level
+        "Task exception was never retrieved" traceback, so a condition the
+        code deliberately tolerates was filling the log with what looks like a
+        crash, roughly twice a minute.
+
+        That is not cosmetic. It buries real failures: while watching the first
+        autopilot scan these tracebacks flooded the alerting filter and had to
+        be excluded by hand before genuine errors could be seen.
+
+        Calling task.exception() marks it retrieved without swallowing it —
+        anything awaiting the task still sees the exception, so the
+        serve-the-cache fallback below is unaffected.
+        """
+        if task.cancelled():
+            return  # reset_account_subscription() cancels on reconnect
+        exc = task.exception()
+        if exc is None:
+            return
+        if isinstance(exc, asyncio.TimeoutError):
+            # Expected against this gateway. Visible at DEBUG for anyone
+            # actually investigating the subscription, silent otherwise.
+            logger.debug(
+                "Account-updates subscribe timed out in the background "
+                "(expected; cached values are served instead)",
+            )
+        else:
+            # Anything else is genuinely unexpected and must stay loud.
+            logger.warning(
+                "Account-updates subscribe failed in the background: %s: %s",
+                type(exc).__name__, exc,
+            )
+
     async def _subscribe_account_updates(self) -> None:
         """The ONE real reqAccountUpdatesAsync attempt backing
         get_account_summary()'s subscribe — see that method's docstring
@@ -1300,9 +1340,15 @@ class IBKRClient(BrokerInterface):
 
         if not self._account_subscribed:
             if self._account_subscribe_task is None or self._account_subscribe_task.done():
-                self._account_subscribe_task = asyncio.ensure_future(
-                    self._subscribe_account_updates()
-                )
+                task = asyncio.ensure_future(self._subscribe_account_updates())
+                # Once the cache is populated the branch below stops awaiting
+                # this task, so nothing retrieves its exception and asyncio
+                # logs "Task exception was never retrieved" with a full
+                # traceback at ERROR level — every ~30s, forever, for a
+                # timeout that is expected and already handled. See the
+                # callback for why that matters.
+                task.add_done_callback(self._on_subscribe_task_done)
+                self._account_subscribe_task = task
             # Only block on the subscribe when there is nothing to serve
             # without it. The subscribe takes up to
             # ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS (30s) to fail, while callers

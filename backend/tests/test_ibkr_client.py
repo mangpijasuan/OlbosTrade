@@ -704,3 +704,118 @@ async def test_populated_cache_returns_without_waiting_for_the_subscribe():
     summary = await asyncio.wait_for(client.get_account_summary(), timeout=1.0)
 
     assert float(summary.net_liquidation) == 254029.86
+
+
+# ── Background-subscribe exception handling ─────────────────────────────────
+#
+# get_account_summary() launches _subscribe_account_updates() as a background
+# task and, once the account cache is populated, stops awaiting it. That left
+# the task's TimeoutError unretrieved, so asyncio logged
+# "Task exception was never retrieved" with a full traceback at ERROR level
+# every ~30s — a condition the code deliberately tolerates, presented as a
+# crash. It masked real failures: watching the first autopilot scan, the
+# tracebacks flooded the log filter and had to be excluded by hand.
+
+async def _raise(exc):
+    raise exc
+
+
+async def _done_task(exc):
+    t = asyncio.ensure_future(_raise(exc))
+    await asyncio.sleep(0)
+    return t
+
+
+@pytest.mark.asyncio
+async def test_subscribe_timeout_is_retrieved_and_logged_at_debug(caplog):
+    """The expected timeout must be marked retrieved (so asyncio stays quiet)
+    and must not be logged at WARNING or above."""
+    task = await _done_task(asyncio.TimeoutError("no answer"))
+
+    with caplog.at_level("DEBUG", logger="app.broker.ibkr_client"):
+        IBKRClient._on_subscribe_task_done(task)
+
+    # The actual anti-noise assertion: asyncio only logs the traceback for a
+    # task whose exception was never retrieved.
+    assert task._log_traceback is False
+    assert not [r for r in caplog.records if r.levelno >= 30]
+
+
+@pytest.mark.asyncio
+async def test_unexpected_subscribe_failure_still_warns(caplog):
+    """Silencing the timeout must not silence anything else."""
+    task = await _done_task(RuntimeError("gateway rejected the subscription"))
+
+    with caplog.at_level("DEBUG", logger="app.broker.ibkr_client"):
+        IBKRClient._on_subscribe_task_done(task)
+
+    warnings = [r for r in caplog.records if r.levelno >= 30]
+    assert len(warnings) == 1
+    assert "gateway rejected the subscription" in warnings[0].getMessage()
+    assert task._log_traceback is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_subscribe_is_not_logged():
+    """_reset_account_subscription() cancels this task on reconnect. Calling
+    .exception() on a cancelled task raises CancelledError, so the callback
+    must check cancelled() first or it breaks the reconnect path."""
+    async def _forever():
+        await asyncio.sleep(3600)
+
+    task = asyncio.ensure_future(_forever())
+    await asyncio.sleep(0)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    IBKRClient._on_subscribe_task_done(task)   # must not raise
+
+
+@pytest.mark.asyncio
+async def test_retrieving_the_exception_does_not_hide_it_from_awaiters():
+    """The regression that would matter: get_account_summary() still awaits
+    this task when the cache is empty, and must still see the failure."""
+    task = await _done_task(asyncio.TimeoutError("no answer"))
+    IBKRClient._on_subscribe_task_done(task)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.shield(task)
+
+
+@pytest.mark.asyncio
+async def test_get_account_summary_attaches_the_callback():
+    """Wiring test — the callback is worthless if the launch site skips it."""
+    client = IBKRClient()
+    client._connected = True
+    client.ib.isConnected = MagicMock(return_value=True)
+    client.ib.managedAccounts = MagicMock(return_value=["DU6720"])
+    client.ib.accountValues = MagicMock(return_value=[
+        _acct_val("NetLiquidation", "254029.86"),
+        _acct_val("TotalCashValue", "-87618.91"),
+        _acct_val("BuyingPower", "380535.17"),
+    ])
+    client.ib.reqAccountUpdates = MagicMock()
+
+    async def _times_out(_acct):
+        raise asyncio.TimeoutError("no answer")
+    client.ib.reqAccountUpdatesAsync = _times_out
+
+    await client.get_account_summary()
+    task = client._account_subscribe_task
+    assert task is not None
+
+    # _subscribe_account_updates wraps the call in asyncio.wait_for, so the
+    # task needs more than a tick to settle; the done-callback is then
+    # scheduled with call_soon, needing one more.
+    for _ in range(100):
+        if task.done():
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0)
+
+    assert task.done()
+    # Retrieved by the callback, not left for asyncio to shout about.
+    assert task._log_traceback is False
