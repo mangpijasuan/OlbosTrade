@@ -9,6 +9,18 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // React core — changes rarely, long cache lifetime
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          // Charting libs — large and stable
+          "vendor-charts": ["recharts", "lightweight-charts"],
+        },
+      },
+    },
+  },
   server: {
     port: 3000,
     proxy: {

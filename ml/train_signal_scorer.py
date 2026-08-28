@@ -85,12 +85,19 @@ def _fetch_vix3m_history(period: str = "5y") -> pd.Series:
         return pd.Series(dtype=float)
 
 
-def train(backtest_results_path: str = "backtest_results.json") -> None:
+def train(
+    backtest_results_path: str = "backtest_results.json",
+    min_samples: int = 50,
+    force: bool = False,
+) -> None:
     """
     Train the XGBoost signal scorer (regression mode, S3).
 
     Args:
         backtest_results_path: Path to JSON file containing backtest trade records.
+        min_samples:           Abort training when fewer than this many samples
+                               exist (default 50). Pass force=True to bypass.
+        force:                 If True, train even when below min_samples.
     """
     try:
         from xgboost import XGBRegressor
@@ -345,5 +352,32 @@ def train(backtest_results_path: str = "backtest_results.json") -> None:
 
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else "backtest_results.json"
-    train(path)
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Train the OlbosTrade signal scorer (XGBRegressor, RoR target)."
+    )
+    parser.add_argument(
+        "backtest_results",
+        nargs="?",
+        default="backtest_results.json",
+        help="Path to backtest_results.json (default: backtest_results.json)",
+    )
+    parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=50,
+        metavar="N",
+        help=(
+            "Minimum closed trades required to proceed (default: 50). "
+            "Below this floor the model is unlikely to generalise. "
+            "Pass --min-samples 0 to bypass the guard and train anyway."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Proceed even when sample count is below --min-samples.",
+    )
+    args = parser.parse_args()
+    train(args.backtest_results, min_samples=args.min_samples, force=args.force)
