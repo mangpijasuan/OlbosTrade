@@ -83,6 +83,29 @@ class SignalOutcome(Base):
     # one version, so a full snapshot/versioning table isn't warranted yet.
     signal_engine_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
+    # ── Opportunity-score capture ───────────────────────────────────────────
+    # The composite that ranks signals (trade_frequency_controller.weighted_score),
+    # stored with the two components that carry information this table does not
+    # already hold.
+    #
+    # Deliberately NOT stored: the Alpha Edge entry score and the risk score.
+    # Both are exact monotone transforms of `confidence` above —
+    # alpha_edge_entry_score is round(confidence * 100) (alpha_edge_engine
+    # compute_equity_scores), and risk_score is (1 - confidence) * 100 with a
+    # reward:risk nudge that cannot fire for equity (plans are fixed at 2:1).
+    # Persisting either would add a column that re-expresses one already here,
+    # and would leave any rank-based skill test (AUC is invariant to monotone
+    # transforms) returning exactly the same number it does today.
+    #
+    # Of the composite's five weights, confidence (0.35), EV (0.25 — p*rr-(1-p),
+    # with rr fixed) and reward_risk (0.15 — constant for equity) are likewise
+    # confidence-determined. Only liquidity and regime vary independently, so
+    # they are broken out: a future analysis can ask which component carries
+    # signal rather than testing a blend that is three-quarters already-measured.
+    opportunity_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    oppty_liquidity: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+    oppty_regime: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+
     __table_args__ = (
         Index("idx_signal_outcomes_status", "status"),
         Index("idx_signal_outcomes_ticker", "ticker"),

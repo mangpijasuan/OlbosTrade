@@ -75,6 +75,25 @@ async def record_signal(signal: dict) -> Optional[str]:
         from app.services.equity_signal_engine import EQUITY_SCORING_VERSION
 
         indicators = signal.get("indicators") or {}
+
+        # The scan loop sets signal["opportunity_score"] before calling here
+        # (main.py, immediately after building the signal dict), so this is a
+        # read of something already computed — no extra work, no extra I/O.
+        #
+        # Only the composite and its liquidity/regime components are kept. The
+        # other three weights are confidence-determined (see the model's own
+        # comment), and the Alpha Edge entry score and risk score are exact
+        # monotone transforms of `confidence`, so storing them would re-express
+        # a column that is already two lines below this one.
+        oppty = signal.get("opportunity_score")
+        oppty_score = None
+        oppty_components: dict = {}
+        if isinstance(oppty, dict):
+            raw_score = oppty.get("score")
+            if isinstance(raw_score, (int, float)):
+                oppty_score = int(round(raw_score))
+            oppty_components = oppty.get("components") or {}
+
         generated_at_raw = signal.get("generated_at")
         try:
             generated_at = (
@@ -107,6 +126,9 @@ async def record_signal(signal: dict) -> Optional[str]:
                     atr=_dec_or_none(indicators.get("atr")),
                     regime=signal.get("regime"),
                     signal_engine_version=EQUITY_SCORING_VERSION,
+                    opportunity_score=oppty_score,
+                    oppty_liquidity=_dec_or_none(oppty_components.get("liquidity")),
+                    oppty_regime=_dec_or_none(oppty_components.get("regime")),
                 ))
         return str(row_id)
     except Exception as exc:
