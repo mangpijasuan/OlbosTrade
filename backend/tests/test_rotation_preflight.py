@@ -190,3 +190,23 @@ async def test_dry_run_never_submits_even_when_preflight_is_clear():
     assert intent["symbol"] == "MRVL" and intent["side"] == "SELL"
     assert intent["quantity"] == 599.0
     assert "broker live position" in intent["source"]
+
+
+@pytest.mark.asyncio
+async def test_risk_engine_check_calls_the_real_engine():
+    """Pins the call shape. The first version imported a module-level
+    `guardrails` singleton that does not exist — GuardrailEngine is a class,
+    and check_all takes the portfolio state rather than fetching it. That
+    surfaced only in production as an UNKNOWN, which correctly blocked
+    all_clear but told us nothing useful."""
+    from app.services.guardrails import PortfolioState
+
+    clean = PortfolioState(current_value=250_000.0, starting_capital=250_000.0,
+                           daily_pnl=0.0, weekly_pnl=0.0, monthly_pnl=0.0,
+                           consecutive_losses=0, trades_today=0)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state",
+               new=AsyncMock(return_value=clean)):
+        out = await pf._risk_engine()
+
+    assert out["status"] in (pf.PASS, pf.FAIL), out["detail"]
+    assert "trading_allowed" in out["detail"]

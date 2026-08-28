@@ -203,9 +203,18 @@ def _brackets_consistent(orders: list[dict], held: set[str]) -> dict:
 
 
 async def _risk_engine() -> dict:
+    """Runs the real GuardrailEngine against the real portfolio state.
+
+    There is no module-level `guardrails` singleton — the engine is a class
+    instantiated per use (main.py builds its own `_guardrail_engine`), and
+    check_all() takes the portfolio state rather than fetching it.
+    """
     try:
-        from app.services.guardrails import guardrails
-        state = await guardrails.check_all()
+        from app.api.routes.trade_desk import _fetch_portfolio_state
+        from app.services.guardrails import GuardrailEngine
+
+        portfolio = await _fetch_portfolio_state()
+        state = GuardrailEngine().check_all(portfolio)
         allowed = getattr(state, "trading_allowed", None)
         if allowed is None:
             return _check("risk_engine_healthy", UNKNOWN, "guardrails returned no verdict")
