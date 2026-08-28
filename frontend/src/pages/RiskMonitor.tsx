@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api, getOperatorApiKey, setOperatorApiKey } from "../api/client";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
+import RotationReviewPanel, { RotationReviewEntry } from "../components/RotationReviewPanel";
 import { Panel, Button, StatTile } from "../components/ui";
 
 interface MarginInfo {
@@ -191,6 +192,7 @@ export default function RiskMonitor() {
   const [corrError, setCorrError] = useState(false);
   const [rotoPerf, setRotoPerf] = useState<RotationPerformanceResp | null>(null);
   const [rotoActivity, setRotoActivity] = useState<RotationActivityResp | null>(null);
+  const [rotoReviews, setRotoReviews] = useState<RotationReviewEntry[] | null>(null);
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
@@ -218,6 +220,8 @@ export default function RiskMonitor() {
         fetch("/api/portfolio/heat").then(r => r.json()).then(setHeat),
         fetch("/api/portfolio/rotation-performance").then(r => r.json()).then(setRotoPerf),
         fetch("/api/portfolio/rotation-activity").then(r => r.json()).then(setRotoActivity),
+        fetch("/api/trade-desk/rotation-reviews").then(r => r.json())
+          .then(d => setRotoReviews(d?.reviews ?? [])),
       ]).then(results => {
         setSectionsError(results.some(r => r.status === "rejected"));
       });
@@ -644,6 +648,33 @@ export default function RiskMonitor() {
           <div style={{ padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: corrError ? "var(--red)" : "var(--ink-faint)" }}>
             {corrError ? "Failed to load correlation data." : "Loading…"}
           </div>
+        )}
+      </Section>
+
+      <Section
+        title="Rotation Review — Awaiting Approval"
+        action={rotoReviews && rotoReviews.length > 0 && (
+          <span className="kicker" style={{ color: "var(--amber)" }}>
+            {rotoReviews.length} pending
+          </span>
+        )}
+      >
+        {rotoReviews === null ? (
+          <div style={{ padding: "14px 16px", fontSize: 11, color: "var(--text-dim)" }}>
+            Loading…
+          </div>
+        ) : (
+          <RotationReviewPanel
+            reviews={rotoReviews}
+            // Refetch rather than mutate local state: approving sends two
+            // orders, and the server's view of what actually happened is the
+            // only one worth rendering afterwards.
+            onResolved={() =>
+              fetch("/api/trade-desk/rotation-reviews").then(r => r.json())
+                .then(d => setRotoReviews(d?.reviews ?? []))
+                .catch(() => {})
+            }
+          />
         )}
       </Section>
 

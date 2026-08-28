@@ -208,6 +208,17 @@ export const api = {
   resetToBalanced:  () => request("/api/mode/reset-to-balanced", { method: "POST" }),
 
   // ── Trade Desk (Execution Modes) ───────────────────────────────────────────
+  // Capital Rotation reviews. The GET is unauthenticated like other reads;
+  // approve/reject are auth-gated server-side and will 403 without the
+  // Operator API Key, the same way the execution-mode toggle does.
+  getRotationReviews: () => request("/api/trade-desk/rotation-reviews"),
+  approveRotationReview: (reviewId: string) =>
+    request(`/api/trade-desk/rotation-review/${encodeURIComponent(reviewId)}/approve`,
+            { method: "POST" }),
+  rejectRotationReview: (reviewId: string) =>
+    request(`/api/trade-desk/rotation-review/${encodeURIComponent(reviewId)}/reject`,
+            { method: "POST" }),
+
   getExecutionMode:   () => request("/api/trade-desk/execution-mode"),
   setExecutionMode:   (mode: string) =>
     request("/api/trade-desk/execution-mode", { method: "POST", body: JSON.stringify({ mode }) }),
