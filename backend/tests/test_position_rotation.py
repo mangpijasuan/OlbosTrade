@@ -804,3 +804,76 @@ async def test_rotate_triggers_for_incoming_options_signal_and_excludes_its_own_
     assert "SPY" not in closed
     assert closed == ["AAPL"]
     assert len(out) == 1
+
+
+# ── Unknown P&L must never be treated as break-even ──────────────────────────
+#
+# _equity_unrealized() used to return 0.0 when the quote fetch failed or the
+# entry price was missing, and the equity/options call sites defaulted to 0.0
+# too. Winner Protection compares against a <= 0.0 floor, so a fabricated zero
+# passed it — meaning a quote outage silently promoted every protected winner
+# into a rotation candidate, exactly when the data was least trustworthy.
+#
+# Closing a position is irreversible and immediate; declining to rotate only
+# leaves a signal blocked. The unknown case has to fall toward not acting.
+
+
+def test_unknown_pnl_is_excluded_not_treated_as_break_even():
+    # Two winners (protected) and one unknown. Under the old 0.0 default the
+    # unknown would have been eligible; with count=1 it would have been closed.
+    targets = select_rotation_targets(
+        [_c("t1", "LITE", 1077.60), _c("t2", "MSTR", 19.36), _c("t3", "NBIS", None)],
+        incoming_ticker="TSLA", count=1,
+    )
+    assert targets == []
+
+
+def test_unknown_pnl_does_not_count_toward_the_required_candidate_count():
+    """A real loser plus an unknown must not satisfy count=2 — otherwise an
+    outage manufactures the second candidate needed to start rotating."""
+    targets = select_rotation_targets(
+        [_c("t1", "MRVL", -10586.85), _c("t2", "LITE", None)],
+        incoming_ticker="TSLA", count=2,
+    )
+    assert targets == []
+
+
+def test_a_real_loser_is_still_selected_alongside_an_unknown():
+    """Fail-closed on the unknown must not disable rotation entirely."""
+    targets = select_rotation_targets(
+        [_c("t1", "MRVL", -10586.85), _c("t2", "LITE", None), _c("t3", "AMD", -400.0)],
+        incoming_ticker="TSLA", count=2,
+    )
+    assert sorted(t.underlying for t in targets) == ["AMD", "MRVL"]
+
+
+def test_a_genuine_zero_pnl_is_still_eligible():
+    """None means unknown; 0.0 means a real flat position, which the floor
+    admits. Conflating them would be the opposite over-correction."""
+    targets = select_rotation_targets(
+        [_c("t1", "AMD", 0.0), _c("t2", "INTC", -50.0)],
+        incoming_ticker="TSLA", count=2,
+    )
+    assert sorted(t.underlying for t in targets) == ["AMD", "INTC"]
+
+
+# ── _equity_unrealized returns None, never a fabricated 0.0 ──────────────────
+
+def _pnl_trade(entry, qty=100, spread="equity_long"):
+    return SimpleNamespace(credit_received=entry, quantity=qty, spread_type=spread)
+
+
+def test_equity_unrealized_none_when_quote_is_missing():
+    from app.services.position_rotation import _equity_unrealized
+    assert _equity_unrealized(_pnl_trade(234.69), 0.0) is None
+
+
+def test_equity_unrealized_none_when_entry_price_is_missing():
+    from app.services.position_rotation import _equity_unrealized
+    assert _equity_unrealized(_pnl_trade(None), 217.0) is None
+
+
+def test_equity_unrealized_computes_a_real_loss():
+    from app.services.position_rotation import _equity_unrealized
+    got = _equity_unrealized(_pnl_trade(234.69, qty=599), 217.02)
+    assert got is not None and round(got, 2) == round((217.02 - 234.69) * 599, 2)

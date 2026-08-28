@@ -45,7 +45,12 @@ logger = get_logger(__name__)
 class RotationCandidate:
     trade_id: str
     underlying: str
-    unrealized_pnl: float
+    # None means "we could not establish this position's P&L" — a quote
+    # failure, a missing entry price, or no broker legs found. It is NOT
+    # zero: Winner Protection reads this, and a fabricated 0.0 passes a
+    # <= 0.0 floor, which would turn every protected winner into a
+    # rotation candidate exactly when the data is least trustworthy.
+    unrealized_pnl: Optional[float]
     confidence: Optional[float]
     entry_date: Optional[datetime]
     spread_type: str
@@ -97,7 +102,22 @@ def select_rotation_targets(
     ]
 
     winner_floor = float(getattr(settings, "position_rotation_winner_pnl_floor", 0.0) or 0.0)
-    eligible = [c for c in pool if c.unrealized_pnl <= winner_floor]
+    # `is not None` first: an unknown P&L is excluded outright, never compared
+    # against the floor. Closing a position is irreversible and immediate,
+    # while declining to rotate only leaves a signal blocked — so the unknown
+    # case has to fall toward not acting. A fabricated 0.0 here used to pass
+    # the <= 0.0 floor, meaning a quote outage promoted every protected
+    # winner into a rotation candidate.
+    unknown = [c for c in pool if c.unrealized_pnl is None]
+    if unknown:
+        logger.warning(
+            "rotation: %d candidate(s) excluded — P&L unavailable: %s",
+            len(unknown), ", ".join(sorted(c.underlying for c in unknown)),
+        )
+    eligible = [
+        c for c in pool
+        if c.unrealized_pnl is not None and c.unrealized_pnl <= winner_floor
+    ]
     if len(eligible) < count:
         return []
 
@@ -108,12 +128,14 @@ def _equity_entry_price(trade: Any) -> float:
     return float(getattr(trade, "credit_received", None) or 0)
 
 
-def _equity_unrealized(trade: Any, mid: float) -> float:
+def _equity_unrealized(trade: Any, mid: float) -> Optional[float]:
+    """None when P&L cannot be established — never 0.0. See
+    RotationCandidate.unrealized_pnl for why the distinction is load-bearing."""
     entry = _equity_entry_price(trade)
     qty = int(getattr(trade, "quantity", None) or 1)
     st = (getattr(trade, "spread_type", None) or "").lower()
     if entry <= 0 or mid <= 0:
-        return 0.0
+        return None
     if st == "equity_short":
         return (entry - mid) * qty
     return (mid - entry) * qty
@@ -403,8 +425,9 @@ async def rotate_for_blocked_entry(
         conf = float(t.signal_score) if t.signal_score is not None else None
         if st in ("equity_long", "equity_short"):
             mid = await _mid_price(broker, t.underlying)
-            # No quote → treat unrealized as 0 so we don't invent P&L
-            upnl = _equity_unrealized(t, mid) if mid is not None else 0.0
+            # No quote → None ("unknown"), never 0.0. Winner Protection
+            # excludes unknowns outright rather than treating them as break-even.
+            upnl = _equity_unrealized(t, mid) if mid is not None else None
             direction = "BUY" if st == "equity_long" else "SELL"
             try:
                 quality = await compute_equity_hold_score(t.underlying, direction)
@@ -412,7 +435,9 @@ async def rotate_for_blocked_entry(
                 logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
                 quality = None
         else:
-            upnl = options_pnl_by_underlying.get((t.underlying or "").upper(), 0.0)
+            # No default: a symbol absent from the broker's option legs means
+            # unknown, not flat. Same reasoning as the equity branch above.
+            upnl = options_pnl_by_underlying.get((t.underlying or "").upper())
             try:
                 quality = compute_options_hold_score(t)
             except Exception as exc:
@@ -472,7 +497,10 @@ async def rotate_for_blocked_entry(
             if log_execution is not None:
                 await log_execution(receipt)
             logger.info(
-                "rotation closed %s trade_id=%s unrealized≈%.2f quality=%s cluster=%s confidence=%s",
+                # %s not %.2f: this line runs after the close has already gone
+                # through, and a format error here would surface as
+                # "rotation close failed" for a position that really closed.
+                "rotation closed %s trade_id=%s unrealized≈%s quality=%s cluster=%s confidence=%s",
                 target.underlying, target.trade_id,
                 target.unrealized_pnl, target.quality_score,
                 target.in_flagged_cluster, target.confidence,
