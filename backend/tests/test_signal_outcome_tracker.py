@@ -256,7 +256,14 @@ async def test_check_pending_outcomes_no_pending_rows():
     with patch("app.core.database.AsyncSessionLocal", return_value=session):
         summary = await check_pending_outcomes()
 
-    assert summary == {"checked": 0, "target_hit": 0, "stop_hit": 0, "expired": 0, "still_pending": 0}
+    # Subset rather than exact equality: the summary also carries coverage
+    # fields (tickers_covered/truncated/...) so a partial pass can be told
+    # apart from a complete one. This test is about the counts being zero,
+    # not about the dict's exact shape.
+    assert {k: summary[k] for k in
+            ("checked", "target_hit", "stop_hit", "expired", "still_pending")} == \
+        {"checked": 0, "target_hit": 0, "stop_hit": 0, "expired": 0, "still_pending": 0}
+    assert summary["truncated"] is False
 
 
 @pytest.mark.asyncio
@@ -272,7 +279,13 @@ async def test_check_pending_outcomes_resolves_and_updates_row():
         return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [pending_row]))
     )
 
-    db_row = MagicMock()
+    # Resolutions are written as a batched executemany keyed on the primary
+    # key, not by mutating an ORM object fetched per row — so this asserts on
+    # the payload that actually reaches the database. Checking a mutated
+    # MagicMock attribute would only re-describe the old implementation's
+    # mechanism, which is exactly what made a stalled job invisible.
+    written: list = []
+
     update_session = AsyncMock()
     update_session.__aenter__ = AsyncMock(return_value=update_session)
     update_session.__aexit__ = AsyncMock(return_value=False)
@@ -280,7 +293,13 @@ async def test_check_pending_outcomes_resolves_and_updates_row():
     begin.__aenter__ = AsyncMock(return_value=update_session)
     begin.__aexit__ = AsyncMock(return_value=False)
     update_session.begin = MagicMock(return_value=begin)
-    update_session.get = AsyncMock(return_value=db_row)
+
+    async def _capture(stmt, params=None):
+        if params:
+            written.extend(params if isinstance(params, list) else [params])
+        return MagicMock()
+
+    update_session.execute = AsyncMock(side_effect=_capture)
 
     sessions = [query_session, update_session]
 
@@ -295,7 +314,12 @@ async def test_check_pending_outcomes_resolves_and_updates_row():
 
     assert summary["checked"] == 1
     assert summary["target_hit"] == 1
-    assert db_row.status == "target_hit"
+    assert summary["tickers_covered"] == 1 and summary["truncated"] is False
+
+    payloads = [w for w in written if isinstance(w, dict) and "status" in w]
+    assert len(payloads) == 1, f"expected one resolution payload, got {payloads}"
+    assert payloads[0]["id"] == "row-1"
+    assert payloads[0]["status"] == "target_hit"
 
 
 @pytest.mark.asyncio

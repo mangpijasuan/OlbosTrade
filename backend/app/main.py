@@ -174,6 +174,15 @@ _equity_scan_offset: int = 0
 # interval — generous for a transient yfinance outage, not indefinite.
 MAX_REGIME_AGE_SECONDS = 2 * 60 * 60
 
+# Signal-outcome resolution budget. These rows are the training labels for any
+# future model that learns from signal outcomes, so a pass that cannot finish
+# must end cleanly and say so — never be cancelled mid-write, which is what
+# silently produced a label set covering only 32 of 102 tickers.
+# The job stops itself at DEADLINE; GUARD is a backstop for a real hang and is
+# deliberately larger, so the guard can no longer be the effective limit.
+SIGNAL_OUTCOMES_DEADLINE_S = 240.0
+SIGNAL_OUTCOMES_GUARD_S = 600
+
 # ── Route registration ─────────────────────────────────────────────────────
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
@@ -342,6 +351,10 @@ async def _background_scheduler() -> None:
     # Daily bars only update once/trading day — checking more often than a
     # few times a day just burns yfinance calls without new information.
     signal_outcomes_interval_s = 6 * 60 * 60   # 6 hours
+    # The job owns an inner deadline (SIGNAL_OUTCOMES_DEADLINE_S) and stops at
+    # a ticker boundary; the guard here is only a backstop for a genuine hang,
+    # so it sits above that deadline rather than cutting the pass short. At 120s
+    # the guard WAS the limit, and it killed every run mid-write.
     reconciliation_interval_s  = 5 * 60        # 5 minutes
     # Daily-bar-derived like regime/options, but not gated on daily-close
     # semantics — keeps position_rotation.py's correlation tiebreaker
@@ -466,7 +479,8 @@ async def _background_scheduler() -> None:
             # daily bars (hit target, hit stop, or expire past the hold
             # window). See signal_outcome_tracker.py.
             if now - last_signal_outcomes >= signal_outcomes_interval_s:
-                await _guarded(_check_signal_outcomes(), "signal_outcomes", 120)
+                await _guarded(_check_signal_outcomes(), "signal_outcomes",
+                               SIGNAL_OUTCOMES_GUARD_S)
                 last_signal_outcomes = now
 
         except Exception as exc:
@@ -2116,14 +2130,26 @@ async def _update_portfolio_greeks() -> None:
 
 
 async def _check_signal_outcomes() -> None:
-    """Resolve pending signal outcomes against fresh daily bars."""
+    """Resolve pending signal outcomes against fresh daily bars.
+
+    The inner deadline sits below the _guarded() budget on purpose. These rows
+    are training labels, so a pass that stops early must stop *cleanly* — at a
+    ticker boundary, with its writes flushed and its shortfall reported. Being
+    cancelled by the outer guard instead leaves a silently partial label set,
+    which is what happened for the whole of 2026-08-27/28.
+    """
     from app.services.signal_outcome_tracker import check_pending_outcomes
-    summary = await check_pending_outcomes()
+    summary = await check_pending_outcomes(
+        deadline_seconds=SIGNAL_OUTCOMES_DEADLINE_S,
+    )
     if summary["checked"] > 0:
         logger.info(
-            "Signal outcomes: checked=%d target_hit=%d stop_hit=%d expired=%d still_pending=%d",
+            "Signal outcomes: checked=%d target_hit=%d stop_hit=%d expired=%d "
+            "still_pending=%d coverage=%d/%d truncated=%s elapsed=%.1fs",
             summary["checked"], summary["target_hit"], summary["stop_hit"],
             summary["expired"], summary["still_pending"],
+            summary["tickers_covered"], summary["tickers_total"],
+            summary["truncated"], summary["elapsed_s"],
         )
 
 

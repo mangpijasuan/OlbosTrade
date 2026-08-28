@@ -32,6 +32,13 @@ logger = get_logger(__name__)
 # equity trade plan's target distance) is expected to resolve within.
 DEFAULT_MAX_HOLD_DAYS = 20
 
+# Rows per UPDATE statement, and how many accumulate before a flush. Chunking
+# keeps a single pass from building one enormous statement or holding the whole
+# backlog in memory, while staying far away from the per-row transaction cost
+# that stalled this job.
+_WRITE_CHUNK = 1000
+_FLUSH_EVERY = 5000
+
 
 def _dec_or_none(value) -> Optional[Decimal]:
     if value is None:
@@ -177,18 +184,56 @@ def _resolve_one(row, hist, max_hold_days: int):
     return None
 
 
-async def check_pending_outcomes(max_hold_days: int = DEFAULT_MAX_HOLD_DAYS) -> dict:
+async def check_pending_outcomes(
+    max_hold_days: int = DEFAULT_MAX_HOLD_DAYS,
+    deadline_seconds: Optional[float] = None,
+) -> dict:
     """
     Resolve every pending signal against fresh daily bars, or expire it if
     max_hold_days trading bars pass with neither target nor stop hit.
 
-    Returns a summary: {checked, target_hit, stop_hit, expired, still_pending}.
+    Returns a summary: {checked, target_hit, stop_hit, expired, still_pending,
+    tickers_covered, tickers_total, truncated, oldest_pending_age_days,
+    elapsed_s}.
+
+    On coverage, and why this function is shaped the way it is
+    ---------------------------------------------------------
+    These rows are the training labels for anything that later learns from
+    signal outcomes, so *which* signals get resolved has to be a property of
+    the signals, never of how far the job happened to get. The previous
+    implementation opened a fresh session and transaction per row and wrote
+    `checked_at` on every pending row each pass — so a backlog of ~65k rows
+    meant ~65k transactions per run against a 120s scheduler budget, and the
+    job was killed mid-pass every time (confirmed in production 2026-08-27/28:
+    two consecutive `timed out after 120s` errors, and only 32 of 102 tickers
+    had ever received a single label — the other 70 had none at all).
+
+    That silent truncation is worse than a slow job: it produced a labelled
+    subset selected by DB iteration order and the position of the timeout,
+    which reads exactly like real data and is not. Three changes address it:
+
+    * **Batched writes.** Same-value `checked_at` stamps collapse into one
+      UPDATE per chunk, and resolutions go out as a single executemany —
+      turning ~65k transactions into a handful.
+    * **Oldest-first ticker order.** Tickers are processed by their oldest
+      pending signal, so a run that cannot finish still drains the longest
+      backlog instead of re-walking whichever tickers sort first.
+    * **An owned deadline.** The caller passes a budget and the job stops at a
+      ticker boundary, flushes, and reports `truncated=True`. Being cancelled
+      externally mid-write is what made the shortfall invisible before.
     """
-    from sqlalchemy import select
+    import time as _time
+
+    from sqlalchemy import select, update
     from app.core.database import AsyncSessionLocal
     from app.models.signal_outcome import SignalOutcome
 
-    summary = {"checked": 0, "target_hit": 0, "stop_hit": 0, "expired": 0, "still_pending": 0}
+    started = _time.monotonic()
+    summary = {
+        "checked": 0, "target_hit": 0, "stop_hit": 0, "expired": 0,
+        "still_pending": 0, "tickers_covered": 0, "tickers_total": 0,
+        "truncated": False, "oldest_pending_age_days": None, "elapsed_s": 0.0,
+    }
 
     async with AsyncSessionLocal() as session:
         pending = (await session.execute(
@@ -203,10 +248,48 @@ async def check_pending_outcomes(max_hold_days: int = DEFAULT_MAX_HOLD_DAYS) -> 
         by_ticker.setdefault(row.ticker, []).append(row)
 
     now = datetime.now(timezone.utc)
+    summary["tickers_total"] = len(by_ticker)
+    oldest = min(r.generated_at for r in pending)
+    summary["oldest_pending_age_days"] = (now - oldest).days
 
-    for ticker, rows in by_ticker.items():
-        earliest = min(r.generated_at for r in rows)
+    # Oldest backlog first — see docstring. Ticker name breaks ties so a run
+    # is reproducible rather than depending on dict/query ordering.
+    ordered = sorted(by_ticker.items(),
+                     key=lambda kv: (min(r.generated_at for r in kv[1]), kv[0]))
+
+    resolved_payloads: list[dict] = []
+    checked_ids: list = []
+
+    async def _flush() -> None:
+        """Write everything accumulated so far. Safe to call repeatedly."""
+        if not resolved_payloads and not checked_ids:
+            return
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # One statement per chunk: every row gets the same timestamp,
+                # so there is nothing per-row to bind.
+                for i in range(0, len(checked_ids), _WRITE_CHUNK):
+                    await session.execute(
+                        update(SignalOutcome)
+                        .where(SignalOutcome.id.in_(checked_ids[i:i + _WRITE_CHUNK]))
+                        .values(checked_at=now)
+                    )
+                # Resolutions differ per row, so this is an executemany keyed
+                # on the primary key rather than one statement per row.
+                for i in range(0, len(resolved_payloads), _WRITE_CHUNK):
+                    await session.execute(
+                        update(SignalOutcome), resolved_payloads[i:i + _WRITE_CHUNK]
+                    )
+        resolved_payloads.clear()
+        checked_ids.clear()
+
+    for ticker, rows in ordered:
+        if deadline_seconds is not None and _time.monotonic() - started >= deadline_seconds:
+            summary["truncated"] = True
+            break
+
         try:
+            earliest = min(r.generated_at for r in rows)
             hist = await _fetch_daily_bars(ticker, earliest)
         except Exception as exc:
             logger.warning("check_pending_outcomes: bars fetch failed for %s: %s", ticker, exc)
@@ -214,27 +297,44 @@ async def check_pending_outcomes(max_hold_days: int = DEFAULT_MAX_HOLD_DAYS) -> 
         if hist is None or hist.empty:
             continue
 
+        summary["tickers_covered"] += 1
+
         for row in rows:
             summary["checked"] += 1
+            checked_ids.append(row.id)
             resolution = _resolve_one(row, hist, max_hold_days)
+            if resolution is None:
+                summary["still_pending"] += 1
+                continue
+            status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct = resolution
+            summary[status] += 1
+            resolved_payloads.append({
+                "id": row.id,
+                "status": status,
+                "exit_price": Decimal(str(round(exit_price, 4))),
+                "resolved_at": resolved_at,
+                "days_to_resolve": days_elapsed,
+                "max_favorable_pct": Decimal(str(round(mfe_pct, 4))),
+                "max_adverse_pct": Decimal(str(round(mae_pct, 4))),
+            })
 
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    db_row = await session.get(SignalOutcome, row.id)
-                    if db_row is None:
-                        continue
-                    db_row.checked_at = now
-                    if resolution is None:
-                        summary["still_pending"] += 1
-                        continue
-                    status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct = resolution
-                    summary[status] += 1
-                    db_row.status = status
-                    db_row.exit_price = Decimal(str(round(exit_price, 4)))
-                    db_row.resolved_at = resolved_at
-                    db_row.days_to_resolve = days_elapsed
-                    db_row.max_favorable_pct = Decimal(str(round(mfe_pct, 4)))
-                    db_row.max_adverse_pct = Decimal(str(round(mae_pct, 4)))
+        if len(checked_ids) >= _FLUSH_EVERY:
+            await _flush()
+
+    await _flush()
+    summary["elapsed_s"] = round(_time.monotonic() - started, 1)
+
+    # Partial coverage must be loud. A truncated pass leaves a biased label
+    # set behind, and the whole point of this rewrite is that such a pass can
+    # never again look identical to a complete one.
+    if summary["truncated"] or summary["tickers_covered"] < summary["tickers_total"]:
+        logger.warning(
+            "check_pending_outcomes covered %d/%d tickers in %.1fs (truncated=%s) — "
+            "labels are INCOMPLETE; oldest pending signal is %s days old",
+            summary["tickers_covered"], summary["tickers_total"],
+            summary["elapsed_s"], summary["truncated"],
+            summary["oldest_pending_age_days"],
+        )
 
     return summary
 
