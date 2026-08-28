@@ -117,11 +117,16 @@ function ExecutionModeControl({
   onChange,
   busy = false,
   error = null,
+  pending = null,
 }: {
   mode: "manual" | "copilot" | "autopilot";
   onChange: (m: "manual" | "copilot" | "autopilot") => void;
   busy?: boolean;
   error?: string | null;
+  /** Mode requested but not yet confirmed by the server. Rendered distinctly
+   *  from `mode` — never as selected — so an in-flight request can never be
+   *  mistaken for an applied one. */
+  pending?: "manual" | "copilot" | "autopilot" | null;
 }) {
   const options: { key: "manual" | "copilot" | "autopilot"; label: string; onColor: string }[] = [
     { key: "manual", label: "MANUAL", onColor: "var(--ink-dim)" },
@@ -143,19 +148,27 @@ function ExecutionModeControl({
         }}
       >
         {options.map((opt) => {
+          // `on` tracks the server-confirmed mode only. A requested-but-
+          // unconfirmed mode gets its own dashed treatment and never borrows
+          // the selected styling, so the control cannot imply a change that
+          // has not happened.
           const on = mode === opt.key;
+          const isPending = pending === opt.key;
           return (
             <button
               key={opt.key}
               type="button"
               onClick={() => onChange(opt.key)}
               aria-pressed={on}
+              aria-busy={isPending || undefined}
               disabled={busy}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 4,
                 height: 18, padding: "0 8px", borderRadius: 9,
                 background: on ? "var(--cyan-dim)" : "transparent",
-                border: `1px solid ${on ? opt.onColor : "transparent"}`,
+                border: isPending
+                  ? "1px dashed var(--ink-dim)"
+                  : `1px solid ${on ? opt.onColor : "transparent"}`,
                 color: on ? opt.onColor : "var(--ink-faint)",
                 fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
                 cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
@@ -168,15 +181,26 @@ function ExecutionModeControl({
         })}
       </div>
       {error && (
-        <span
-          role="status"
+        // role="alert" (assertive), not "status" (polite): a refused change to
+        // the control that decides whether the desk trades unattended has to
+        // interrupt, not wait for a pause in screen-reader output. The block
+        // treatment replaces a 9px right-aligned span that was easy to miss
+        // entirely — which is how a 403 went unnoticed in production.
+        <div
+          role="alert"
+          data-testid="exec-mode-error"
           style={{
-            fontFamily: "var(--sans)", fontSize: 9, color: "var(--red)",
-            maxWidth: 280, textAlign: "right", lineHeight: 1.3,
+            fontFamily: "var(--sans)", fontSize: 11, fontWeight: 600,
+            color: "var(--red)",
+            background: "rgba(239,68,68,0.12)",
+            border: "1px solid rgba(239,68,68,0.55)",
+            borderRadius: 4,
+            padding: "5px 8px",
+            maxWidth: 340, textAlign: "left", lineHeight: 1.35,
           }}
         >
           {error}
-        </span>
+        </div>
       )}
     </div>
   );
@@ -212,25 +236,54 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
   const [execBusy, setExecBusy] = useState(false);
   const [execError, setExecError] = useState<string | null>(null);
 
+  // The mode being requested, if any. Kept separate from execMode so the
+  // control can show that a change is in flight without ever claiming it
+  // happened.
+  const [execPending, setExecPending] = useState<"manual" | "copilot" | "autopilot" | null>(null);
+
   const setExec = (m: "manual" | "copilot" | "autopilot") => {
-    const prev = execMode;
-    setExecMode(m); // optimistic
+    if (m === execMode || execBusy) return;
+
+    // No optimistic update. This control decides whether the desk trades on
+    // its own, and the previous version flipped to the requested mode
+    // immediately, then silently reverted if the server refused. Against a
+    // 403 (the route is api-key gated and the browser holds no key) the
+    // toggle visibly moved to MANUAL and snapped back — an operator could
+    // reasonably read that as "trading is paused" while autopilot kept
+    // running. For a safety control, showing an unconfirmed state is the
+    // worst available failure, so execMode only ever moves on a server answer.
+    setExecPending(m);
     setExecBusy(true);
     setExecError(null);
     api.setExecutionMode(m)
       .then((d: any) => {
-        if (d.mode) setExecMode(d.mode);
-      })
-      .catch((err: any) => {
-        setExecMode(prev);
-        const msg = String(err?.message || err || "");
-        if (msg.includes("403") || msg.toLowerCase().includes("forbidden")) {
-          setExecError("Mode change needs Operator API Key — Risk → paste SECRET_KEY → Save");
+        if (d?.mode) {
+          setExecMode(d.mode);
         } else {
-          setExecError(msg || "Could not change execution mode");
+          // 2xx with no mode in the body: the change may or may not have
+          // applied. Say exactly that rather than assuming either way.
+          setExecError(
+            `Mode change returned no mode — current state unconfirmed. ` +
+            `Reload to re-read it from the server before acting.`,
+          );
         }
       })
-      .finally(() => setExecBusy(false));
+      .catch((err: any) => {
+        const msg = String(err?.message || err || "");
+        const denied = msg.includes("403") || msg.toLowerCase().includes("forbidden");
+        // Lead with the mode still in force. "Change failed" alone leaves the
+        // operator to infer the current state, which is the thing they most
+        // need to be certain about.
+        setExecError(
+          denied
+            ? `REFUSED — still ${execMode.toUpperCase()}. Needs Operator API Key: Risk → paste SECRET_KEY → Save.`
+            : `FAILED — still ${execMode.toUpperCase()}. ${msg || "Unknown error"}`,
+        );
+      })
+      .finally(() => {
+        setExecPending(null);
+        setExecBusy(false);
+      });
   };
   const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
 
@@ -449,7 +502,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
         padding: "0 12px", borderLeft: "1px solid var(--line-dim)",
       }}>
-        <ExecutionModeControl mode={execMode} onChange={setExec} busy={execBusy} error={execError} />
+        <ExecutionModeControl mode={execMode} onChange={setExec} busy={execBusy} error={execError} pending={execPending} />
       </div>
 
       {/* Market status + clock — pinned right */}
