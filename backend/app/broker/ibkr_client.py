@@ -114,6 +114,11 @@ ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS = 30.0
 # a stream which has actually stopped is caught inside one scan interval.
 ACCOUNT_VALUES_STALE_AFTER_SECONDS = 600.0
 
+# reqAllOpenOrders is a read request and normally answers immediately; this is
+# only here so a wedged gateway degrades to the local cache instead of hanging
+# an operator-facing route.
+OPEN_ORDERS_TIMEOUT_SECONDS = 10.0
+
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
 FILL_TIMEOUT_SECONDS = 60        # Wait up to 60s for the first fill attempt
@@ -1181,6 +1186,73 @@ class IBKRClient(BrokerInterface):
             timeout=ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS,
         )
         self._account_subscribed = True
+
+    async def get_open_orders(self, refresh: bool = True) -> dict:
+        """Resting orders at IBKR, as plain dicts. Read-only — never places,
+        modifies or cancels anything.
+
+        This exists because the system had no way to see its own protective
+        orders. Equity entries are submitted as brackets (parent entry + GTC
+        stop/take-profit children, see place_equity_order), but nothing read
+        them back, `trades` has no stop column, and positions adopted from the
+        broker by the reconciler never had a bracket in the first place. So
+        "does this position have a stop?" was unanswerable from inside the app.
+
+        `refresh` issues reqAllOpenOrdersAsync — a *read* request, not an order
+        action. It defaults on because ib.openTrades() is a local cache, and an
+        empty cache is ambiguous in exactly the way the account-values cache
+        was: it means either "no resting orders" or "nobody ever asked". The
+        returned `source` says which answer the caller is holding, so an empty
+        list is never silently read as "confirmed no stops".
+
+        Returns {"source": str, "orders": [ ... ]}.
+        """
+        self._require_connection()
+
+        source = "cache"
+        if refresh:
+            try:
+                await asyncio.wait_for(
+                    self.ib.reqAllOpenOrdersAsync(), timeout=OPEN_ORDERS_TIMEOUT_SECONDS,
+                )
+                source = "refreshed"
+            except Exception as exc:
+                # Serve the cache rather than failing outright, but say so —
+                # a stale answer presented as current is the failure mode this
+                # whole area has been bitten by.
+                logger.warning(
+                    "reqAllOpenOrders failed (%s) — falling back to the local "
+                    "open-order cache, which may be incomplete",
+                    exc or type(exc).__name__,
+                )
+                source = "cache_after_refresh_failed"
+
+        out: list[dict] = []
+        for t in self.ib.openTrades():
+            o, c, st = t.order, t.contract, t.orderStatus
+            out.append({
+                "order_id": getattr(o, "orderId", None),
+                "parent_id": getattr(o, "parentId", 0) or None,
+                "symbol": getattr(c, "symbol", None),
+                "sec_type": getattr(c, "secType", None),
+                "action": getattr(o, "action", None),
+                "order_type": getattr(o, "orderType", None),
+                "quantity": float(getattr(o, "totalQuantity", 0) or 0),
+                # IBKR carries the stop trigger in auxPrice and the limit in
+                # lmtPrice; a STP LMT populates both.
+                "limit_price": float(getattr(o, "lmtPrice", 0) or 0) or None,
+                "stop_price": float(getattr(o, "auxPrice", 0) or 0) or None,
+                "tif": getattr(o, "tif", None),
+                "status": getattr(st, "status", None),
+                "filled": float(getattr(st, "filled", 0) or 0),
+                "remaining": float(getattr(st, "remaining", 0) or 0),
+                # A protective exit is a stop-flavoured order, however it was
+                # created — bracket child or placed by hand at the broker.
+                "is_protective": str(getattr(o, "orderType", "")).upper().startswith("STP"),
+            })
+
+        out.sort(key=lambda r: (r["symbol"] or "", r["order_id"] or 0))
+        return {"source": source, "orders": out}
 
     async def get_account_summary(self) -> AccountSummary:
         """

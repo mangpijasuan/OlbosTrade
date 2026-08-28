@@ -37,6 +37,89 @@ async def portfolio_heat():
     return compute_portfolio_risk(positions, account_value)
 
 
+@router.get("/open-orders")
+async def portfolio_open_orders():
+    """Resting broker orders, and which open positions have no stop.
+
+    Read-only: it reads the order book, it never places, modifies or cancels
+    anything.
+
+    The list itself is secondary. The number that matters is
+    `positions_without_stop` — equity entries go in as brackets with a GTC
+    stop child (see IBKRClient.place_equity_order), but positions the
+    reconciler adopted from the broker never had a bracket, and `trades` has
+    no stop column, so until now nothing could tell a protected position from
+    an unprotected one.
+
+    `source` is load-bearing. An empty order list means "no resting orders"
+    only when source == "refreshed"; on a cache fall-back it may just mean the
+    cache was never populated, and `unprotected_is_reliable` says so rather
+    than letting an empty list read as a clean bill of health.
+    """
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.broker.broker_factory import get_broker
+    from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+
+    broker = get_broker()
+    if not hasattr(broker, "get_open_orders"):
+        return {"available": False,
+                "reason": f"{type(broker).__name__} does not expose an order book"}
+
+    try:
+        result = await ibkr_coordinator.submit(
+            Priority.P1, broker.get_open_orders,
+            key="open_orders", req_type="OPEN_ORDERS", timeout=15.0,
+        )
+    except Exception as exc:
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    orders = result.get("orders", [])
+    source = result.get("source", "unknown")
+
+    protected = {
+        (o.get("symbol") or "").upper()
+        for o in orders
+        if o.get("is_protective") and (o.get("remaining") or 0) > 0
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            open_trades = (await session.execute(
+                select(Trade).where(Trade.status == "open")
+            )).scalars().all()
+    except Exception as exc:
+        return {"available": True, "source": source, "orders": orders,
+                "positions_error": f"{type(exc).__name__}: {exc}"}
+
+    unprotected = []
+    for t in open_trades:
+        sym = (t.underlying or "").upper()
+        if sym and sym not in protected:
+            unprotected.append({
+                "ticker": sym,
+                "quantity": t.quantity,
+                "spread_type": t.spread_type,
+                # Adopted positions never had a bracket submitted for them —
+                # worth surfacing, because it explains the gap rather than
+                # leaving it looking like a lost order.
+                "adopted_from_broker": (t.strategy or "") == "adopted_untracked",
+            })
+
+    return {
+        "available": True,
+        "source": source,
+        "unprotected_is_reliable": source == "refreshed",
+        "order_count": len(orders),
+        "protective_order_count": sum(1 for o in orders if o.get("is_protective")),
+        "protected_tickers": sorted(protected),
+        "open_position_count": len(open_trades),
+        "positions_without_stop": unprotected,
+        "orders": orders,
+    }
+
+
 @router.get("/allocation")
 async def portfolio_allocation(method: str = "blended"):
     """
