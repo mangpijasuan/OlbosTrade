@@ -2461,6 +2461,17 @@ async def health_detail() -> dict:
     except Exception:
         _db_connected = False
 
+    # What is actually scoring signals. Reuses the already-constructed scorer
+    # when the scan loop has built one; otherwise constructs a throwaway purely
+    # to read model state — cheap when no model file is present, which is
+    # precisely the case this block exists to make visible.
+    try:
+        from app.services.signal_scorer import SignalScorer
+        _scorer = _signal_scorer if _signal_scorer is not None else SignalScorer()
+        _model_status = _scorer.status()
+    except Exception as _ms_exc:
+        _model_status = {"error": f"{type(_ms_exc).__name__}: {_ms_exc}"}
+
     return {
         "status": "ok",
         "broker": settings.broker,
@@ -2471,6 +2482,7 @@ async def health_detail() -> dict:
         "kill_switch": {"engaged": _ks.is_engaged, "reason": _ks.status.get("reason")},
         "regime": getattr(getattr(_current_regime, "regime", None), "value", None),
         "database": {"connected": _db_connected},
+        "signal_model": _model_status,
         "observability": observability.snapshot(),
         "ibkr": {
             "connected": _ib_connected,

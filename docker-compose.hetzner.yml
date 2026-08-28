@@ -44,6 +44,13 @@ services:
       - backend/.env.prod
     environment:
       DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSTRADE_DB_PASSWORD}@olbostrade-db:5432/olbostrade
+    volumes:
+      # Trained models are not committed (see .gitignore) and the build context
+      # is ./backend, so nothing puts a .pkl inside the image. Mounting the
+      # directory makes the deployment path explicit and survives rebuilds:
+      # place a model here on the host, restart, done. Read-only — the app only
+      # ever loads from it; training writes here directly on the host.
+      - ./backend/ml/model_registry:/app/ml/model_registry:ro
     depends_on:
       olbostrade-db:
         condition: service_healthy
