@@ -414,7 +414,7 @@ async def test_close_equity_trade_uses_live_broker_quantity_not_db_quantity():
     ))
     with patch("app.services.trade_recorder.trade_recorder.record_exit",
                new=AsyncMock(return_value=True)):
-        out = await close_equity_trade(trade, broker=broker)
+        out = await close_equity_trade(trade, broker=broker, closed_by="manual")
 
     broker.place_equity_order.assert_awaited_once()
     assert broker.place_equity_order.await_args.kwargs["qty"] == 599
@@ -440,7 +440,7 @@ async def test_close_equity_trade_uses_live_side_not_db_spread_type():
     ))
     with patch("app.services.trade_recorder.trade_recorder.record_exit",
                new=AsyncMock(return_value=True)):
-        await close_equity_trade(trade, broker=broker)
+        await close_equity_trade(trade, broker=broker, closed_by="manual")
 
     assert broker.place_equity_order.await_args.kwargs["side"] == "BUY"
     assert broker.place_equity_order.await_args.kwargs["qty"] == 27
@@ -456,7 +456,7 @@ async def test_close_equity_trade_already_flat_raises_without_submitting():
     broker.get_equity_positions = AsyncMock(return_value=[])
     broker.place_equity_order = AsyncMock()
     with pytest.raises(RuntimeError):
-        await close_equity_trade(trade, broker=broker)
+        await close_equity_trade(trade, broker=broker, closed_by="manual")
     broker.place_equity_order.assert_not_awaited()
 
 
@@ -472,7 +472,7 @@ async def test_close_equity_trade_no_live_match_for_ticker_raises():
     )
     broker.place_equity_order = AsyncMock()
     with pytest.raises(RuntimeError):
-        await close_equity_trade(trade, broker=broker)
+        await close_equity_trade(trade, broker=broker, closed_by="manual")
     broker.place_equity_order.assert_not_awaited()
 
 

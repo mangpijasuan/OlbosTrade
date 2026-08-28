@@ -1034,9 +1034,25 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # Step 8 — wires RiskManager + portfolio_engine into the live OMS path.
     # Greeks caps remain off unless execution_enforce_portfolio_greeks=true.
     # Rollback: execution_portfolio_gate=false.
-    # When max_positions would block an incoming entry (equity or options)
-    # and position_rotation_on_max is enabled, close N open positions
-    # (equity or options — whichever ranks worst) then re-check the gate.
+    # When max_positions blocks an incoming entry (equity or options) and
+    # position_rotation_on_max is enabled, Capital Rotation produces a
+    # ROTATION_REVIEW intent for human approval and the signal stops here.
+    #
+    # It does NOT close anything. Rotation used to call
+    # rotate_for_blocked_entry() from this spot, which closed N positions
+    # ranked worst-first and then re-checked the gate — so a blocked signal
+    # could liquidate held positions automatically, purely to free a slot.
+    # Ranking by "most underwater" made that the sunk-cost fallacy
+    # mechanised: an existing loss says nothing about a position's remaining
+    # prospects, and realising it is an accounting event, not an edge. On
+    # 2026-08-28 that path was one scan away from closing MRVL and MSTR for
+    # about -$11,384 combined.
+    #
+    # Replacement now requires explicit approval of a review that compares
+    # forward prospects only. This branch is read-only; the close functions
+    # additionally refuse any rotation-sourced close that carries no approval
+    # token (see position_rotation._assert_rotation_approved), so removing
+    # the call here is the first of two independent barriers, not the only one.
     from app.core.config import settings as _rot_cfg
     from app.services.execution_portfolio_gate import check_execution_portfolio
     portfolio_gate = await check_execution_portfolio(
@@ -1049,25 +1065,46 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         and getattr(_rot_cfg, "position_rotation_on_max", False)
     ):
         try:
-            from app.broker.broker_factory import get_broker
-            from app.services.position_rotation import rotate_for_blocked_entry
-            _rot_broker = get_broker()
-            rotated = await rotate_for_blocked_entry(
-                incoming_ticker=ticker,
-                broker=_rot_broker,
-                log_execution=_log_execution,
+            from app.services.rotation_review import PositionFacts, build_rotation_review
+            _tp = signal.get("trade_plan") or {}
+            _entry = _tp.get("entry_price")
+            _stop = _tp.get("stop_price")
+            _target = _tp.get("target_price")
+            review = build_rotation_review(
+                incumbent=PositionFacts(ticker="(incumbent pool)", side="incumbent"),
+                challenger=PositionFacts(
+                    ticker=ticker,
+                    side="challenger",
+                    direction=signal.get("action"),
+                    alpha_edge=signal.get("alpha_edge_score"),
+                    confidence=signal.get("confidence"),
+                    stop_distance=(
+                        abs(float(_entry) - float(_stop))
+                        if _entry is not None and _stop is not None else None
+                    ),
+                    target_distance=(
+                        abs(float(_target) - float(_entry))
+                        if _entry is not None and _target is not None else None
+                    ),
+                ),
             )
-            if rotated:
-                logger.info(
-                    "Position rotation freed %d slot(s) for %s: %s",
-                    len(rotated), ticker,
-                    [r.get("ticker") for r in rotated],
-                )
-                portfolio_gate = await check_execution_portfolio(
-                    signal, portfolio_value=float(portfolio_state.current_value or 0),
-                )
-        except Exception as _rot_exc:
-            logger.error("Position rotation failed for %s: %s", ticker, _rot_exc)
+            await _log_execution({
+                "kind": "ROTATION_REVIEW",
+                "ticker": ticker,
+                "asset_type": asset_type,
+                "result": "pending_approval",
+                "blocked_by": "max_positions",
+                "review": review,
+            })
+        except Exception as _rev_exc:
+            # A review is advisory. Failing to build one must not become a
+            # path to executing anything, so this only logs — the return
+            # below is unconditional.
+            logger.error("Rotation review failed for %s: %s", ticker, _rev_exc)
+        logger.info(
+            "Rotation review raised for %s — awaiting approval, nothing closed", ticker,
+        )
+        return _skipped("rotation_pending_approval")
     if not portfolio_gate.allowed:
         logger.warning(
             "Portfolio gate blocked %s: %s flags=%s",

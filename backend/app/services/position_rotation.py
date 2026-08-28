@@ -40,6 +40,39 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# ── Execution boundary for rotation-sourced closes ───────────────────────────
+ROTATION_CLOSED_BY = "position_rotation"
+
+
+class RotationApprovalRequired(RuntimeError):
+    """Raised when a rotation-sourced close is attempted without approval."""
+
+
+def _assert_rotation_approved(closed_by: str, rotation_approval: Optional[str]) -> None:
+    """Refuse any rotation-sourced close that carries no approval token.
+
+    This guard lives at the chokepoint — inside the close functions — rather
+    than at the Stage 2b call site, deliberately. Removing the call from
+    Stage 2b stops *that* path; it does not stop the next one. Any caller,
+    present or future, that reaches a close labelled `position_rotation`
+    without an approval token is refused here, so the boundary holds even if
+    someone later re-wires rotation without remembering this requirement.
+
+    No issuer for this token exists yet — the approval queue that mints it is
+    a later increment — so today every rotation-sourced close raises. That is
+    the intended state: rotation may recommend, never execute. Manual closes
+    pass closed_by="manual" and are unaffected; so are stop/target exits,
+    which never route through here at all.
+    """
+    if closed_by != ROTATION_CLOSED_BY:
+        return
+    if not rotation_approval:
+        raise RotationApprovalRequired(
+            "Rotation-sourced close refused: no approval token. Capital "
+            "Rotation may produce a ROTATION_REVIEW for approval, but must "
+            "never close a position on its own."
+        )
+
 
 @dataclass(frozen=True)
 class RotationCandidate:
@@ -198,6 +231,7 @@ async def close_equity_trade(
     closed_by: str = "position_rotation",
     order_type: str = "market",
     limit_price: Optional[float] = None,
+    rotation_approval: Optional[str] = None,
 ) -> dict:
     """
     Submit an equity close for an open Trade row. Shared by manual close and rotation.
@@ -217,7 +251,14 @@ async def close_equity_trade(
     holding oversold straight through zero). Sourcing the live quantity
     here makes every close self-correcting regardless of any prior drift,
     rather than compounding it.
+
+    A rotation-sourced close (closed_by="position_rotation") requires an
+    approval token — see _assert_rotation_approved. Note the default for
+    closed_by is "position_rotation", so a caller that forgets the kwarg now
+    fails closed rather than silently submitting an unreviewed close.
     """
+    _assert_rotation_approved(closed_by, rotation_approval)
+
     from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
     from app.services.trade_recorder import trade_recorder
 
@@ -278,6 +319,7 @@ async def close_options_trade(
     *,
     broker: Any,
     closed_by: str = "manual",
+    rotation_approval: Optional[str] = None,
 ) -> dict:
     """
     Submit a closing order for an open 2-leg options spread Trade row: buy
@@ -300,6 +342,8 @@ async def close_options_trade(
     from decimal import Decimal
 
     from app.broker.broker_interface import SpreadLeg, SpreadOrder
+    _assert_rotation_approved(closed_by, rotation_approval)
+
     from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
     from app.services.trade_recorder import trade_recorder
 
