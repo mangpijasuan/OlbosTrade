@@ -370,3 +370,24 @@ async def test_heat_is_zero_with_no_open_positions():
     session.execute = AsyncMock(return_value=res)
     with patch("app.core.database.AsyncSessionLocal", return_value=session):
         assert await td._portfolio_heat_fraction(234651.24) == 0.0
+
+
+def test_margin_sign_is_rendered_by_the_formatter_not_hardcoded():
+    """The reason string used to hardcode a '+' in front of a signed value, so
+    a challenger scoring below the incumbent read '= +-11.6'. That is the
+    common case and the one an operator most needs to read cleanly."""
+    from app.services.rotation_review import PositionFacts, build_rotation_review
+
+    def review(inc_q, chal_q):
+        return build_rotation_review(
+            incumbent=PositionFacts(ticker="MSTR", side="incumbent", quality_score=inc_q),
+            challenger=PositionFacts(ticker="SBUX", side="challenger", quality_score=chal_q,
+                                     liquidity_ok=True, in_flagged_cluster=False),
+            portfolio_heat_fraction=0.13)
+
+    worse = " ".join(review(84.0, 72.44)["reasons"])
+    assert "+-" not in worse, worse
+    assert "-11.6" in worse
+
+    better = " ".join(review(50.0, 90.0)["reasons"])
+    assert "+40.0" in better, better

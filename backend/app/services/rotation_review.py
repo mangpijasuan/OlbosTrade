@@ -232,14 +232,14 @@ def build_rotation_review(
             recommendation = "hold"
             reasons.append(
                 f"challenger composite {chal_c:.1f} vs incumbent {inc_c:.1f} "
-                f"= +{margin:.1f}, below the {materiality_margin:.1f} materiality "
+                f"= {margin:+.1f}, below the {materiality_margin:.1f} materiality "
                 "margin — not a materially superior opportunity"
             )
         else:
             recommendation = "replace"
             reasons.append(
                 f"challenger composite {chal_c:.1f} vs incumbent {inc_c:.1f} "
-                f"= +{margin:.1f}, clearing the {materiality_margin:.1f} "
+                f"= {margin:+.1f}, clearing the {materiality_margin:.1f} "
                 "materiality margin"
             )
 
