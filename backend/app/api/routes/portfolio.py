@@ -132,6 +132,40 @@ class CancelOrdersRequest(BaseModel):
     order_ids: list[int]
 
 
+class BackfillStopsRequest(BaseModel):
+    # Defaults to a rehearsal. Writing a stop lowers what the risk gates
+    # measure, so the write is the deliberate step, never the accidental one.
+    dry_run: bool = True
+
+
+@router.post("/backfill-stops", dependencies=[Depends(require_api_key)])
+async def backfill_stops(body: BackfillStopsRequest):
+    """Record missing equity stops from the broker's live protective orders.
+
+    Positions adopted by the reconciler carry no stop — that path has no entry
+    plan to copy one from, so it writes placeholders. The broker usually holds
+    a real protective stop for them anyway; it just never reached the row.
+    Until it does, portfolio heat reports full notional for those positions.
+
+    Submits no orders. Writes one column, on open equity rows that have no
+    stop this system already believes. See stop_backfill.py for the coverage,
+    direction and freshness rules — every one of them fails closed to leaving
+    the row alone.
+
+    Lowering measured risk loosens the heat and concentration gates, so this
+    defaults to dry_run and reports exactly what it would change.
+    """
+    from app.broker.broker_factory import get_broker
+    from app.services.stop_backfill import backfill_equity_stops
+
+    result = await backfill_equity_stops(get_broker(), dry_run=body.dry_run)
+    if result.get("status") == "error":
+        raise HTTPException(502, result.get("reason") or "stop backfill failed")
+    if result.get("status") == "unavailable":
+        raise HTTPException(503, result.get("reason") or "order book unverified")
+    return result
+
+
 @router.post("/cancel-orders", dependencies=[Depends(require_api_key)])
 async def cancel_orders(body: CancelOrdersRequest):
     """Cancel specific resting orders by IBKR order id.
