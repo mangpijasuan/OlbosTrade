@@ -57,6 +57,16 @@ DEFAULT_MATERIALITY_MARGIN = 15.0
 # of this module compared that directly against 0.35, so any book with more
 # than 0.35% heat read as "over the limit" and vetoed every rotation. The unit
 # is now in the name at both ends.
+#
+# The value assumes true risk-at-stake — sum of |entry - stop| x shares over
+# capital — which is what _portfolio_heat_fraction() now supplies. It is NOT
+# valid against portfolio_engine's notional-based portfolio_heat_pct, where a
+# normally-invested book reads over 90%. Feeding that number here would make
+# this constraint unsatisfiable, which is exactly what happened once.
+#
+# 0.35 sits above the desk's own per-trade sizing (risk_pct_per_trade = 0.02)
+# times a Balanced cap of 3 concurrent positions = 6% expected, so it binds
+# only when stops have widened well beyond plan or concurrency has grown.
 MAX_PORTFOLIO_HEAT_FRACTION = 0.35
 
 # Minimum current-volume / 20-day-average-volume for the challenger to count as

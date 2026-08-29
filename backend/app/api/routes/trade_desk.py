@@ -200,34 +200,68 @@ def _challenger_liquidity_ok(signal: dict) -> Optional[bool]:
 
 
 async def _portfolio_heat_fraction(account_value: float) -> Optional[float]:
-    """Current portfolio heat as a FRACTION of capital, or None if it cannot
-    be established.
+    """True risk-at-stake as a FRACTION of capital, or None if unavailable.
 
-    compute_portfolio_risk reports portfolio_heat_pct as heat * 100, so it is
-    divided back to a fraction here — the review's threshold is a fraction,
-    and comparing the percent against it vetoed every rotation.
+    Deliberately NOT portfolio_engine.compute_portfolio_risk(). That function
+    defines equity "risk_dollars" as entry x shares — full notional, its own
+    comment calls it a worst-case proxy — so its portfolio_heat_pct measures
+    how invested the book is, not how much is at risk. On 2026-08-29 it read
+    94.06% against $220,715 of notional on $234,651 of capital, which is
+    accurate as deployment and meaningless as risk. Gating rotation on it with
+    a 35% ceiling made the constraint unsatisfiable.
+
+    Here risk is the real thing: |entry - stop| x shares, with the stop read
+    from the position's live protective order at the broker. A position whose
+    stop cannot be found contributes None, and any None makes the whole
+    measurement None — a partial sum would understate heat, and understating
+    the denominator of a safety check is the wrong direction to be wrong in.
+
+    The Risk Monitor still displays the notional-based number; correcting that
+    is a wider change touching eight call sites and the UI's own thresholds.
     """
     try:
         from sqlalchemy import select
+        from app.broker.broker_factory import get_broker
         from app.core.database import AsyncSessionLocal
         from app.models.trade import Trade
-        from app.services.portfolio_engine import (
-            compute_portfolio_risk, position_risk_dollars, sector_for,
-        )
+
         if not account_value or account_value <= 0:
             return None
+
         async with AsyncSessionLocal() as session:
             open_trades = (await session.execute(
                 select(Trade).where(Trade.status == "open")
             )).scalars().all()
-        risk = compute_portfolio_risk(
-            [{"underlying": t.underlying,
-              "risk_dollars": position_risk_dollars(t),
-              "sector": sector_for(t.underlying)} for t in open_trades],
-            account_value,
-        )
-        pct = risk.get("portfolio_heat_pct")
-        return None if pct is None else float(pct) / 100.0
+        if not open_trades:
+            return 0.0
+
+        book = await get_broker().get_open_orders(refresh=True)
+        if book.get("source") != "refreshed":
+            # A cache fall-back cannot prove a stop is absent vs unseen.
+            return None
+        stops: dict[str, float] = {}
+        for o in book.get("orders", []):
+            if not o.get("is_protective") or (o.get("remaining") or 0) <= 0:
+                continue
+            px = o.get("stop_price")
+            sym = (o.get("symbol") or "").upper()
+            if sym and px:
+                # Widest stop per symbol = worst case across tranches.
+                stops[sym] = max(stops.get(sym, 0.0), float(px))
+
+        total = 0.0
+        for t in open_trades:
+            sym = (t.underlying or "").upper()
+            entry = float(getattr(t, "credit_received", 0) or 0)
+            qty = abs(int(getattr(t, "quantity", 0) or 0))
+            stop = stops.get(sym)
+            if stop is None or entry <= 0 or qty <= 0:
+                logger.info(
+                    "rotation heat: no protective stop for %s — heat unmeasurable", sym)
+                return None
+            total += abs(entry - stop) * qty
+
+        return round(total / account_value, 4)
     except Exception as exc:
         logger.warning("rotation review: portfolio heat unavailable: %s", exc)
         return None

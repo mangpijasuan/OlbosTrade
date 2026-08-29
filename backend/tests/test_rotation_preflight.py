@@ -271,3 +271,102 @@ async def test_heat_is_none_rather_than_computed_off_a_guessed_capital_base():
     from app.api.routes.trade_desk import _portfolio_heat_fraction
     assert await _portfolio_heat_fraction(0.0) is None
     assert await _portfolio_heat_fraction(-1.0) is None
+
+
+# ── Heat must measure risk-at-stake, not deployment ──────────────────────────
+#
+# portfolio_engine defines equity risk_dollars as entry x shares — full
+# notional. On 2026-08-29 that made portfolio_heat_pct read 94.06% ($220,715
+# notional / $234,651 capital), accurate as "how invested" and meaningless as
+# "how much at risk". Gated at 35% it vetoed every rotation.
+
+@pytest.mark.asyncio
+async def test_heat_uses_stop_distance_not_notional():
+    from app.api.routes import trade_desk as td
+
+    trade = SimpleNamespace(underlying="MRVL", credit_received=234.69,
+                            quantity=599, status="open")
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    res = MagicMock(); res.scalars.return_value = MagicMock(all=lambda: [trade])
+    session.execute = AsyncMock(return_value=res)
+
+    broker = MagicMock()
+    broker.get_open_orders = AsyncMock(return_value={
+        "source": "refreshed",
+        "orders": [{"symbol": "MRVL", "is_protective": True, "remaining": 599.0,
+                    "stop_price": 198.0}],
+    })
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker):
+        heat = await td._portfolio_heat_fraction(234651.24)
+
+    # Risk-at-stake: |234.69 - 198.00| * 599 = 21,977.31 -> ~9.4% of capital.
+    # The notional reading of the same position would be ~60%.
+    assert heat is not None
+    assert 0.09 < heat < 0.10, heat
+
+
+@pytest.mark.asyncio
+async def test_heat_is_none_when_a_position_has_no_protective_stop():
+    """An unmeasurable position must make the whole reading None. A partial
+    sum would understate heat, and understating a safety check's input is the
+    wrong direction to be wrong in."""
+    from app.api.routes import trade_desk as td
+
+    trades = [SimpleNamespace(underlying="MRVL", credit_received=234.69,
+                              quantity=599, status="open"),
+              SimpleNamespace(underlying="NAKED", credit_received=100.0,
+                              quantity=10, status="open")]
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    res = MagicMock(); res.scalars.return_value = MagicMock(all=lambda: trades)
+    session.execute = AsyncMock(return_value=res)
+
+    broker = MagicMock()
+    broker.get_open_orders = AsyncMock(return_value={
+        "source": "refreshed",
+        "orders": [{"symbol": "MRVL", "is_protective": True, "remaining": 599.0,
+                    "stop_price": 198.0}],
+    })
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker):
+        assert await td._portfolio_heat_fraction(234651.24) is None
+
+
+@pytest.mark.asyncio
+async def test_heat_is_none_on_a_cache_fallback_order_book():
+    """A cache fall-back cannot distinguish 'no stop' from 'stop unseen'."""
+    from app.api.routes import trade_desk as td
+
+    trade = SimpleNamespace(underlying="MRVL", credit_received=234.69,
+                            quantity=599, status="open")
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    res = MagicMock(); res.scalars.return_value = MagicMock(all=lambda: [trade])
+    session.execute = AsyncMock(return_value=res)
+
+    broker = MagicMock()
+    broker.get_open_orders = AsyncMock(
+        return_value={"source": "cache_after_refresh_failed", "orders": []})
+
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker):
+        assert await td._portfolio_heat_fraction(234651.24) is None
+
+
+@pytest.mark.asyncio
+async def test_heat_is_zero_with_no_open_positions():
+    from app.api.routes import trade_desk as td
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    res = MagicMock(); res.scalars.return_value = MagicMock(all=lambda: [])
+    session.execute = AsyncMock(return_value=res)
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        assert await td._portfolio_heat_fraction(234651.24) == 0.0
