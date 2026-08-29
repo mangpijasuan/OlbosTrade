@@ -21,6 +21,7 @@
 import React, { useEffect, useState } from "react";
 
 import { api } from "../api/client";
+import { useIsMobile } from "../hooks/useIsMobile";
 import type { Availability } from "../types/signal";
 
 interface ExecMode {
@@ -114,12 +115,26 @@ function Chip({
   );
 }
 
+/**
+ * Chips whose tone says something needs attention. Red is an alarm, amber is
+ * unknown-or-elevated — and unknown must count as attention here, because a
+ * status this row cannot read is exactly the case where folding it away would
+ * be worst. Everything else (nominal, dim, green, still loading) may collapse.
+ */
+const ALERT_TONES = new Set(["var(--red)", "var(--amber)"]);
+
+function isAlertChip(el: React.ReactElement): boolean {
+  return ALERT_TONES.has((el.props as { tone?: string }).tone ?? "");
+}
+
 function pct(v: number | undefined): string | null {
   if (typeof v !== "number" || Number.isNaN(v)) return null;
   return `${(v * 100).toFixed(1)}%`;
 }
 
 export default function GlobalRiskStatus() {
+  const isMobile = useIsMobile();
+  const [expanded, setExpanded] = useState(false);
   const execAvail = useAvailability<ExecMode>(() => api.getExecutionMode() as Promise<ExecMode>);
   const brokerAvail = useAvailability<BrokerInfo>(() =>
     fetch("/api/market/broker").then((r) => {
@@ -235,28 +250,76 @@ export default function GlobalRiskStatus() {
     <Chip label="DATA" value="LIVE" tone="var(--green)" order={6} />
   );
 
+  // ── Mobile: show what needs attention, fold away what does not ───────
+  // Six chips wrap to three rows on a 375px screen and eat roughly an eighth
+  // of the viewport, mostly to report that nothing is wrong. Collapsing is by
+  // *severity*, never by name: an armed kill switch, a disconnected broker, a
+  // breached drawdown or an exhausted risk budget all carry an alert tone and
+  // stay on screen. Only nominal chips fold, behind a count that says how many
+  // and opens them on tap — so the row is short when the desk is calm and
+  // grows exactly when something wants looking at.
+  // Keyed by label, not index: the collapsed and expanded lists differ in
+  // length, and an index key would make React reuse the wrong chip's DOM
+  // across a toggle.
+  const chips = [envChip, autoChip, killChip, drawdownChip, budgetChip, connChip].map((c) =>
+    React.cloneElement(c, { key: (c.props as { label: string }).label }),
+  );
+  const alerts = chips.filter(isAlertChip);
+  const nominal = chips.filter((c) => !isAlertChip(c));
+  const collapsed = isMobile && !expanded && nominal.length > 0;
+
   return (
     <div
       role="region"
       aria-label="Capital-at-risk status"
       style={{
         display: "flex",
-        flexWrap: "wrap",
+        // One scrolling line on a phone instead of three wrapped rows.
+        flexWrap: isMobile ? "nowrap" : "wrap",
+        overflowX: isMobile ? "auto" : undefined,
         gap: 6,
         alignItems: "center",
-        padding: "6px 12px",
+        padding: isMobile ? "5px 10px" : "6px 12px",
         background: "var(--bg-2)",
         borderBottom: "1px solid var(--line-dim)",
         fontFamily: "var(--mono)",
         flexShrink: 0,
       }}
     >
-      {envChip}
-      {autoChip}
-      {killChip}
-      {drawdownChip}
-      {budgetChip}
-      {connChip}
+      {collapsed ? alerts : chips}
+      {isMobile && nominal.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((p) => !p)}
+          aria-expanded={expanded}
+          aria-label={
+            expanded
+              ? "Hide nominal status indicators"
+              : `Show ${nominal.length} nominal status indicators`
+          }
+          style={{
+            order: 99,
+            flexShrink: 0,
+            minHeight: 28,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 9px",
+            border: "1px solid var(--line)",
+            borderRadius: 3,
+            background: "var(--bg-3)",
+            color: "var(--ink-faint)",
+            fontFamily: "var(--mono)",
+            fontSize: 9,
+            letterSpacing: "0.08em",
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+            touchAction: "manipulation",
+          }}
+        >
+          {expanded ? "LESS" : `+${nominal.length} OK`}
+        </button>
+      )}
     </div>
   );
 }
