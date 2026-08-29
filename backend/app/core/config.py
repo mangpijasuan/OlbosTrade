@@ -173,6 +173,14 @@ class Settings(BaseSettings):
     # position_rotation_winner_pnl_floor) to free a slot for a new equity
     # entry. Off by default — money-path auto-close.
     position_rotation_on_max: bool = Field(default=False)
+    # LEGACY / VESTIGIAL as of 2026-08-28. Read at exactly one production
+    # line — position_rotation.py's rotate_for_blocked_entry(), which has no
+    # production callers since Stage 2b was changed to raise a ROTATION_REVIEW
+    # instead of closing. The approval path proposes exactly ONE incumbent by
+    # design (one slot freed needs one close; this setting's value of 2
+    # over-rotated every time the old path fired), so nothing reachable
+    # consults it. Kept, not deleted, until the legacy path is confirmed
+    # permanently unreachable and removed as a unit.
     position_rotation_closes: int = Field(default=2)
     # Positions with unrealized P&L above this (dollars) are never rotation
     # targets — Winner Protection floor. A position must be at or below this
