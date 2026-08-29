@@ -25,7 +25,9 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.core.config import settings
-from app.services.portfolio_engine import HEAT_HIGH, position_risk_dollars, sector_for
+from app.services.portfolio_engine import (
+    HEAT_HIGH, is_cappable_sector, position_risk_dollars, sector_for,
+)
 from app.services.risk_manager import PortfolioRiskState, ProposedTrade, RiskManager
 from app.utils.logger import get_logger
 
@@ -147,7 +149,9 @@ def evaluate_portfolio_gates(
 
         current_s = portfolio.positions_by_sector.get(sector, 0.0)
         new_s_pct = (current_s + risk_dollars) / portfolio.portfolio_value
-        if new_s_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
+        # An unclassified ticker is not in a sector with the other
+        # unclassified ones — see portfolio_engine.is_cappable_sector.
+        if is_cappable_sector(sector) and new_s_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
             return PortfolioGateResult(
                 allowed=False,
                 reason=(

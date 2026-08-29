@@ -362,6 +362,9 @@ async def _background_scheduler() -> None:
     # semantics — keeps position_rotation.py's correlation tiebreaker
     # reasonably fresh without a live yfinance fetch in the money path.
     correlation_interval_s     = 20 * 60       # 20 minutes
+    # Sector membership is static company data — a daily resolution is
+    # generous. 100 yfinance lookups, off the money path, capped at 5 at once.
+    sector_interval_s          = 24 * 60 * 60  # daily
 
     import time as _time
     _now = _time.monotonic()
@@ -377,6 +380,9 @@ async def _background_scheduler() -> None:
     # No startup counterpart (unlike equity/options/regime) and a stale/
     # empty cache already fails open safely — fine to run on first tick.
     last_correlation     = 0.0
+    # Fire on the first tick: until this resolves, the sector cap sees almost
+    # nothing, so getting it populated early matters more than staggering it.
+    last_sector          = 0.0
 
     import time
 
@@ -484,6 +490,13 @@ async def _background_scheduler() -> None:
             if now - last_correlation >= correlation_interval_s:
                 await _guarded(_refresh_rotation_correlation_cache(), "rotation_correlation", 60)
                 last_correlation = now
+
+            # Daily: resolve ticker -> sector for the watchlist. Static company
+            # data, so a slow loop; until it lands the sector cap sees almost
+            # nothing, which is why it fires on the first tick.
+            if now - last_sector >= sector_interval_s:
+                await _guarded(_refresh_sector_cache(), "sector_cache", 300)
+                last_sector = now
 
             # Every 6 hours: resolve pending signal outcomes against fresh
             # daily bars (hit target, hit stop, or expire past the hold
@@ -1569,7 +1582,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         # (0.15) on its own — a separate, pre-existing calibration issue, not
         # something to silently work around here. Only the concentration
         # logic is reused; net_position_delta/vega stay unused for now.
-        from app.services.portfolio_engine import sector_for
+        from app.services.portfolio_engine import is_cappable_sector, sector_for
         portfolio_risk = await _build_portfolio_risk_state(portfolio_value)
         trade_sector = sector_for(symbol)
         total_new_risk = max_loss_dollars * quantity
@@ -1595,7 +1608,10 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 portfolio_risk.positions_by_sector.get(trade_sector, 0.0) + total_new_risk
             )
             sector_pct = new_sector_exposure / portfolio_risk.portfolio_value
-            if sector_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
+            # Unknown is the absence of a sector, not a sector — capping it
+            # blocks on how much of the book is unclassified. See
+            # portfolio_engine.is_cappable_sector.
+            if is_cappable_sector(trade_sector) and sector_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
                 logger.info(
                     "Options signal blocked — sector %r (%s) concentration would be "
                     "%.1f%% of portfolio (max %.0f%%)",
@@ -2440,6 +2456,18 @@ async def _refresh_rotation_correlation_cache() -> None:
     (Winner Protection) so rotate_for_blocked_entry() never itself
     triggers a live yfinance fetch."""
     from app.services.rotation_correlation_cache import refresh
+    await refresh()
+
+
+async def _refresh_sector_cache() -> None:
+    """Resolve ticker -> sector for the watchlist — see sector_cache.py.
+
+    Sector membership is static data, so this runs daily rather than on a
+    trading cadence. Until it lands, unclassified tickers simply do not
+    participate in the sector cap, which is the same direction an unresolved
+    ticker fails in anyway.
+    """
+    from app.services.sector_cache import refresh
     await refresh()
 
 

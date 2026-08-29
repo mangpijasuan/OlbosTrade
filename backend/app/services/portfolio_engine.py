@@ -14,12 +14,22 @@ from __future__ import annotations
 
 from typing import Optional
 
-# Lightweight static sector map for the common watchlist. "Unknown" otherwise.
+UNKNOWN_SECTOR = "Unknown"
+
+# Fallback map, consulted only when sector_cache has no answer. Labels match
+# the cache's canonical vocabulary on purpose: the same company reaching a
+# different bucket depending on whether the cache is warm would split a sector
+# in two and understate concentration.
+#
+# The ETF entries are the part that earns its keep — yfinance reports no sector
+# for a fund, so these pseudo-sectors have no other source. The single-name
+# entries are a cold-start fallback for the handful this map ever covered; the
+# real coverage now comes from sector_cache over the whole 100-symbol watchlist.
 SECTORS: dict[str, str] = {
     "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology", "AMD": "Technology",
-    "GOOGL": "Communication", "META": "Communication",
-    "AMZN": "Consumer", "TSLA": "Consumer",
-    "JPM": "Financials", "V": "Financials", "MA": "Financials",
+    "GOOGL": "Communication Services", "META": "Communication Services",
+    "AMZN": "Consumer Cyclical", "TSLA": "Consumer Cyclical",
+    "JPM": "Financial Services", "V": "Financial Services", "MA": "Financial Services",
     "SPY": "Index", "QQQ": "Index", "IWM": "Index",
     "TLT": "Bonds", "GLD": "Commodity", "USO": "Commodity", "UUP": "Dollar",
     "BIL": "Cash",
@@ -36,7 +46,35 @@ CORRELATION_MAX_CLUSTER_PCT = 0.40
 
 
 def sector_for(ticker: str) -> str:
-    return SECTORS.get((ticker or "").upper(), "Unknown")
+    """Resolved sector, or UNKNOWN_SECTOR. Synchronous and never fetches."""
+    sym = (ticker or "").upper()
+    try:
+        from app.services.sector_cache import sector_for_cached
+        cached = sector_for_cached(sym)
+    except Exception:
+        cached = None
+    return cached or SECTORS.get(sym, UNKNOWN_SECTOR)
+
+
+def is_cappable_sector(sector: Optional[str]) -> bool:
+    """Whether a sector concentration cap means anything for this bucket.
+
+    "Unknown" is not a sector. It is the absence of one, and the positions in
+    it have nothing in common except that nobody classified them. Capping that
+    bucket at 40% does not measure concentration — it measures how much of the
+    book is unclassified, and then blocks trading on the answer. In production
+    on 2026-08-29 it held 94% of the book and produced 179 blocks in 21 days
+    naming GILD, AEP, COST, PDD, SBUX and VRTX as one concentrated sector.
+
+    Unknown therefore never blocks. That is deliberately fail-open, against
+    this system's usual instinct, because the conservative reading does not
+    exist here: an unclassified pair is not *probably* concentrated, and a gate
+    that fires on every entry regardless of what it is teaches its operator to
+    ignore it. Exposure is still reported, and compute_portfolio_risk() reports
+    sector coverage so a thin classification is visible rather than silently
+    weakening the check.
+    """
+    return bool(sector) and sector != UNKNOWN_SECTOR
 
 
 def compute_portfolio_risk(
@@ -77,14 +115,18 @@ def compute_portfolio_risk(
         by_sector[s] = round(by_sector.get(s, 0.0) + r, 2)
 
     largest_u = max(by_underlying.items(), key=lambda x: x[1]) if by_underlying else (None, 0.0)
-    largest_s = max(by_sector.items(), key=lambda x: x[1]) if by_sector else (None, 0.0)
+    # Only real sectors compete to be "largest" for the cap — see
+    # is_cappable_sector. The Unknown bucket is still reported below.
+    cappable = {k: v for k, v in by_sector.items() if is_cappable_sector(k)}
+    largest_s = max(cappable.items(), key=lambda x: x[1]) if cappable else (None, 0.0)
+    classified = sum(v for k, v in by_sector.items() if is_cappable_sector(k))
 
     flags: list[str] = []
     if cap > 0:
         if largest_u[1] / cap > max_single_pct:
             flags.append(f"underlying_concentration:{largest_u[0]} "
                          f"{largest_u[1] / cap:.0%}>{max_single_pct:.0%}")
-        if largest_s[1] / cap > max_sector_pct:
+        if largest_s[0] is not None and largest_s[1] / cap > max_sector_pct:
             flags.append(f"sector_concentration:{largest_s[0]} "
                          f"{largest_s[1] / cap:.0%}>{max_sector_pct:.0%}")
 
@@ -98,6 +140,13 @@ def compute_portfolio_risk(
         "heat_status": heat_status,
         "risk_basis_counts": basis_counts,
         "unstopped_position_count": unstopped,
+        # How much of the book the sector cap can actually see. A low number
+        # means the check is weak, which is worth showing rather than hiding
+        # behind an Unknown bucket that blocks everything instead.
+        "sector_classified_pct": (round(classified / total_risk * 100, 2)
+                                  if total_risk > 0 else 0.0),
+        "unclassified_sector_dollars": round(
+            by_sector.get(UNKNOWN_SECTOR, 0.0), 2),
         # True when at least one position contributed notional instead of a
         # measured stop distance, so heat is an upper bound, not a reading.
         "heat_overstated": unstopped > 0,

@@ -468,3 +468,27 @@ async def test_load_portfolio_risk_state_db_failure_still_fails_open():
     # this fix — the broker cross-check never runs when the outer DB read
     # itself fails.
     assert state.open_position_count == 0
+
+
+# ── Unknown is not a sector ─────────────────────────────────────────────
+# GILD is unclassified. Before 2026-08-29 it pooled with every other
+# unclassified name into one "Unknown" bucket that was then capped at 40%,
+# blocking entries with reasons like "Sector concentration: Unknown (GILD)
+# would be 94.1%". Those names have nothing in common but the absence of a
+# label, and the gate fired on effectively every entry.
+
+def test_unclassified_sector_never_blocks_on_concentration():
+    portfolio = _portfolio(value=100_000.0, by_s={"Unknown": 90_000.0})
+    r = evaluate_portfolio_gates(_equity(ticker="GILD"), portfolio)
+    assert "sector_concentration_limit" not in r.flags
+    if not r.allowed:
+        assert "Sector concentration" not in (r.reason or "")
+
+
+def test_a_classified_sector_still_blocks_on_concentration():
+    # AAPL resolves to Technology via the static map even with a cold cache.
+    portfolio = _portfolio(value=100_000.0, by_s={"Technology": 90_000.0})
+    r = evaluate_portfolio_gates(_equity(ticker="AAPL"), portfolio)
+    assert r.allowed is False
+    assert "sector_concentration_limit" in r.flags
+    assert "Technology" in (r.reason or "")
