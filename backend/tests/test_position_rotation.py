@@ -17,7 +17,7 @@ from app.services.position_rotation import (
     close_options_trade,
     select_rotation_targets,
     rotate_for_blocked_entry,
-    _options_unrealized_by_underlying,
+    _unrealized_by_position,
 )
 
 
@@ -226,7 +226,7 @@ def test_accepts_put_and_call_spread_types():
 
 
 @pytest.mark.asyncio
-async def test_options_unrealized_by_underlying_sums_legs_excludes_equity():
+async def test_unrealized_by_position_keys_by_symbol_and_asset_class():
     positions = [
         SimpleNamespace(underlying="SPY", asset_type="option", unrealized_pnl=150.0),
         SimpleNamespace(underlying="SPY", asset_type="option", unrealized_pnl=-40.0),
@@ -236,16 +236,17 @@ async def test_options_unrealized_by_underlying_sums_legs_excludes_equity():
     broker = MagicMock()
     broker.get_positions = AsyncMock(return_value=positions)
 
-    totals = await _options_unrealized_by_underlying(broker)
+    totals = await _unrealized_by_position(broker)
 
-    assert totals == {"SPY": 110.0}
+    # Equity is now included — that is the point of the unification.
+    assert totals == {("SPY", "options"): 110.0, ("AAPL", "equity"): 999.0}
 
 
 @pytest.mark.asyncio
-async def test_options_unrealized_by_underlying_fetch_failure_returns_empty():
+async def test_unrealized_by_position_fetch_failure_returns_empty():
     broker = MagicMock()
     broker.get_positions = AsyncMock(side_effect=RuntimeError("broker down"))
-    totals = await _options_unrealized_by_underlying(broker)
+    totals = await _unrealized_by_position(broker)
     assert totals == {}
 
 
@@ -296,9 +297,12 @@ async def test_rotate_closes_selected_targets_and_protects_the_winner(monkeypatc
         scalars=MagicMock(return_value=MagicMock(all=lambda: trades)),
     ))
 
-    # MSFT is the biggest winner (+100); AAPL and NVDA are losses.
-    async def fake_mid(_broker, ticker):
-        return {"AAPL": 90.0, "MSFT": 110.0, "NVDA": 95.0}[ticker]
+    # MSFT is the biggest winner (+100); AAPL and NVDA are losses. These are
+    # the same P&Ls the old mid-price fakes produced ((mid - 100) x 10), now
+    # supplied the way production supplies them — the broker's own figure.
+    equity_pnl = {("AAPL", "equity"): -100.0,
+                  ("MSFT", "equity"): 100.0,
+                  ("NVDA", "equity"): -50.0}
 
     async def fake_quality(ticker, _direction):
         return {"AAPL": 30.0, "MSFT": 10.0, "NVDA": 70.0}[ticker]
@@ -310,7 +314,8 @@ async def test_rotate_closes_selected_targets_and_protects_the_winner(monkeypatc
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._mid_price", side_effect=fake_mid), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value=equity_pnl)), \
          patch("app.services.alpha_edge_engine.compute_equity_hold_score", side_effect=fake_quality), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close):
         out = await rotate_for_blocked_entry(
@@ -359,8 +364,8 @@ async def test_rotate_quality_lookup_failure_falls_back_to_confidence(monkeypatc
         scalars=MagicMock(return_value=MagicMock(all=lambda: trades)),
     ))
 
-    async def fake_mid(_broker, ticker):
-        return {"AAPL": 90.0, "MSFT": 95.0}[ticker]  # both losses
+    # Both losses, as the old mid fakes produced ((mid - 100) x 10).
+    equity_pnl = {("AAPL", "equity"): -100.0, ("MSFT", "equity"): -50.0}
 
     closed: list[str] = []
 
@@ -369,7 +374,8 @@ async def test_rotate_quality_lookup_failure_falls_back_to_confidence(monkeypatc
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._mid_price", side_effect=fake_mid), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value=equity_pnl)), \
          patch("app.services.alpha_edge_engine.compute_equity_hold_score",
                side_effect=RuntimeError("quality lookup failed")), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close):
@@ -625,8 +631,9 @@ async def test_rotate_closes_worst_options_position_via_close_options_trade(monk
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._options_unrealized_by_underlying",
-               new=AsyncMock(return_value={"SPY": -80.0, "QQQ": -10.0})), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value={("SPY", "options"): -80.0,
+                                          ("QQQ", "options"): -10.0})), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score",
                side_effect=lambda t: {"SPY": 20, "QQQ": 60}[t.underlying]), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close) as opt_mock, \
@@ -657,8 +664,9 @@ async def test_rotate_protects_profitable_options_position(monkeypatch):
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._options_unrealized_by_underlying",
-               new=AsyncMock(return_value={"SPY": 200.0, "QQQ": -30.0})), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value={("SPY", "options"): 200.0,
+                                          ("QQQ", "options"): -30.0})), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=50), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close):
         out = await rotate_for_blocked_entry(incoming_ticker="TSLA", broker=MagicMock())
@@ -715,10 +723,10 @@ async def test_rotate_mixed_pool_closes_worse_ranked_options_over_equity(monkeyp
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._mid_price", return_value=90.0), \
          patch("app.services.alpha_edge_engine.compute_equity_hold_score", return_value=80), \
-         patch("app.services.position_rotation._options_unrealized_by_underlying",
-               new=AsyncMock(return_value={"SPY": -50.0})), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value={("SPY", "options"): -50.0,
+                                           ("AAPL", "equity"): -100.0})), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=10), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
@@ -750,10 +758,10 @@ async def test_rotate_mixed_pool_closes_worse_ranked_equity_over_options(monkeyp
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._mid_price", return_value=90.0), \
          patch("app.services.alpha_edge_engine.compute_equity_hold_score", return_value=5), \
-         patch("app.services.position_rotation._options_unrealized_by_underlying",
-               new=AsyncMock(return_value={"SPY": -50.0})), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value={("SPY", "options"): -50.0,
+                                           ("AAPL", "equity"): -100.0})), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=90), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):
@@ -791,10 +799,10 @@ async def test_rotate_triggers_for_incoming_options_signal_and_excludes_its_own_
         return {"trade_id": str(trade.id), "ticker": trade.underlying, "status": "filled"}
 
     with patch("app.core.database.AsyncSessionLocal", return_value=session), \
-         patch("app.services.position_rotation._mid_price", return_value=90.0), \
          patch("app.services.alpha_edge_engine.compute_equity_hold_score", return_value=10), \
-         patch("app.services.position_rotation._options_unrealized_by_underlying",
-               new=AsyncMock(return_value={"SPY": -1000.0})), \
+         patch("app.services.position_rotation._unrealized_by_position",
+               new=AsyncMock(return_value={("SPY", "options"): -1000.0,
+                                           ("AAPL", "equity"): -100.0})), \
          patch("app.services.alpha_edge_engine.compute_options_hold_score", return_value=0), \
          patch("app.services.position_rotation.close_equity_trade", side_effect=fake_close_eq), \
          patch("app.services.position_rotation.close_options_trade", side_effect=fake_close_opt):

@@ -188,39 +188,56 @@ async def _mid_price(broker: Any, ticker: str) -> Optional[float]:
         ask = float(getattr(quote, "ask_price", 0) or 0)
         if bid > 0 and ask > 0:
             return (bid + ask) / 2.0
-        last = float(getattr(quote, "last_price", 0) or 0)
-        return last if last > 0 else None
+        # No last-price fallback: Quote carries only bid/ask/sizes/timestamp,
+        # so the getattr(quote, "last_price") that used to sit here always
+        # read 0 and never fired. P&L no longer comes from this function at
+        # all — see _unrealized_by_position.
+        return None
     except Exception as exc:
         logger.warning("rotation quote failed for %s: %s", ticker, exc)
         return None
 
 
-async def _options_unrealized_by_underlying(broker: Any) -> dict[str, float]:
+async def _unrealized_by_position(broker: Any) -> dict[tuple[str, str], float]:
+    """IBKR's own unrealized P&L per (SYMBOL, asset_class), from ONE call.
+
+    Single source of truth for both asset classes. Equity P&L used to be
+    reconstructed as (mid - entry) x qty from a fetched quote while options
+    took the broker's figure — two derivations that could disagree, and only
+    one of which survived outside regular hours.
+
+    The equity path was broken in a way nothing caught: Quote carries only
+    bid_price/ask_price/sizes/timestamp, and _mid_price's fallback read
+    `last_price`, a field that has never existed on that model. So whenever
+    bid/ask were absent — every weekend, every overnight, any thin quote —
+    mid came back None, every position read as unknown P&L, Winner Protection
+    excluded everything, and rotation could not act. Confirmed live
+    2026-08-29: MRVL quoted bid=None ask=None while the broker reported
+    -$11,167.34 and the positions endpoint rendered it without trouble.
+
+    Also materially faster. The old path issued one QUOTE per candidate,
+    sequentially, at ~2.8s each through the coordinator; this is a single
+    ib.portfolio() cache read with no network round-trip.
+
+    A symbol absent from the result yields no entry, so the caller sees None
+    (unknown) rather than zero — an empty portfolio cache after a reconnect
+    must never read as "every position is flat".
     """
-    One broker.get_positions() call, summed per underlying across option
-    legs only. A 2-leg spread's two Position rows share `underlying`, so
-    summing gives the correct net spread P&L — mirrors
-    trade_excursion_tracker.TradeExcursionTracker's own grouping. Called
-    directly (not through ibkr_coordinator) — matches every other
-    get_positions() call site in this codebase; only quote/order requests
-    go through the coordinator.
-    """
-    totals: dict[str, float] = {}
+    totals: dict[tuple[str, str], float] = {}
     try:
         positions = await broker.get_positions()
     except Exception as exc:
-        logger.warning("rotation options position fetch failed: %s", exc)
+        logger.warning("rotation position fetch failed: %s", exc)
         return totals
-    for p in positions:
-        if getattr(p, "asset_type", None) != "option":
-            continue
-        pnl = getattr(p, "unrealized_pnl", None)
+    for pos in positions:
+        pnl = getattr(pos, "unrealized_pnl", None)
         if pnl is None:
             continue
-        key = (getattr(p, "underlying", "") or "").upper()
+        key = (getattr(pos, "underlying", "") or "").upper()
         if not key:
             continue
-        totals[key] = totals.get(key, 0.0) + float(pnl)
+        cls = "equity" if getattr(pos, "asset_type", None) == "equity" else "options"
+        totals[(key, cls)] = totals.get((key, cls), 0.0) + float(pnl)
     return totals
 
 
@@ -240,7 +257,7 @@ async def close_equity_trade(
     Side and quantity come from the broker's OWN live position (via
     get_equity_positions() — a local ib.portfolio() cache read, not a
     network round-trip, same convention already used above by
-    _options_unrealized_by_underlying), never from trade.spread_type/
+    _unrealized_by_position), never from trade.spread_type/
     trade.quantity. Root-caused in production on 2026-08-26: the DB's
     recorded quantity can drift from the broker's real holding (a partial
     fill never fully reconciled, an earlier close that itself misfired,
@@ -439,17 +456,19 @@ async def build_rotation_candidates(broker: Any) -> list[RotationCandidate]:
     from app.services.rotation_correlation_cache import in_flagged_cluster
 
     cluster_membership = {t.underlying: in_flagged_cluster(t.underlying) for t in rotation_opens}
-    options_pnl_by_underlying = await _options_unrealized_by_underlying(broker)
+    # One broker call covering every candidate of either asset class.
+    pnl_by_position = await _unrealized_by_position(broker)
 
     candidates: list[RotationCandidate] = []
     for t in rotation_opens:
         st = (t.spread_type or "").lower()
         conf = float(t.signal_score) if t.signal_score is not None else None
-        if st in ("equity_long", "equity_short"):
-            mid = await _mid_price(broker, t.underlying)
-            # No quote → None ("unknown"), never 0.0. Winner Protection
-            # excludes unknowns outright rather than treating them as break-even.
-            upnl = _equity_unrealized(t, mid) if mid is not None else None
+        is_equity = st in ("equity_long", "equity_short")
+        # Absent → None ("unknown"), never 0.0. Winner Protection excludes
+        # unknowns outright rather than treating them as break-even.
+        upnl = pnl_by_position.get(
+            ((t.underlying or "").upper(), "equity" if is_equity else "options"))
+        if is_equity:
             direction = "BUY" if st == "equity_long" else "SELL"
             try:
                 quality = await compute_equity_hold_score(t.underlying, direction)
@@ -457,9 +476,6 @@ async def build_rotation_candidates(broker: Any) -> list[RotationCandidate]:
                 logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
                 quality = None
         else:
-            # No default: a symbol absent from the broker's option legs means
-            # unknown, not flat. Same reasoning as the equity branch above.
-            upnl = options_pnl_by_underlying.get((t.underlying or "").upper())
             try:
                 quality = compute_options_hold_score(t)
             except Exception as exc:
@@ -545,17 +561,19 @@ async def rotate_for_blocked_entry(
     # naturally resolve to None — a full no-op tiebreaker, not a bias.
     cluster_membership = {t.underlying: in_flagged_cluster(t.underlying) for t in rotation_opens}
     # One broker call up front for every options candidate, not one per candidate.
-    options_pnl_by_underlying = await _options_unrealized_by_underlying(broker)
+    # One broker call covering every candidate of either asset class.
+    pnl_by_position = await _unrealized_by_position(broker)
 
     candidates: list[RotationCandidate] = []
     for t in rotation_opens:
         st = (t.spread_type or "").lower()
         conf = float(t.signal_score) if t.signal_score is not None else None
-        if st in ("equity_long", "equity_short"):
-            mid = await _mid_price(broker, t.underlying)
-            # No quote → None ("unknown"), never 0.0. Winner Protection
-            # excludes unknowns outright rather than treating them as break-even.
-            upnl = _equity_unrealized(t, mid) if mid is not None else None
+        is_equity = st in ("equity_long", "equity_short")
+        # Absent → None ("unknown"), never 0.0. Winner Protection excludes
+        # unknowns outright rather than treating them as break-even.
+        upnl = pnl_by_position.get(
+            ((t.underlying or "").upper(), "equity" if is_equity else "options"))
+        if is_equity:
             direction = "BUY" if st == "equity_long" else "SELL"
             try:
                 quality = await compute_equity_hold_score(t.underlying, direction)
@@ -563,9 +581,6 @@ async def rotate_for_blocked_entry(
                 logger.warning("rotation quality score failed for %s: %s", t.underlying, exc)
                 quality = None
         else:
-            # No default: a symbol absent from the broker's option legs means
-            # unknown, not flat. Same reasoning as the equity branch above.
-            upnl = options_pnl_by_underlying.get((t.underlying or "").upper())
             try:
                 quality = compute_options_hold_score(t)
             except Exception as exc:
