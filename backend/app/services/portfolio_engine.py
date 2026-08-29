@@ -12,6 +12,8 @@ enough position + correlation history to make them meaningful rather than noise.
 
 from __future__ import annotations
 
+from typing import Optional
+
 # Lightweight static sector map for the common watchlist. "Unknown" otherwise.
 SECTORS: dict[str, str] = {
     "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology", "AMD": "Technology",
@@ -44,12 +46,26 @@ def compute_portfolio_risk(
     max_sector_pct: float = 0.40,
 ) -> dict:
     """
-    positions: [{"underlying": str, "risk_dollars": float, "sector": str?}]
+    positions: [{"underlying": str, "risk_dollars": float, "sector": str?,
+                 "risk_basis": str?}]
     Returns portfolio heat, exposures, concentration flags.
+
+    "risk_basis" is optional and comes from position_risk_basis(). When any
+    position reports "notional_no_stop", its risk_dollars is full notional
+    rather than a measurement, so the heat derived from it is an overstatement
+    — surfaced as risk_basis_counts and heat_overstated rather than left for a
+    reader to assume the number means what it says.
     """
     cap = float(capital) if capital and capital > 0 else 0.0
     total_risk = round(sum(float(p.get("risk_dollars", 0) or 0) for p in positions), 2)
     heat = (total_risk / cap) if cap > 0 else 0.0
+
+    basis_counts: dict[str, int] = {}
+    for p in positions:
+        b = p.get("risk_basis")
+        if b:
+            basis_counts[b] = basis_counts.get(b, 0) + 1
+    unstopped = basis_counts.get("notional_no_stop", 0)
 
     by_underlying: dict[str, float] = {}
     by_sector: dict[str, float] = {}
@@ -80,6 +96,11 @@ def compute_portfolio_risk(
         "total_risk_dollars": total_risk,
         "portfolio_heat_pct": round(heat * 100, 2),
         "heat_status": heat_status,
+        "risk_basis_counts": basis_counts,
+        "unstopped_position_count": unstopped,
+        # True when at least one position contributed notional instead of a
+        # measured stop distance, so heat is an upper bound, not a reading.
+        "heat_overstated": unstopped > 0,
         "largest_underlying": largest_u[0],
         "largest_underlying_pct": round((largest_u[1] / cap * 100), 2) if cap > 0 else 0.0,
         "largest_sector": largest_s[0],
@@ -90,6 +111,70 @@ def compute_portfolio_risk(
     }
 
 
+def _is_equity(trade) -> bool:
+    spread_type = (getattr(trade, "spread_type", "") or "").lower()
+    return spread_type.startswith("equity") or getattr(trade, "strategy", "") == "equity"
+
+
+def equity_stop_distance(trade) -> Optional[float]:
+    """Per-share distance from entry to the protective stop, or None.
+
+    The stop is already on the row: trade_desk.py's equity entry path stores
+    trade_plan["entry_price"] in short_strike and trade_plan["stop_price"] in
+    long_strike (credit_received carries the entry price again). No new column
+    is needed to measure real risk — only a careful read of the one we have.
+
+    Returns None whenever the row does not carry a *trustworthy* stop, because
+    the alternative is far worse than the overstatement this function exists to
+    fix. Rows adopted by the reconciler (main.py::_adopt_untracked_positions)
+    write the live avg_cost into all three price fields as discovery-time
+    placeholders, so entry == stop; reading that literally yields a stop
+    distance of zero and a position that appears to risk nothing at all.
+    Confirmed on production 2026-08-29: LITE and MSTR both had entry == stop
+    == 887.22 / 126.95, which would have measured as $0.20 and $0.12 of risk
+    against $60,331 and $19,804 of notional. Understating risk is the
+    dangerous direction to be wrong in, so an untrustworthy stop is reported
+    as absent rather than believed.
+
+    Three ways a stop fails to be trustworthy:
+      - it is missing or non-positive;
+      - it sits within 0.1% of entry (a placeholder, not a stop — a real stop
+        from compute_equity_trade_plan is entry ± 2xATR, never adjacent to it);
+      - it is on the wrong side of entry for the position's direction, which
+        means the row's fields do not mean what this function assumes.
+    """
+    if not _is_equity(trade):
+        return None
+    entry = float(getattr(trade, "credit_received", 0) or 0)
+    stop = float(getattr(trade, "long_strike", 0) or 0)
+    if entry <= 0 or stop <= 0:
+        return None
+    distance = abs(entry - stop)
+    if distance < 0.001 * entry:
+        return None
+    is_short = (getattr(trade, "spread_type", "") or "").lower() == "equity_short"
+    # Long stops sit below entry, short stops above. Either way round means the
+    # row is not shaped the way this read assumes — do not guess at it.
+    if is_short and stop < entry:
+        return None
+    if not is_short and stop > entry:
+        return None
+    return distance
+
+
+def position_risk_basis(trade) -> str:
+    """How position_risk_dollars() arrived at its number, for honest reporting.
+
+      - "defined_max_loss"  — options; the structure caps the loss exactly.
+      - "stop_distance"     — equity with a real stop; true risk-at-stake.
+      - "notional_no_stop"  — equity with no trustworthy stop; the number is
+                              full notional, a deliberate overstatement.
+    """
+    if not _is_equity(trade):
+        return "defined_max_loss"
+    return "stop_distance" if equity_stop_distance(trade) is not None else "notional_no_stop"
+
+
 def position_risk_dollars(trade) -> float:
     """
     Derive risk-at-stake from an open Trade row.
@@ -98,13 +183,24 @@ def position_risk_dollars(trade) -> float:
         see backtester.py's entry-side convention): max loss is simply the
         debit paid, not width-minus-credit — that formula would add the debit
         to the width instead of isolating it as the actual capital at risk.
-      - Equity: notional = entry_price × shares (worst-case proxy).
+      - Equity with a stop: |entry − stop| × shares — what is actually at risk.
+      - Equity without a trustworthy stop: notional = entry × shares. A
+        deliberate overstatement, reported as "notional_no_stop" by
+        position_risk_basis() so no caller mistakes it for a measurement.
+
+    Until 2026-08-29 every equity position used the notional branch
+    unconditionally. Its own comment called that a worst-case proxy, but heat
+    and both concentration checks consumed it as if it were risk: production
+    read 94.06% heat on a book that was simply invested, and the resulting
+    concentration blocks were real — 179 of them in the preceding 21 days.
     """
     qty = int(getattr(trade, "quantity", None) or 1)
-    spread_type = (getattr(trade, "spread_type", "") or "").lower()
     credit = float(getattr(trade, "credit_received", 0) or 0)
-    if spread_type.startswith("equity") or getattr(trade, "strategy", "") == "equity":
-        return round(credit * qty, 2)   # entry price × shares
+    if _is_equity(trade):
+        stop_distance = equity_stop_distance(trade)
+        if stop_distance is None:
+            return round(credit * qty, 2)       # notional — no stop to measure
+        return round(stop_distance * qty, 2)    # real risk-at-stake
     if credit < 0:
         return round(abs(credit) * 100 * qty, 2)
     short_k = float(getattr(trade, "short_strike", 0) or 0)

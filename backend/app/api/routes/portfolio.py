@@ -19,7 +19,9 @@ async def portfolio_heat():
     from sqlalchemy import select
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
-    from app.services.portfolio_engine import compute_portfolio_risk, position_risk_dollars, sector_for
+    from app.services.portfolio_engine import (
+        compute_portfolio_risk, position_risk_basis, position_risk_dollars, sector_for,
+    )
 
     account_value = await get_account_value()
 
@@ -33,6 +35,7 @@ async def portfolio_heat():
             positions.append({
                 "underlying": t.underlying,
                 "risk_dollars": position_risk_dollars(t),
+                "risk_basis": position_risk_basis(t),
                 "sector": sector_for(t.underlying),
             })
     except Exception as exc:
