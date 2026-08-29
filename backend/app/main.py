@@ -468,6 +468,14 @@ async def _background_scheduler() -> None:
                 await _guarded(_reconcile_positions(), "reconciliation", 30)
                 last_reconciliation = now
 
+                # Immediately behind it, on the same tick: reconciliation is
+                # what adopts a position without a stop, so this is the
+                # cleanup that belongs directly after it rather than on a
+                # timer of its own drifting in and out of phase. Its first
+                # step is a DB read that returns early when nothing is
+                # missing a stop, so the usual cost is one query.
+                await _guarded(_backfill_equity_stops(), "stop_backfill", 45)
+
             # Every 20 min: refresh the rotation-scoped correlation cluster
             # cache (position_rotation.py's cluster-membership tiebreaker
             # reads this synchronously — see rotation_correlation_cache.py).
@@ -2433,6 +2441,40 @@ async def _refresh_rotation_correlation_cache() -> None:
     triggers a live yfinance fetch."""
     from app.services.rotation_correlation_cache import refresh
     await refresh()
+
+
+async def _backfill_equity_stops() -> None:
+    """Recover stops for positions adopted without one — see stop_backfill.py.
+
+    Runs on the scheduler because _adopt_untracked_positions() keeps creating
+    the gap: it has no entry plan to copy a stop from, so it writes placeholder
+    prices, and until the real stop is recovered those positions report full
+    notional to portfolio heat and both concentration checks. Doing it once by
+    hand would fix today's rows and leave tomorrow's broken.
+
+    Deliberately paired with reconciliation's own interval — the reconciler is
+    what creates the stopless row, so this is the cleanup that belongs behind
+    it. Its own first step is a DB read that returns early when every position
+    already has a stop, so the steady state costs the broker nothing.
+
+    Writes at most one column on open equity rows and submits no orders. Every
+    rule inside fails closed to leaving the row alone.
+    """
+    from app.broker.broker_factory import get_broker
+    from app.services.stop_backfill import backfill_equity_stops
+
+    report = await backfill_equity_stops(get_broker(), dry_run=False)
+    if report.get("nothing_to_do"):
+        return
+    if report.get("status") != "ok":
+        logger.warning("stop backfill did not run: %s", report.get("reason"))
+        return
+    if report.get("updated"):
+        logger.info(
+            "stop backfill recorded %d stop(s): %s",
+            len(report["updated"]),
+            ", ".join(f"{r['ticker']}@{r['stop_price']}" for r in report["updated"]),
+        )
 
 
 # ── Health check ────────────────────────────────────────────────────────────

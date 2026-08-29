@@ -96,6 +96,22 @@ async def backfill_equity_stops(broker: Any, *, dry_run: bool = True) -> dict:
         "submitted_anything": False,   # this module never places an order
     }
 
+    # Cheap DB read first, so the steady state costs the broker nothing. Once
+    # every open position carries a stop there is nothing here to do, and this
+    # runs on the scheduler — a refreshed order-book read every cycle forever
+    # would be a standing IBKR request for a job that is almost always a no-op,
+    # against a gateway whose stability has been the recurring problem.
+    async with AsyncSessionLocal() as probe:
+        pending = [
+            t for t in (await probe.execute(
+                select(Trade).where(Trade.status == "open")
+            )).scalars().all()
+            if (getattr(t, "spread_type", "") or "").lower().startswith("equity")
+            and equity_stop_distance(t) is None
+        ]
+    if not pending:
+        return {**report, "status": "ok", "nothing_to_do": True}
+
     try:
         book = await broker.get_open_orders(refresh=True)
     except Exception as exc:

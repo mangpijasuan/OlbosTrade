@@ -122,21 +122,34 @@ async def test_partial_coverage_is_refused():
 
 @pytest.mark.asyncio
 async def test_a_recorded_stop_is_never_overwritten():
-    t = _trade(ticker="MRVL", entry=234.69, qty=599, long_strike=197.96)
-    report, _ = await _run([t], [_stop("MRVL", "SELL", 599, 210.0)],
-                           {"MRVL": 599})
-    assert report["updated"] == []
-    assert "already has a recorded stop" in report["skipped"][0]["reason"]
-    assert float(t.long_strike) == pytest.approx(197.96)
+    """MRVL's own entry plan recorded 197.96. The broker also holds stops for
+    it, and a live-order read would blend them to something else — this is a
+    backfill, not a reconciliation of orders against recorded intent. Paired
+    with a real candidate so the function runs past its early return."""
+    mrvl = _trade(ticker="MRVL", entry=234.69, qty=599,
+                  long_strike=197.96, trade_id="mrvl")
+    lite = _trade(trade_id="lite")
+    report, _ = await _run(
+        [mrvl, lite],
+        [_stop("MRVL", "SELL", 599, 210.0), _stop("LITE", "SELL", 68, 726.33)],
+        {"MRVL": 599, "LITE": 68}, dry_run=False)
+
+    assert [r["ticker"] for r in report["updated"]] == ["LITE"]
+    assert float(mrvl.long_strike) == pytest.approx(197.96)
+    assert any("already has a recorded stop" in s["reason"]
+               for s in report["skipped"])
 
 
 @pytest.mark.asyncio
 async def test_cached_order_book_refuses_to_write_anything():
-    b = _broker([], {})
+    b = _broker([], {"LITE": 68})
     b.get_open_orders = AsyncMock(return_value={"source": "cache", "orders": []})
-    report = await backfill_equity_stops(b, dry_run=False)
+    session = _session([_trade()])
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        report = await backfill_equity_stops(b, dry_run=False)
     assert report["status"] == "unavailable"
     assert report["updated"] == []
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -199,7 +212,66 @@ async def test_options_rows_are_not_touched():
 async def test_broker_failure_reports_error_and_writes_nothing():
     b = MagicMock()
     b.get_open_orders = AsyncMock(side_effect=RuntimeError("gateway down"))
-    report = await backfill_equity_stops(b, dry_run=False)
+    session = _session([_trade()])
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        report = await backfill_equity_stops(b, dry_run=False)
     assert report["status"] == "error"
     assert "gateway down" in report["reason"]
     assert report["updated"] == []
+    session.commit.assert_not_awaited()
+
+
+# ── The scheduler contract ──────────────────────────────────────────────
+# This now runs unattended behind reconciliation, so two things matter that
+# did not when it was route-only: it must not touch the broker when there is
+# nothing to do, and a bad cycle must never take the scheduler down with it.
+
+@pytest.mark.asyncio
+async def test_no_broker_call_when_every_position_has_a_stop():
+    """The steady state. Once stops are recorded this runs every 5 minutes
+    forever, and a refreshed order-book read each cycle would be a standing
+    IBKR request for a job that does nothing."""
+    t = _trade(long_strike=709.14)          # a real stop already
+    b = _broker([], {"LITE": 68})
+    session = _session([t])
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        report = await backfill_equity_stops(b, dry_run=False)
+
+    assert report["nothing_to_do"] is True
+    assert report["status"] == "ok"
+    b.get_open_orders.assert_not_awaited()
+    b.get_equity_positions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_broker_call_when_there_are_no_equity_positions_at_all():
+    b = _broker([], {})
+    session = _session([])
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        report = await backfill_equity_stops(b, dry_run=False)
+    assert report["nothing_to_do"] is True
+    b.get_open_orders.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_wrapper_swallows_a_failed_cycle():
+    """A gateway outage must degrade to a log line, not an exception that
+    propagates into the scheduler loop."""
+    from app.main import _backfill_equity_stops
+
+    with patch("app.services.stop_backfill.backfill_equity_stops",
+               new=AsyncMock(return_value={"status": "error",
+                                           "reason": "gateway down",
+                                           "updated": []})):
+        await _backfill_equity_stops()      # must not raise
+
+
+@pytest.mark.asyncio
+async def test_scheduler_wrapper_runs_with_writes_enabled():
+    """Wired for real: the scheduler path must not silently rehearse."""
+    from app.main import _backfill_equity_stops
+
+    spy = AsyncMock(return_value={"status": "ok", "updated": [], "skipped": []})
+    with patch("app.services.stop_backfill.backfill_equity_stops", new=spy):
+        await _backfill_equity_stops()
+    assert spy.await_args.kwargs["dry_run"] is False
