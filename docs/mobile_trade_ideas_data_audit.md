@@ -118,18 +118,34 @@ Calling a heuristic sum an "Agent" implies an autonomy the code does not have.
 | Max profit | A (options) · D (equity) |
 | Risk : reward | A — `risk_reward` |
 | Buying power | A — `get_account_summary()` |
-| **Portfolio heat** | **BROKEN** — see below |
+| **Portfolio heat** | A — fixed 2026-08-29, see below |
 | Single-name exposure | A — `portfolio_engine` concentration |
 | Daily risk used | A — `guardrails` |
 | 10 pre-trade checks | A — `_execute_signal` Stages 1–5 already implement 8 of 10 |
 
-**Portfolio heat is the one landmine.** `portfolio_engine.position_risk_dollars`
-defines equity risk as `entry × shares` — full notional. Live reading today is
-**94.06%** with `heat_status: "high"` for a book that is simply invested. The
-spec's `42% → 44%` is not achievable from the current metric; it would need
-the risk-at-stake calculation now used only by the rotation gate.
+**Portfolio heat was the one landmine — fixed 2026-08-29 (commit `8afa80c`).**
+`position_risk_dollars` defined equity risk as `entry × shares`, full notional,
+and heat plus both concentration checks consumed it as risk-at-stake. It read
+**94.06%** for a book that was simply invested, and the blocks were real: 179
+concentration blocks in 21 days plus 4 heat blocks at 87–89%.
 
-**Fix `position_risk_dollars` before any mobile surface displays heat.**
+It now measures `|entry − stop| × shares` using the stop already stored in
+`long_strike`. Live reading is **43.53%**. Two of three positions were adopted
+by the reconciler and carry `entry == stop` placeholders, so they still report
+notional — surfaced explicitly as `heat_overstated: true` and
+`unstopped_position_count: 2` rather than silently believed as near-zero risk.
+
+**Mobile can display heat, but must display `heat_overstated` with it.** A bare
+percentage that is sometimes a measurement and sometimes an upper bound is the
+same category of dishonesty as a fabricated POP.
+
+**Two adjacent defects remain open:**
+1. Adopted rows have no recorded stop even though the broker holds protective
+   orders for them. Backfilling from the live order book would make heat a
+   real measurement for the whole book.
+2. `SECTORS` is a 19-ticker stub. Every unmapped name pools into one "Unknown"
+   bucket that trivially breaches the 40% sector cap — currently 43.53%, so
+   sector blocks persist on a constraint that asserts something false.
 
 ## 6. Automation (§15–§19, §46, §47)
 
@@ -158,8 +174,9 @@ has run once.
 
 ## Recommended sequencing
 
-1. **Fix `position_risk_dollars`** so heat means risk everywhere — currently
-   wrong in the Risk Monitor too.
+1. ~~**Fix `position_risk_dollars`**~~ — done 2026-08-29, commit `8afa80c`.
+   Next in this line: backfill stops for adopted rows, and stop treating
+   "Unknown" as a sector.
 2. **Decide the POP presentation.** Show the Black-Scholes POP labelled
    risk-neutral, ideally beside the 7.0% empirical target-hit rate so the gap
    between model and record is visible rather than hidden.
