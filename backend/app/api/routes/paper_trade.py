@@ -33,6 +33,14 @@ def _hold_days_utc(entry: Optional[datetime]) -> Optional[int]:
     machine while passing in CI at UTC, i.e. the same code disagreeing with
     itself depending on where it ran.
 
+    Scope, checked rather than assumed: the production host is Etc/UTC with
+    TZ unset in the container, so date.today() has always equalled the UTC
+    date there and displayed values were never wrong in production. This is a
+    latent defect that surfaces on any non-UTC host — real, but not an
+    incident. Verified post-deploy: LITE/MRVL/MSTR hold_days were 3/8/3
+    before and after, exactly as a behaviour-preserving fix should leave
+    them.
+
     Naive datetimes are treated as UTC rather than rejected — the column is
     tz-aware, but a naive value can still arrive from a fixture or an older
     row, and assuming local for those would reintroduce the same bug.
