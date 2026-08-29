@@ -165,3 +165,44 @@ async def test_db_only_fallback_position_includes_asset_type():
     pos = result["positions"][0]
     assert pos["source"] == "db_only"
     assert pos["asset_type"] == "equity"
+
+
+# ── hold_days must not depend on the host's timezone ─────────────────────────
+#
+# It used to: Trade.entry_date is DateTime(timezone=True) UTC, but hold_days
+# was measured against date.today(), the *system-local* date. The answer came
+# out one short for part of every day on any host west of UTC. The 5-day
+# assertion above read 4 on a UTC-7 machine while passing in CI at UTC — the
+# same code disagreeing with itself depending on where it ran.
+
+from datetime import datetime, timedelta, timezone as _tz
+
+from app.api.routes.paper_trade import _hold_days_utc
+
+
+def test_hold_days_counts_utc_calendar_days():
+    entry = datetime.now(_tz.utc) - timedelta(days=5)
+    assert _hold_days_utc(entry) == 5
+
+
+def test_hold_days_is_identical_for_the_same_instant_in_any_timezone():
+    """The same moment expressed in three offsets must give one answer."""
+    instant = datetime.now(_tz.utc) - timedelta(days=3)
+    answers = {
+        _hold_days_utc(instant),
+        _hold_days_utc(instant.astimezone(_tz(timedelta(hours=-7)))),
+        _hold_days_utc(instant.astimezone(_tz(timedelta(hours=+9)))),
+    }
+    assert len(answers) == 1, f"timezone-dependent hold_days: {answers}"
+
+
+def test_hold_days_treats_a_naive_datetime_as_utc():
+    """Older rows and fixtures can be naive. Assuming local for those would
+    reintroduce exactly the bug this fixes."""
+    naive = (datetime.now(_tz.utc) - timedelta(days=2)).replace(tzinfo=None)
+    assert _hold_days_utc(naive) == 2
+
+
+def test_hold_days_never_negative_and_none_stays_none():
+    assert _hold_days_utc(datetime.now(_tz.utc) + timedelta(days=3)) == 0
+    assert _hold_days_utc(None) is None

@@ -23,6 +23,27 @@ router = APIRouter()
 ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
 
 
+def _hold_days_utc(entry: Optional[datetime]) -> Optional[int]:
+    """Calendar days a position has been held, computed entirely in UTC.
+
+    Trade.entry_date is DateTime(timezone=True) — tz-aware UTC. This used to
+    be measured against date.today(), which returns the *system-local* date,
+    so the answer was one short for part of every day on any host west of
+    UTC. Caught by a test asserting a 5-day hold: it read 4 on a UTC-7
+    machine while passing in CI at UTC, i.e. the same code disagreeing with
+    itself depending on where it ran.
+
+    Naive datetimes are treated as UTC rather than rejected — the column is
+    tz-aware, but a naive value can still arrive from a fixture or an older
+    row, and assuming local for those would reintroduce the same bug.
+    """
+    if entry is None:
+        return None
+    e = entry if entry.tzinfo else entry.replace(tzinfo=timezone.utc)
+    today_utc = datetime.now(timezone.utc).date()
+    return max((today_utc - e.astimezone(timezone.utc).date()).days, 0)
+
+
 # ── Portfolio summary ─────────────────────────────────────────────────────────
 
 @router.get("/portfolio")
@@ -205,7 +226,7 @@ async def get_positions():
             ),
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
             "spread_type":    spread_type,
-            "hold_days":      max((date.today() - db.entry_date.date()).days, 0) if (db and db.entry_date) else None,
+            "hold_days":      _hold_days_utc(db.entry_date) if db else None,
             "trading_mode":   db.trading_mode_at_entry if db else None,
             "approved_by":    db.approved_by if db else None,
             "credit_received": float(db.credit_received) if (db and db.credit_received is not None) else None,
@@ -229,7 +250,7 @@ async def get_positions():
                 "asset_type":      _asset,
                 "spread_type":     t.spread_type,
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
-                "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,
+                "hold_days":       _hold_days_utc(t.entry_date),
                 "trading_mode":    t.trading_mode_at_entry,
                 "approved_by":     t.approved_by,
                 "credit_received": float(t.credit_received or 0),
