@@ -1343,3 +1343,91 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   .chart-intel-grid,
   .workstation-bottom-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Mobile shell ──────────────────────────────────────────────────────────
+   Phones, not "narrow desktop". Three things the ad-hoc reflow rules above
+   never covered: a viewport unit that survives the iOS URL bar, chrome that
+   clears the home indicator, and touch targets a finger can actually hit. */
+
+/* 100vh on mobile Safari counts the URL bar, so the bottom of a
+   height:100vh shell sits under it and the status bar is unreachable.
+   100dvh tracks the visible viewport; the 100vh line stays as the fallback
+   for browsers without dvh. */
+.app-shell { height: 100vh; height: 100dvh; }
+
+.mobile-bottom-nav {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  background: var(--bg-panel, var(--bg));
+  border-top: 1px solid var(--line);
+  /* Clear the home indicator on notched phones without padding a device
+     that has none. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mobile-bottom-nav__tab {
+  flex: 1 1 0;
+  min-width: 0;
+  /* 44px is the floor a finger needs; the icon+label stack lands near 52. */
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  background: none;
+  border: none;
+  border-top: 2px solid transparent;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  /* Kill the 300ms tap delay and the grey flash on iOS. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-bottom-nav__tab:active { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+.mobile-bottom-nav__tab.is-active {
+  color: var(--brand);
+  border-top-color: var(--brand);
+}
+
+.mobile-bottom-nav__tab:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.mobile-bottom-nav__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The overlay sidebar and its backdrop must clear the bottom nav rather than
+   sit under it — a nav you cannot see is a nav you cannot dismiss. */
+@media (max-width: 768px) {
+  .instrument-status {
+    /* The status lamps matter more than the version string on a phone, so the
+       bar scrolls sideways rather than wrapping. Without nowrap the labels
+       break onto a second line and collide with the lamps inside the fixed
+       28px height — every indicator becomes unreadable at once. */
+    gap: 10px !important;
+    padding: 0 10px !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    white-space: nowrap;
+  }
+  .instrument-status > * { flex-shrink: 0; }
+  /* The spacer that right-aligns the version block on desktop would otherwise
+     absorb the scroll width and push the lamps back off screen. */
+  .instrument-status > div[style*="flex: 1"] { display: none; }
+  .instrument-status::-webkit-scrollbar { display: none; }
+}

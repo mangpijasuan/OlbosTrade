@@ -18,6 +18,7 @@ import KillSwitchButton from "./KillSwitchButton";
 import { api } from "../api/client";
 import { statusLabelForPage, filterNavForDisplay, type NavGroup } from "../utils/navLabels";
 import { NAV_MODEL_LEGACY, NAV_MODEL_V2, groupIdForKey } from "../utils/navModels";
+import MobileBottomNav from "./MobileBottomNav";
 import { isTradeDeskV2Enabled } from "../trade-desk/featureFlags";
 import { TerminalNavProvider } from "./TerminalNavContext";
 import { Badge } from "./ui";
@@ -945,7 +946,9 @@ export default function TerminalLayout({ children, activePage, onNav }: {
 
   return (
     <TerminalNavProvider onNav={handleNav}>
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    {/* .app-shell carries the height: 100dvh fallback — 100vh on mobile
+        Safari counts the URL bar, which pushes the status bar off screen. */}
+    <div className="app-shell" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <ErrorBoundary label="Ticker strip">
         <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
       </ErrorBoundary>
@@ -980,6 +983,18 @@ export default function TerminalLayout({ children, activePage, onNav }: {
         </main>
       </div>
       <StatusBar page={activePage} />
+      {/* Phones navigate from the bottom. The sidebar stays as the overflow,
+          reached through "More", rather than becoming a second nav surface. */}
+      {isMobile && (
+        <ErrorBoundary label="Bottom navigation">
+          <MobileBottomNav
+            active={activePage}
+            onNav={handleNav}
+            onOpenMore={() => setSidebarExpanded(p => !p)}
+            moreOpen={sidebarExpanded}
+          />
+        </ErrorBoundary>
+      )}
     </div>
     </TerminalNavProvider>
   );
