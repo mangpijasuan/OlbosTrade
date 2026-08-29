@@ -510,12 +510,12 @@ def test_materiality_margin_is_configurable_and_gates_the_recommendation():
 
     # +10 against the default 15.0 margin — not material enough.
     tight = build_rotation_review(incumbent=inc, challenger=chal,
-                                  portfolio_heat_pct=0.1)
+                                  portfolio_heat_fraction=0.1)
     assert tight["recommendation"] == "hold"
 
     # Same pair, a margin it does clear.
     loose = build_rotation_review(incumbent=inc, challenger=chal,
-                                  portfolio_heat_pct=0.1, materiality_margin=5.0)
+                                  portfolio_heat_fraction=0.1, materiality_margin=5.0)
     assert loose["recommendation"] == "replace"
 
 
@@ -527,7 +527,7 @@ def test_unknown_hard_constraints_block_rather_than_pass():
     out = build_rotation_review(
         incumbent=PositionFacts(ticker="MRVL", side="incumbent", quality_score=10.0),
         challenger=PositionFacts(ticker="TSLA", side="challenger", quality_score=90.0),
-        portfolio_heat_pct=None,
+        portfolio_heat_fraction=None,
     )
     assert out["recommendation"] == "hold"
     assert "portfolio_heat_unknown" in out["hard_constraint_failures"]

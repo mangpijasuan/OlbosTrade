@@ -210,3 +210,64 @@ async def test_risk_engine_check_calls_the_real_engine():
 
     assert out["status"] in (pf.PASS, pf.FAIL), out["detail"]
     assert "trading_allowed" in out["detail"]
+
+
+# ── The two constraint inputs that were never connected ──────────────────────
+#
+# Found by running the dry-run rather than trusting it: every review returned
+# "hold" on challenger_liquidity_unknown + portfolio_heat_unknown, so rotation
+# could never be recommended even when it should be. The machinery was right;
+# two inputs were not wired.
+
+def test_liquidity_reads_volume_ratio_from_the_indicators_block():
+    """It lives at signal["indicators"]["volume_ratio"], not top level. The
+    first wiring read the top level and so was always None."""
+    from app.api.routes.trade_desk import _challenger_liquidity_ok
+
+    assert _challenger_liquidity_ok({"indicators": {"volume_ratio": 1.2}}) is True
+    assert _challenger_liquidity_ok({"indicators": {"volume_ratio": 0.2}}) is False
+    # Top-level only — the old shape — must still read as unknown, not True.
+    assert _challenger_liquidity_ok({"volume_ratio": 1.2}) is None
+
+
+def test_liquidity_unknown_when_the_indicator_is_absent_or_junk():
+    from app.api.routes.trade_desk import _challenger_liquidity_ok
+
+    assert _challenger_liquidity_ok({}) is None
+    assert _challenger_liquidity_ok({"indicators": {}}) is None
+    assert _challenger_liquidity_ok({"indicators": {"volume_ratio": None}}) is None
+    assert _challenger_liquidity_ok({"indicators": {"volume_ratio": "n/a"}}) is None
+
+
+def test_heat_threshold_compares_fractions_not_percents():
+    """compute_portfolio_risk returns heat * 100. Comparing that percent
+    against the 0.35 fraction vetoed any book with over 0.35% heat — i.e.
+    essentially always."""
+    from app.services.rotation_review import (
+        MAX_PORTFOLIO_HEAT_FRACTION, PositionFacts, build_rotation_review,
+    )
+
+    inc = PositionFacts(ticker="MRVL", side="incumbent", quality_score=20.0)
+    chal = PositionFacts(ticker="TSLA", side="challenger", quality_score=90.0,
+                         liquidity_ok=True, in_flagged_cluster=False)
+
+    # 12% heat as a fraction is comfortably under the limit.
+    ok = build_rotation_review(incumbent=inc, challenger=chal,
+                               portfolio_heat_fraction=0.12)
+    assert ok["hard_constraint_failures"] == []
+    assert ok["recommendation"] == "replace"
+
+    # Over the limit still vetoes.
+    hot = build_rotation_review(incumbent=inc, challenger=chal,
+                                portfolio_heat_fraction=MAX_PORTFOLIO_HEAT_FRACTION + 0.01)
+    assert hot["recommendation"] == "hold"
+    assert any("portfolio_heat" in f for f in hot["hard_constraint_failures"])
+
+
+@pytest.mark.asyncio
+async def test_heat_is_none_rather_than_computed_off_a_guessed_capital_base():
+    """A zero/unknown account value must yield None — an unverifiable
+    constraint blocks, it does not get a made-up denominator."""
+    from app.api.routes.trade_desk import _portfolio_heat_fraction
+    assert await _portfolio_heat_fraction(0.0) is None
+    assert await _portfolio_heat_fraction(-1.0) is None

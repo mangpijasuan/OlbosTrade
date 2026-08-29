@@ -175,6 +175,64 @@ async def _queue_pending_approval(signal: dict) -> None:
             ))
 
 
+def _challenger_liquidity_ok(signal: dict) -> Optional[bool]:
+    """Is the challenger liquid enough to enter? None when unknown.
+
+    volume_ratio lives at signal["indicators"]["volume_ratio"], not at the top
+    level — an earlier version of this read signal.get("volume_ratio") and so
+    was always None, which made every review fail the liquidity constraint and
+    return "hold". The review machinery was correct; the input was simply not
+    connected.
+
+    None is still returned when the indicator is genuinely absent (an options
+    signal, or a scan that produced no volume data), and the hard-constraint
+    check treats that as a veto rather than a pass.
+    """
+    from app.services.rotation_review import MIN_CHALLENGER_VOLUME_RATIO
+    ind = signal.get("indicators") or {}
+    vr = ind.get("volume_ratio")
+    if vr is None:
+        return None
+    try:
+        return float(vr) >= MIN_CHALLENGER_VOLUME_RATIO
+    except (TypeError, ValueError):
+        return None
+
+
+async def _portfolio_heat_fraction(account_value: float) -> Optional[float]:
+    """Current portfolio heat as a FRACTION of capital, or None if it cannot
+    be established.
+
+    compute_portfolio_risk reports portfolio_heat_pct as heat * 100, so it is
+    divided back to a fraction here — the review's threshold is a fraction,
+    and comparing the percent against it vetoed every rotation.
+    """
+    try:
+        from sqlalchemy import select
+        from app.core.database import AsyncSessionLocal
+        from app.models.trade import Trade
+        from app.services.portfolio_engine import (
+            compute_portfolio_risk, position_risk_dollars, sector_for,
+        )
+        if not account_value or account_value <= 0:
+            return None
+        async with AsyncSessionLocal() as session:
+            open_trades = (await session.execute(
+                select(Trade).where(Trade.status == "open")
+            )).scalars().all()
+        risk = compute_portfolio_risk(
+            [{"underlying": t.underlying,
+              "risk_dollars": position_risk_dollars(t),
+              "sector": sector_for(t.underlying)} for t in open_trades],
+            account_value,
+        )
+        pct = risk.get("portfolio_heat_pct")
+        return None if pct is None else float(pct) / 100.0
+    except Exception as exc:
+        logger.warning("rotation review: portfolio heat unavailable: %s", exc)
+        return None
+
+
 async def _queue_rotation_review(entry: dict) -> str:
     """Persist a ROTATION_REVIEW awaiting approval. Same table and same
     pending→resolved lifecycle as _queue_pending_approval, under a distinct
@@ -1269,8 +1327,10 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                         abs(float(_target) - float(_entry))
                         if _entry is not None and _target is not None else None
                     ),
-                    liquidity_ok=True if signal.get("volume_ratio") else None,
+                    liquidity_ok=_challenger_liquidity_ok(signal),
                 ),
+                portfolio_heat_fraction=await _portfolio_heat_fraction(
+                    float(portfolio_state.current_value or 0)),
                 materiality_margin=float(getattr(
                     _rot_cfg, "rotation_review_materiality_margin", 15.0)),
             )

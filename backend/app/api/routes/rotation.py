@@ -46,11 +46,22 @@ class DryRunRequest(BaseModel):
     stop_price: Optional[float] = None
     target_price: Optional[float] = None
     shares: Optional[int] = None
+    volume_ratio: Optional[float] = None
     # Escape hatch for rehearsing the comparison while preflight is red. It
     # cannot cause an order — nothing in this route submits — but it must be
     # asked for explicitly, so a red preflight is never stepped over by
     # accident.
     ignore_preflight: bool = False
+
+
+async def _account_value_for_heat(broker) -> float:
+    """Account value for the heat denominator. 0.0 when unavailable, which
+    makes heat None rather than a number computed off a guessed capital base."""
+    try:
+        acct = await broker.get_account_summary()
+        return float(getattr(acct, "net_liquidation", 0) or 0)
+    except Exception:
+        return 0.0
 
 
 @router.post("/dry-run")
@@ -111,7 +122,10 @@ async def rotation_dry_run(body: DryRunRequest):
 
     # ── Compare ──────────────────────────────────────────────────────────
     from app.core.config import settings
-    from app.services.rotation_review import PositionFacts, build_rotation_review
+    from app.api.routes.trade_desk import _portfolio_heat_fraction
+    from app.services.rotation_review import (
+        MIN_CHALLENGER_VOLUME_RATIO, PositionFacts, build_rotation_review,
+    )
 
     stop_dist = (abs(body.entry_price - body.stop_price)
                  if body.entry_price is not None and body.stop_price is not None else None)
@@ -133,8 +147,15 @@ async def rotation_dry_run(body: DryRunRequest):
             ticker=ticker, side="challenger", direction=body.action,
             alpha_edge=body.alpha_edge_score, confidence=body.confidence,
             stop_distance=stop_dist, target_distance=target_dist,
-            liquidity_ok=None,
+            # Sourced the same way Stage 2b sources it, so the rehearsal
+            # exercises the real constraint rather than a stub.
+            liquidity_ok=(
+                None if body.volume_ratio is None
+                else body.volume_ratio >= MIN_CHALLENGER_VOLUME_RATIO
+            ),
         ),
+        portfolio_heat_fraction=await _portfolio_heat_fraction(
+            await _account_value_for_heat(broker)),
         materiality_margin=float(getattr(
             settings, "rotation_review_materiality_margin", 15.0)),
     )

@@ -51,7 +51,21 @@ DEFAULT_MATERIALITY_MARGIN = 15.0
 
 # Hard constraints. A challenger failing any of these is never recommended,
 # regardless of how good its composite looks.
-MAX_PORTFOLIO_HEAT_PCT = 0.35
+#
+# Named FRACTION, not PCT, on purpose. portfolio_engine.compute_portfolio_risk
+# returns portfolio_heat_pct as heat * 100 — a percent — and an earlier version
+# of this module compared that directly against 0.35, so any book with more
+# than 0.35% heat read as "over the limit" and vetoed every rotation. The unit
+# is now in the name at both ends.
+MAX_PORTFOLIO_HEAT_FRACTION = 0.35
+
+# Minimum current-volume / 20-day-average-volume for the challenger to count as
+# tradable. Deliberately below equity_signal_engine's volume_ratio_threshold of
+# 1.5 — that one is a signal-*quality* gate ("volume confirms the move"), a
+# different question from "can this be entered without unusual slippage". A
+# name trading at half its normal volume is quiet enough to be worth flagging;
+# one at 0.9x is simply an ordinary day.
+MIN_CHALLENGER_VOLUME_RATIO = 0.5
 
 
 @dataclass(frozen=True)
@@ -123,7 +137,7 @@ def _composite(f: PositionFacts) -> Optional[float]:
 
 
 def _hard_constraint_failures(
-    challenger: PositionFacts, portfolio_heat_pct: Optional[float]
+    challenger: PositionFacts, portfolio_heat_fraction: Optional[float]
 ) -> list[str]:
     """Constraints that veto a replacement outright. Unknown is not a pass:
     an unverifiable constraint blocks, because the cost of a wrong 'proceed'
@@ -135,11 +149,12 @@ def _hard_constraint_failures(
         fails.append("challenger_illiquid")
     if challenger.in_flagged_cluster is True:
         fails.append("challenger_in_flagged_correlation_cluster")
-    if portfolio_heat_pct is None:
+    if portfolio_heat_fraction is None:
         fails.append("portfolio_heat_unknown")
-    elif portfolio_heat_pct > MAX_PORTFOLIO_HEAT_PCT:
+    elif portfolio_heat_fraction > MAX_PORTFOLIO_HEAT_FRACTION:
         fails.append(
-            f"portfolio_heat_{portfolio_heat_pct:.2f}_over_{MAX_PORTFOLIO_HEAT_PCT}"
+            f"portfolio_heat_{portfolio_heat_fraction:.3f}"
+            f"_over_{MAX_PORTFOLIO_HEAT_FRACTION}"
         )
     return fails
 
@@ -170,7 +185,7 @@ def build_rotation_review(
     *,
     incumbent: PositionFacts,
     challenger: PositionFacts,
-    portfolio_heat_pct: Optional[float] = None,
+    portfolio_heat_fraction: Optional[float] = None,
     materiality_margin: float = DEFAULT_MATERIALITY_MARGIN,
 ) -> dict:
     """Compare one incumbent against one challenger. Pure and deterministic.
@@ -199,7 +214,7 @@ def build_rotation_review(
         fails: list[str] = []
     else:
         margin = chal_c - inc_c
-        fails = _hard_constraint_failures(challenger, portfolio_heat_pct)
+        fails = _hard_constraint_failures(challenger, portfolio_heat_fraction)
         if fails:
             recommendation = "hold"
             reasons.append("hard constraint(s) failed: " + ", ".join(fails))
@@ -226,7 +241,7 @@ def build_rotation_review(
         "challenger": chal,
         "composite_margin": margin,
         "materiality_margin": materiality_margin,
-        "portfolio_heat_pct": portfolio_heat_pct,
+        "portfolio_heat_fraction": portfolio_heat_fraction,
         "hard_constraint_failures": fails,
         # ── Truth-in-labelling. Read this before trusting any number above. ──
         "data_quality": {
