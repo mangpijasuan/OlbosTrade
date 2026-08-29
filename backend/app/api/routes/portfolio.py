@@ -1,7 +1,12 @@
 """Portfolio routes — heat, exposure and concentration over open positions."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from app.api.deps import require_api_key
 
 from app.services.account_state import get_account_value
 
@@ -117,6 +122,97 @@ async def portfolio_open_orders():
         "open_position_count": len(open_trades),
         "positions_without_stop": unprotected,
         "orders": orders,
+    }
+
+
+class CancelOrdersRequest(BaseModel):
+    order_ids: list[int]
+
+
+@router.post("/cancel-orders", dependencies=[Depends(require_api_key)])
+async def cancel_orders(body: CancelOrdersRequest):
+    """Cancel specific resting orders by IBKR order id.
+
+    Exists because "cancel the orphans" had no mechanism inside the app, and
+    doing it in TWS on 2026-08-29 silently changed nothing — all 20 were still
+    live on the next refreshed read, with no visible error to diagnose. This
+    route reports IBKR's per-order answer, runs against the exact account the
+    gateway is connected to, and takes the same ids reqAllOpenOrders reports,
+    which removes three of the four theories at once.
+
+    **It refuses to cancel any order protecting a live position.** Cancelling
+    a resting stop is the one action here that can increase risk rather than
+    reduce it, and a fat-fingered id must not be able to strip MRVL's bracket.
+    Protected ids are rejected as a group, before anything is sent — a partial
+    cancel that removed one leg of a live bracket would be worse than doing
+    nothing.
+    """
+    from app.broker.broker_factory import get_broker
+
+    if not body.order_ids:
+        raise HTTPException(400, "order_ids is empty")
+
+    broker = get_broker()
+    if not hasattr(broker, "cancel_orders_by_id"):
+        raise HTTPException(
+            501, f"{type(broker).__name__} cannot cancel by order id")
+
+    # Read the book first: we need to know which ids guard a real position.
+    try:
+        book = await broker.get_open_orders(refresh=True)
+    except Exception as exc:
+        raise HTTPException(502, f"could not read the order book: {exc}")
+    if book.get("source") != "refreshed":
+        # A cache fall-back cannot prove an order is unprotected.
+        raise HTTPException(
+            503, "order book came from cache — refusing to cancel on unverified state")
+
+    held: set[str] = set()
+    try:
+        for p in await broker.get_positions():
+            sym = (getattr(p, "symbol", "") or "").upper()
+            if sym:
+                held.add(sym)
+    except Exception as exc:
+        raise HTTPException(502, f"could not read positions: {exc}")
+
+    orders = {int(o["order_id"]): o for o in book.get("orders", []) if o.get("order_id")}
+    protected = [
+        oid for oid in body.order_ids
+        if oid in orders and (orders[oid].get("symbol") or "").upper() in held
+    ]
+    if protected:
+        raise HTTPException(409, {
+            "error": "refused — these orders belong to symbols with a live position",
+            "protected_order_ids": protected,
+            "note": ("Cancelling a resting stop on a held position removes its "
+                     "protection. Nothing was sent."),
+        })
+
+    results = await broker.cancel_orders_by_id(body.order_ids)
+
+    # Verify against a fresh read rather than trusting the send.
+    try:
+        after = await broker.get_open_orders(refresh=True)
+        still_open = {int(o["order_id"]) for o in after.get("orders", []) if o.get("order_id")}
+    except Exception:
+        still_open = None
+
+    for r in results:
+        if still_open is None:
+            r["verified"] = "unknown — could not re-read the order book"
+        elif r["order_id"] in still_open:
+            r["verified"] = "STILL OPEN — IBKR did not cancel it"
+        else:
+            r["verified"] = "gone from the order book"
+
+    gone = sum(1 for r in results if r.get("verified") == "gone from the order book")
+    return {
+        "requested": len(body.order_ids),
+        "confirmed_cancelled": gone,
+        "still_open": len(results) - gone,
+        "results": results,
+        "order_count_after": after.get("order_count") if still_open is not None else None,
     }
 
 

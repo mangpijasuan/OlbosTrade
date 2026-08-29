@@ -718,6 +718,43 @@ class IBKRClient(BrokerInterface):
             await asyncio.sleep(1)  # let cancellations register before the close order
         return cancelled
 
+    async def cancel_orders_by_id(self, order_ids: list[int]) -> list[dict]:
+        """Cancel specific orders by IBKR order id. Best-effort per order.
+
+        Distinct from cancel_open_orders(symbol), which is blunt by design for
+        the close path. This one takes explicit ids so an operator can retire
+        named orphans without touching a live position's protective legs, and
+        reports per-order what actually happened rather than a bare count —
+        an out-of-hours rejection and a successful cancel must not look alike.
+        """
+        self._require_connection()
+
+        wanted = {int(i) for i in order_ids}
+        by_id = {
+            int(getattr(t.order, "orderId", -1)): t
+            for t in self.ib.openTrades()
+        }
+        out: list[dict] = []
+        for oid in sorted(wanted):
+            trade = by_id.get(oid)
+            if trade is None:
+                out.append({"order_id": oid, "result": "not_found",
+                            "detail": "not in the broker's open-order book"})
+                continue
+            try:
+                self.ib.cancelOrder(trade.order)
+                out.append({"order_id": oid, "result": "cancel_sent",
+                            "symbol": trade.contract.symbol})
+            except Exception as exc:
+                out.append({"order_id": oid, "result": "error",
+                            "symbol": trade.contract.symbol,
+                            "detail": f"{type(exc).__name__}: {exc}"})
+        if any(o["result"] == "cancel_sent" for o in out):
+            # cancelOrder is fire-and-forget; give IBKR a moment so the
+            # verification re-read below reflects reality rather than racing it.
+            await asyncio.sleep(2)
+        return out
+
     async def get_positions(self) -> List[Position]:
         """Return all open positions from IBKR account.
 
