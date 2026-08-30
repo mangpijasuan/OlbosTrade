@@ -7,6 +7,8 @@
 
 import React from "react";
 import { Panel, StatTile, Button } from "./ui";
+import BottomSheet from "./BottomSheet";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 interface SignalLike {
   id?: string;
@@ -79,45 +81,21 @@ export default function SignalDetailDrawer({
   timeframe: string;
   latestBar: LatestBar | null;
 }) {
+  const isMobile = useIsMobile();
+
   if (!open) return null;
 
   const lifecycle = signal?.status || "preliminary";
   const reasons = normalizeReasons(signal?.reasons);
 
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="signal-detail-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 260,
-        background: "rgba(0,0,0,0.58)",
-        display: "flex",
-        justifyContent: "flex-end",
-      }}
-    >
-      <aside
-        className="glass-surface"
-        style={{
-          width: "min(520px, 100vw)",
-          height: "100%",
-          borderLeft: "1px solid var(--line)",
-          boxShadow: "-20px 0 60px rgba(0,0,0,0.45)",
-          overflowY: "auto",
-        }}
-      >
-        <div className="panel-head" style={{ position: "sticky", top: 0, background: "var(--bg-2)", zIndex: 1 }}>
-          <div>
-            <div id="signal-detail-title" className="panel-title">Signal Detail · {signal?.ticker || symbol}</div>
-            <div className="kicker" style={{ marginTop: 4 }}>
-              {timeframe.toUpperCase()} · {lifecycle.toUpperCase()} · evidence only
-            </div>
-          </div>
-          <Button onClick={onClose}>Close</Button>
-        </div>
+  const heading = `Signal Detail · ${signal?.ticker || symbol}`;
+  const subheading =
+    `${timeframe.toUpperCase()} · ${lifecycle.toUpperCase()} · evidence only`;
 
+  // One body, two shells. The content is identical; only the surface it
+  // arrives on differs, because a side drawer and a bottom sheet are what
+  // their respective platforms expect rather than two sizes of one thing.
+  const body = (
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           {!signal ? (
             <div className="empty-state">No signal payload is selected for this symbol yet.</div>
@@ -184,6 +162,54 @@ export default function SignalDetailDrawer({
             </>
           )}
         </div>
+  );
+
+  if (isMobile) {
+    return (
+      <BottomSheet
+        open={open}
+        onClose={onClose}
+        title={heading}
+        subtitle={subheading}
+        labelledBy="signal-detail-title"
+      >
+        {body}
+      </BottomSheet>
+    );
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="signal-detail-title"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 260,
+        background: "rgba(0,0,0,0.58)",
+        display: "flex",
+        justifyContent: "flex-end",
+      }}
+    >
+      <aside
+        className="glass-surface"
+        style={{
+          width: "min(520px, 100vw)",
+          height: "100%",
+          borderLeft: "1px solid var(--line)",
+          boxShadow: "-20px 0 60px rgba(0,0,0,0.45)",
+          overflowY: "auto",
+        }}
+      >
+        <div className="panel-head" style={{ position: "sticky", top: 0, background: "var(--bg-2)", zIndex: 1 }}>
+          <div>
+            <div id="signal-detail-title" className="panel-title">{heading}</div>
+            <div className="kicker" style={{ marginTop: 4 }}>{subheading}</div>
+          </div>
+          <Button onClick={onClose}>Close</Button>
+        </div>
+        {body}
       </aside>
     </div>
   );
