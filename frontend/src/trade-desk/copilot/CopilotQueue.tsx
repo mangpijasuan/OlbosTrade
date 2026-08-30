@@ -25,8 +25,14 @@ export default function CopilotQueue() {
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    setLoading(true);
+  // `showSkeleton` is only ever true for the very first load. A background
+  // poll must not blank the list: setting loading on every 10s tick tore down
+  // all 174 rendered rows and replaced them with skeletons until the refetch
+  // landed, so the queue spent a visible slice of every cycle looking empty —
+  // and with this many cards the re-render made that window long enough to
+  // look permanent. Later fetches update in place instead.
+  const refresh = useCallback((showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     Promise.all([
       (api.getPendingApprovals() as any).catch(() => ({ pending: [], mode: "—" })),
       (api.getExecutionLog() as any).catch(() => ({ log: [] })),
@@ -43,8 +49,8 @@ export default function CopilotQueue() {
   }, []);
 
   useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 10000);
+    refresh(true);                                    // first paint: skeletons are honest
+    const id = setInterval(() => refresh(), 10000);   // polls: update in place
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -75,7 +81,13 @@ export default function CopilotQueue() {
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
           Approve routes through existing OMS. Size edits require a new signal (no modify → re-eval yet).
         </span>
-        <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={refresh}>
+        {/* Manual refresh does show the skeleton: the operator asked for it
+            and wants to see that something happened. Only the silent 10s poll
+            leaves the rows alone. Passing `refresh` directly here would hand
+            the MouseEvent in as `showSkeleton` — truthy by accident rather
+            than by choice. */}
+        <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }}
+                onClick={() => refresh(true)}>
           Refresh
         </button>
       </div>
