@@ -1,6 +1,8 @@
 /**
- * Prominent BUY/SELL (or spread action) plus LONG/SHORT side — always visible
- * on signal cards. SignalAttribution stays for source/confidence disclosure.
+ * Prominent BUY/SELL (or spread action) on signal cards. A LONG/SHORT side
+ * chip appears only when a caller passes a positionDirection that actually
+ * differs from what the action implies — otherwise it just repeats it.
+ * SignalAttribution stays for source/confidence disclosure.
  */
 import React from "react";
 import {
@@ -20,19 +22,28 @@ export default function SignalDirectionBadge({
   /** Held book direction when it differs from or supplements the scan action. */
   positionDirection?: string | null;
   size?: "sm" | "md";
-  /** When false, only the action chip is shown (e.g. Alpha Edge where BUY already implies LONG). */
+  /** Force the side chip off even when a differing positionDirection exists. */
   showSide?: boolean;
 }) {
   const actionLabel = formatSignalAction(action);
   if (!action || actionLabel === "—") return null;
 
-  const side =
-    normalizePositionSide(positionDirection) ?? positionSideFromAction(action);
+  // A side derived from the action can only ever repeat it: BUY implies LONG,
+  // SELL implies SHORT, so "BUY LONG" and "SELL SHORT" say one thing twice.
+  // The chip earns its space only when a caller supplies a position direction
+  // that genuinely disagrees with the action — a held short being bought back,
+  // say. Deciding that here rather than per call site, because the opt-out
+  // prop this replaces had to be remembered everywhere and mostly was not.
+  const explicitSide = normalizePositionSide(positionDirection);
+  const impliedSide = positionSideFromAction(action);
+  const side = explicitSide;
   const tone = actionTone(action);
   const fontSize = size === "md" ? 11 : 10;
   const pad = size === "md" ? "3px 10px" : "2px 8px";
   const actionUpper = (action || "").toUpperCase();
-  const showSide = showSideProp && side && side !== actionUpper;
+  const showSide = Boolean(
+    showSideProp && side && side !== actionUpper && side !== impliedSide,
+  );
 
   const chip = (label: string, color: string, muted = false) => (
     <span
@@ -56,7 +67,7 @@ export default function SignalDirectionBadge({
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
       {chip(actionLabel, tone)}
-      {showSide && chip(side, tone, true)}
+      {showSide && side && chip(side, tone, true)}
     </span>
   );
 }
