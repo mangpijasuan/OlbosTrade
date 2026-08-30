@@ -81,6 +81,7 @@ from app.api.routes import (
 from app.api.routes import equity
 from app.api.routes import trade_desk
 from app.api.routes import rotation
+from app.api.routes import signal_calendar
 from app.api.routes import symphony
 from app.api.routes import options
 from app.api.routes import alpha_edge
@@ -203,6 +204,7 @@ app.include_router(symphony.router,    prefix="/api/symphony",     tags=["Sympho
 app.include_router(options.router,     prefix="/api/options",      tags=["Options"])
 app.include_router(portfolio.router,   prefix="/api/portfolio",    tags=["Portfolio"])
 app.include_router(rotation.router,    prefix="/api/rotation",     tags=["Rotation"])
+app.include_router(signal_calendar.router, prefix="/api/signals", tags=["Signals"])
 app.include_router(options_csp.router, prefix="/api/options/csp",   tags=["Options Income"])
 app.include_router(options_decision.router, prefix="/api/options-decision", tags=["Options Decision"])
 app.include_router(intel.router,       prefix="/api/intel",        tags=["Intelligence Hub"])
@@ -365,6 +367,10 @@ async def _background_scheduler() -> None:
     # Sector membership is static company data — a daily resolution is
     # generous. 100 yfinance lookups, off the money path, capped at 5 at once.
     sector_interval_s          = 24 * 60 * 60  # daily
+    # Polled often, gated internally to the 10:00 ET hour and one write per
+    # date. A restart at 10:05 still catches the day; a once-daily timer
+    # would not.
+    snapshot_interval_s        = 10 * 60       # 10 minutes
 
     import time as _time
     _now = _time.monotonic()
@@ -383,6 +389,9 @@ async def _background_scheduler() -> None:
     # Fire on the first tick: until this resolves, the sector cap sees almost
     # nothing, so getting it populated early matters more than staggering it.
     last_sector          = 0.0
+    # Fire on the first tick: if the process restarted inside the 10:00 ET
+    # hour, the day's snapshot is still catchable.
+    last_snapshot        = 0.0
 
     import time
 
@@ -497,6 +506,13 @@ async def _background_scheduler() -> None:
             if now - last_sector >= sector_interval_s:
                 await _guarded(_refresh_sector_cache(), "sector_cache", 300)
                 last_sector = now
+
+            # Every 10 min, but the job itself only acts inside the 10:00 ET
+            # hour and only once per date — a frequent tick with an internal
+            # gate is more robust than one daily alarm that a restart can miss.
+            if now - last_snapshot >= snapshot_interval_s:
+                await _guarded(_capture_daily_snapshot(), "daily_snapshot", 60)
+                last_snapshot = now
 
             # Every 6 hours: resolve pending signal outcomes against fresh
             # daily bars (hit target, hit stop, or expire past the hold
@@ -2457,6 +2473,39 @@ async def _refresh_rotation_correlation_cache() -> None:
     triggers a live yfinance fetch."""
     from app.services.rotation_correlation_cache import refresh
     await refresh()
+
+
+async def _capture_daily_snapshot() -> None:
+    """Freeze the day's top 3 BUY / top 3 SELL at 10:00 ET — see
+    daily_signal_snapshot.py.
+
+    The fixed time is the whole point. The scanner re-scores the same signal
+    ~45 times a session, so a top-3 computed later would pick each signal's
+    best-scoring moment, including ones that only surfaced after the move.
+    Freezing makes the row mean "this is what was on screen when you could
+    have acted" rather than "this is what looked good in hindsight".
+
+    Idempotent: a date that already has rows is never rewritten.
+    """
+    from app.services.daily_signal_snapshot import capture_daily_snapshot
+    from app.utils.market_hours import now_et
+
+    et = now_et()
+    if et.weekday() >= 5:            # weekend — no session to snapshot
+        return
+    if et.hour != 10:                # the scheduler tick may drift; the hour is the gate
+        return
+
+    report = await capture_daily_snapshot()
+    if report.get("status") == "already_captured":
+        return
+    if report.get("status") == "no_scored_signals":
+        logger.info("daily snapshot %s: no scored signals to freeze",
+                    report.get("trade_date"))
+        return
+    logger.info("daily snapshot %s: froze %d — buy %s / sell %s",
+                report.get("trade_date"), report.get("captured"),
+                report.get("buy"), report.get("sell"))
 
 
 async def _refresh_sector_cache() -> None:
