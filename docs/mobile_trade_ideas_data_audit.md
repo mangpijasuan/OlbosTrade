@@ -5,6 +5,7 @@ codebase. Purpose: decide what can be built honestly before any screen is
 designed around a value that will render `NO DATA` forever.
 
 Verified by direct inspection on 2026-08-29, not from memory.
+Corrected 2026-08-30 — see §2, which named a taxonomy that does not exist.
 
 Legend — **A** available today · **D** derivable from what exists · **X** no source
 
@@ -50,20 +51,39 @@ option short of buying a flow feed.
 
 ## 2. Strategy categories (§6)
 
-Spec names six: Directional, Quick-Hit, Income, Volatility, Hedge, Spread.
-Code contains **`directional` and `spread` only**.
+**Corrected 2026-08-30.** The first pass of this section said "Code contains
+`directional` and `spread` only" and recommended shipping those as two real
+tabs. That was wrong, and it was wrong in the exact way this document exists
+to prevent — it named a taxonomy that does not exist in the data.
 
-| Category | Status |
-|---|---|
-| Directional | A |
-| Spread | A |
-| Income | D — the 3 credit strategies qualify, needs a mapping |
-| Volatility | D — `iv_rank` exists; no strategy is tagged this way |
-| Quick-Hit | D — could be a DTE filter |
-| Hedge | X — no hedging strategy exists |
+`directional` appears nowhere as a category. Its only occurrences are prose:
+`"directional bias"` in an `options_decision_engine` docstring, and
+`directional_accuracy` as a model metric in `signal_scorer`. `spread` is a
+field *name* on options signals, not a category value. **There is no category
+field on a signal at all.**
 
-**Verdict: ship two real tabs, or define the mapping first.** Six tabs where
-four are empty is worse than two that work.
+Caught while wiring the tabs — the recommendation was followed, and the data
+to follow it with was not there.
+
+What actually discriminates a signal:
+
+| Field | Values | Populated |
+|---|---|---|
+| `asset_type` | `equity`, `options` | yes — **and already a UI toggle** |
+| `strategy` | `equity`, `bull_put_spread`, `bear_call_spread`, `iron_condor`, `bull_call_debit_spread` | yes |
+| `action` | `BUY`, `SELL` | yes |
+
+Note `iron_condor` is dead code — `main.py`'s scan loop skips it — so the live
+options vocabulary is three strategies, all of them verticals.
+
+**Verdict: no category tab row.** `asset_type` is the only real axis and it
+already has the OPTIONS / EQUITIES toggle. `strategy` is a card field, not a
+navigation axis, and grouping by it would render one group given the single
+options trade in history (§7). A second tab row on a 375px screen has to earn
+its space; this one cannot.
+
+Revisit only if a genuine category field is added to the signal schema —
+which is a backend modelling decision, not a mobile task.
 
 ## 3. Trade Idea card (§7)
 
@@ -130,22 +150,29 @@ and heat plus both concentration checks consumed it as risk-at-stake. It read
 concentration blocks in 21 days plus 4 heat blocks at 87–89%.
 
 It now measures `|entry − stop| × shares` using the stop already stored in
-`long_strike`. Live reading is **43.53%**. Two of three positions were adopted
-by the reconciler and carry `entry == stop` placeholders, so they still report
-notional — surfaced explicitly as `heat_overstated: true` and
-`unstopped_position_count: 2` rather than silently believed as near-zero risk.
+`long_strike`. Live reading is **14.99%**, `heat_status: ok`, no concentration
+flags. It read 43.53% immediately after that first fix, because two of three
+positions were adopted by the reconciler and carry `entry == stop`
+placeholders; `stop_backfill` (`5980e4c`, scheduled in `80d85c6`) then
+recovered their real stops from the live order book, and
+`unstopped_position_count` is now 0.
 
 **Mobile can display heat, but must display `heat_overstated` with it.** A bare
 percentage that is sometimes a measurement and sometimes an upper bound is the
 same category of dishonesty as a fabricated POP.
 
 **Two adjacent defects remain open:**
-1. Adopted rows have no recorded stop even though the broker holds protective
-   orders for them. Backfilling from the live order book would make heat a
-   real measurement for the whole book.
-2. `SECTORS` is a 19-ticker stub. Every unmapped name pools into one "Unknown"
-   bucket that trivially breaches the 40% sector cap — currently 43.53%, so
-   sector blocks persist on a constraint that asserts something false.
+1. ~~Adopted rows have no recorded stop~~ — fixed 2026-08-29, commits
+   `5980e4c` / `80d85c6`. Recovered from the live order book and now
+   self-healing behind reconciliation. **The trap to remember:** those rows
+   carry `entry == stop`, so a literal read gives ~$0 of risk — far more
+   dangerous than the overstatement being fixed. `equity_stop_distance()` is
+   the shared guard; anything reading `long_strike` as a stop must go through
+   it.
+2. ~~`SECTORS` is a 19-ticker stub~~ — fixed 2026-08-30, commit `2971255`.
+   `sector_cache` resolves ticker to sector from yfinance daily (102/102 on
+   its first production run) and "Unknown" is no longer treated as a sector by
+   any of the four gates that were capping it.
 
 ## 6. Automation (§15–§19, §46, §47)
 
@@ -181,8 +208,9 @@ has run once.
    risk-neutral, ideally beside the 7.0% empirical target-hit rate so the gap
    between model and record is visible rather than hidden.
 3. **Build the ~15 no-new-data mobile sections**: bottom nav, bottom sheets,
-   category tabs (two real ones), compact cards, 44px targets, safe areas,
-   responsive tests. Genuinely shippable.
+   compact cards, 44px targets, safe areas, responsive tests. Genuinely
+   shippable. ~~category tabs~~ — struck 2026-08-30, see §2: the taxonomy
+   they were to be built on does not exist.
 4. **Then** decide whether to buy a flow feed (§5), define the four missing
    categories (§6), add an invalidation field (§28), and scope Automation
    Policy (§15–19) as its own project.
