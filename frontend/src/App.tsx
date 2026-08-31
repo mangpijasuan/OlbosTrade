@@ -27,6 +27,7 @@ import SectorRotation  from "./pages/markets/SectorRotation";
 import ChartWorkstation from "./pages/ChartWorkstation";     // Price-action / market-structure chart
 import NewsEventsCenter from "./pages/markets/NewsEventsCenter";
 import { isTradeDeskV2Enabled } from "./trade-desk/featureFlags";
+import SignalCalendar from "./components/SignalCalendar";
 
 function UnknownPage() {
   return (
@@ -82,6 +83,7 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
 
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
   "strat:health":    () => <SignalsCenter initialTab="health" />,
+  "strat:calendar":  SignalCalendar,
   "strat:alpha-edge": () => <SignalsCenter initialTab="alpha-edge" />,
   "strat:signal-history": () => <SignalsCenter initialTab="history" />,
   "strat:builder":   StrategyBuilder,

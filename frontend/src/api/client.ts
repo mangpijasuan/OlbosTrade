@@ -144,6 +144,8 @@ export const api = {
   // ── Strategy & Signals ────────────────────────────────────────────────────
   getStrategyRegistry: () => request("/api/strategy/registry"),
   getStrategyProfile: (strategyId: string) => request(`/api/strategy/registry/${strategyId}`),
+  getSignalCalendar: (days = 30) =>
+    request(`/api/signals/calendar?days=${days}`),
   getStrategyHealth: (minSample?: number) =>
     request(`/api/strategy/health${minSample != null ? `?min_sample=${minSample}` : ""}`),
   getAlphaEdge: (ticker: string, assetType: "equity" | "options" = "equity") =>
