@@ -40,6 +40,13 @@ class Trade(Base):
     entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     exit_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
+    # Take-profit level as placed at entry. For equities the stop lives in
+    # long_strike and the entry in credit_received/short_strike; the target
+    # had no home until now, which made a target fill unprovable after the
+    # fact. Null on every row written before migration 0028, and on any
+    # entry that genuinely placed no profit leg.
+    target_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+
     # P&L
     credit_received: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     cost_to_close: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)

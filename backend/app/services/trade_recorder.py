@@ -55,6 +55,7 @@ class TradeRecorder:
         dispatch_id:           str,
         net_fill_price:        Optional[float] = None,
         spread_width:          Optional[float] = None,
+        target_price:          Optional[float] = None,
         status:                str = "open",
     ) -> Optional[str]:
         """
@@ -128,6 +129,10 @@ class TradeRecorder:
                         long_strike=Decimal(str(long_strike or 0)),
                         expiration=expiration,
                         credit_received=Decimal(str(round(entry_credit, 4))),
+                        target_price=(
+                            Decimal(str(round(target_price, 4)))
+                            if target_price else None
+                        ),
                         cost_to_close=None,
                         pnl=None,
                         pnl_pct=None,

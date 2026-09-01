@@ -2091,15 +2091,22 @@ async def _poll_fills() -> None:
             exit_price  = _compute_exit_price(fills_by_symbol.get(underlying), trade, is_equity)
 
             if exit_price is not None:
+                # Name the leg that actually filled where the row can prove it.
+                # Falls back to the neutral label rather than guessing — see
+                # exit_classifier for why that asymmetry is deliberate.
+                from app.services.exit_classifier import classify_broker_exit
+
+                resolved_reason = classify_broker_exit(trade, exit_price)
                 await trade_recorder.record_exit(
                     trade_id=tid,
                     cost_to_close=exit_price,
-                    exit_reason="position_closed_at_broker",
+                    exit_reason=resolved_reason,
                 )
                 _close_pending.pop(tid, None)
                 logger.info(
-                    "Auto-closed %s (%s) — cost_to_close=%.4f source=ibkr_execution",
-                    tid, underlying, exit_price,
+                    "Auto-closed %s (%s) — cost_to_close=%.4f reason=%s "
+                    "source=ibkr_execution",
+                    tid, underlying, exit_price, resolved_reason,
                 )
                 continue
 
