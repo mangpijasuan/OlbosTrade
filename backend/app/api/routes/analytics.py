@@ -153,7 +153,16 @@ async def get_mode_detail(mode_name: str):
 
 @router.get("/performance")
 async def get_performance():
-    """Portfolio-wide performance metrics over all closed trades with known P&L."""
+    """
+    Portfolio-wide performance over closed trades.
+
+    Loads every closed trade, including the ones whose exit price was never
+    captured, and lets compute_performance() partition them — it reports
+    unmeasured_trades/measured_pct/performance_incomplete alongside the
+    ratios. Filtering the unmeasured rows out here in SQL (as this route
+    used to) made them invisible to the very code that exists to disclose
+    them, so the figures read as covering the whole book when they did not.
+    """
     from app.services.performance_analytics import compute_performance
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
@@ -162,9 +171,10 @@ async def get_performance():
     try:
         async with AsyncSessionLocal() as session:
             trades = (await session.execute(
-                select(Trade).where(Trade.status == "closed", Trade.pnl.isnot(None))
+                select(Trade).where(Trade.status == "closed")
             )).scalars().all()
-        rows = [{"pnl": float(t.pnl), "entry_date": t.entry_date, "exit_date": t.exit_date}
+        rows = [{"pnl": float(t.pnl) if t.pnl is not None else None,
+                 "entry_date": t.entry_date, "exit_date": t.exit_date}
                 for t in trades]
     except Exception as exc:
         return {"error": str(exc),

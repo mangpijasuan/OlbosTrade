@@ -103,6 +103,9 @@ def _empty() -> dict:
         "current_drawdown_pct": 0.0, "max_drawdown_trades_pct": 0.0,
         "rolling_max_dd_30_pct": 0.0, "rolling_max_dd_90_pct": 0.0,
         "sample_size_warning": True,
+        "unmeasured_trades": 0,
+        "measured_pct": 100.0,
+        "performance_incomplete": False,
     }
 
 
@@ -110,11 +113,28 @@ def compute_performance(trades: list[dict], starting_capital: float,
                         min_sample: int = 30) -> dict:
     """
     trades: list of {"pnl": float, "entry_date": date|datetime, "exit_date": ...}.
-    Only trades with a non-None pnl are counted.
+
+    Only trades with a non-None pnl can be counted — but a trade whose exit
+    price was never captured still happened, and dropping it silently makes
+    every figure below read as if it covered the whole book. Production has 8
+    such rows (exit_reason "closed_price_unavailable", July 2026): the
+    position left the broker before any execution price arrived, and none can
+    be recovered — IBKR's execution history does not reach back that far, and
+    substituting a historical daily close would invent a fill the desk never
+    got. So the count travels with the numbers instead, the same way
+    heat_overstated travels with portfolio heat.
     """
+    total_submitted = len(trades)
     rows = [t for t in trades if t.get("pnl") is not None]
+    unmeasured = total_submitted - len(rows)
     if not rows:
-        return _empty()
+        out = _empty()
+        # An all-unmeasured book is not an empty one, and must not read as
+        # a desk that has never traded.
+        out["unmeasured_trades"] = unmeasured
+        out["measured_pct"] = 0.0 if unmeasured else 100.0
+        out["performance_incomplete"] = unmeasured > 0
+        return out
 
     pnls = [float(t["pnl"]) for t in rows]
     wins = [p for p in pnls if p > 0]
@@ -169,6 +189,11 @@ def compute_performance(trades: list[dict], starting_capital: float,
         **curve_metrics,
         **trade_dd,
         "sample_size_warning": n < min_sample,
+        # total_trades above counts what could be measured, not what was
+        # traded. These three say how far apart those are.
+        "unmeasured_trades": unmeasured,
+        "measured_pct": round(len(rows) / total_submitted * 100, 1),
+        "performance_incomplete": unmeasured > 0,
     }
 
 
