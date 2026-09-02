@@ -476,17 +476,26 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         </button>
 
         {showFullLogo && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, overflow: "hidden", paddingRight: 12 }}>
-            <span
-              className="brand-wordmark"
-              style={{ fontSize: 17, lineHeight: 1, whiteSpace: "nowrap" }}
-            >
-              OLBOS
-            </span>
-            <span style={{
-              fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
-              letterSpacing: "0.276em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1, whiteSpace: "nowrap",
-            }}>TERMINAL</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden", paddingRight: 12 }}>
+            <img
+              src="/favicon-32x32.png"
+              alt=""
+              width={20}
+              height={20}
+              style={{ flexShrink: 0, filter: "drop-shadow(0 0 4px rgba(212,175,55,.35))" }}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, overflow: "hidden" }}>
+              <span
+                className="brand-wordmark"
+                style={{ fontSize: 17, lineHeight: 1, whiteSpace: "nowrap" }}
+              >
+                OLBOS
+              </span>
+              <span style={{
+                fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
+                letterSpacing: "0.276em", color: "var(--ink-faint)", lineHeight: 1, paddingLeft: 1, whiteSpace: "nowrap",
+              }}>TERMINAL</span>
+            </div>
           </div>
         )}
       </div>
