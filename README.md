@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/olbos-banner.jpg" alt="Olbos Trade — Algorithmic Trading System" width="720">
+</p>
+
 # OlbosTrade
 > *From Ancient Greek ὄλβος (olbos) — blessed prosperity through disciplined, rules-based quantitative trading.*
 
