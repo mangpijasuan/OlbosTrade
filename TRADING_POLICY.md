@@ -75,6 +75,28 @@ the current active roadmap — additive, IBKR stays the default.
 > conservative). They are configurable to the charter values; we keep the
 > tighter defaults unless deliberately changed.
 
+## Paper trading before live capital
+The charter requires paper trading for **3 months minimum before any live
+capital**. This is a hard limit like the ones above, not an intention.
+
+*Enforced by:* `live_tenure_guard.py`, on the authoritative order path in
+`_execute_signal` immediately after the account guard. With
+`IBKR_TRADING_MODE=live`, order submission is blocked until **both**
+`LIVE_MIN_PAPER_TRADING_DAYS` (default 90) have elapsed since the first
+recorded trade **and** `LIVE_MIN_PAPER_CLOSED_TRADES` (default 20) trades have
+finished. The trade-count floor exists because time alone would pass an install
+that sat idle for three months and placed two trades; it is this repo's
+addition, not a charter number. Manual orders are **not** exempt. In paper mode
+the gate is a no-op. Fail-closed: an unreadable track record blocks live
+execution rather than assuming it is sufficient.
+
+*Known limitation:* `trades` has no per-row paper/live flag
+(`trading_mode_at_entry` is the risk style, not the account type), so the gate
+measures all trading history. Before the first live order that history is
+entirely paper — which is exactly when the gate decides — and afterwards tenure
+only grows, so the conflation is harmless. Wiping trade history resets the
+track record and re-blocks live trading, which is the intended reading.
+
 ## Position sizing
 Fractional Kelly · volatility (ATR) sizing · portfolio heat · correlation
 adjustment. *Status:* `volatility_sizing`, `risk_manager`, `allocation_engine`
