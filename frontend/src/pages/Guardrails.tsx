@@ -1,6 +1,53 @@
 import React, { useState, useEffect } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api } from "../api/client";
+import { Panel, Button } from "../components/ui";
+
+// daily_loss_pct/weekly_loss_pct from the API are signed P&L ratios (positive
+// on a gain day, negative on a loss day) — not always a loss despite the field
+// name. Format with an explicit sign and color so a gain doesn't read as red.
+function pnlPct(value: number | null | undefined): { text: string; color: string } {
+  const v = (value || 0) * 100;
+  const sign = v >= 0 ? "+" : "";
+  return { text: `${sign}${v.toFixed(2)}%`, color: v >= 0 ? "var(--green)" : "var(--red)" };
+}
+
+interface GuardrailEvent {
+  id: string;
+  timestamp: string | null;
+  event_type: string;
+  trigger_value: number | null;
+  limit_value: number | null;
+  trading_suspended_until: string | null;
+  portfolio_value: number | null;
+  notes: string | null;
+}
+
+// Matches the exact flag strings GuardrailEngine.check_all() appends to
+// GuardrailStatus.flags (backend/app/services/guardrails.py), plus the two
+// kill-switch event types kill_switch.py already writes into this same table.
+const EVENT_TYPE_LABEL: Record<string, string> = {
+  normal: "Recovered — normal",
+  daily_loss_limit: "Daily loss limit",
+  weekly_loss_limit: "Weekly loss limit",
+  monthly_loss_limit: "Monthly loss limit",
+  max_drawdown_limit: "Max drawdown",
+  consecutive_loss_limit: "Consecutive losses",
+  cooling_off_active: "Cooling off",
+  capital_preservation_mode: "Capital preservation",
+  daily_trade_cap: "Daily trade cap",
+  kill_switch: "Kill switch engaged",
+  kill_switch_reset: "Kill switch reset",
+};
+
+// Loss/capital events are fractional ratios (0.023 = 2.3%); trade-count
+// events (daily_trade_cap, consecutive_loss_limit) are plain integers.
+const COUNT_EVENT_TYPES = ["daily_trade_cap", "consecutive_loss_limit"];
+
+function formatMetric(value: number | null, eventType: string): string {
+  if (value == null) return "—";
+  return COUNT_EVENT_TYPES.includes(eventType) ? String(value) : `${(value * 100).toFixed(2)}%`;
+}
 
 export default function Guardrails() {
   const { guardrailStatus, reconciliation, refresh } = useRisk();
@@ -8,6 +55,15 @@ export default function Guardrails() {
   const [activeMode, setActiveMode] = useState<any>(null);
   const [reconRunning, setReconRunning] = useState(false);
   const [reconMessage, setReconMessage] = useState<string | null>(null);
+  const [history, setHistory] = useState<GuardrailEvent[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "history" || history !== null) return;
+    (api.getGuardrailHistory() as Promise<{ events: GuardrailEvent[] }>)
+      .then(d => setHistory(d.events || []))
+      .catch(e => setHistoryError(e?.message || "Failed to load guardrail history"));
+  }, [tab, history]);
 
   // Poll the active trading mode independently — it lives in a different endpoint
   useEffect(() => {
@@ -30,6 +86,7 @@ export default function Guardrails() {
     dailyLoss: guardrailStatus?.max_daily_loss_pct ?? 0.02,
     weeklyLoss: guardrailStatus?.max_weekly_loss_pct ?? 0.05,
     monthlyLoss: guardrailStatus?.max_monthly_loss_pct ?? 0.10,
+    drawdown: guardrailStatus?.max_drawdown_pct ?? 0.15,
     tradesPerDay: guardrailStatus?.max_trades_per_day ?? 3,
     consecutiveLosses: guardrailStatus?.max_consecutive_losses ?? 3,
     capitalThreshold: guardrailStatus?.capital_preservation_threshold ?? 0.85,
@@ -87,6 +144,11 @@ export default function Guardrails() {
       status: Math.abs(guardrailStatus?.monthly_loss_pct || 0) < activeLimits.monthlyLoss,
     },
     {
+      label: "Max Drawdown",
+      val: `${(activeLimits.drawdown * 100).toFixed(1)}%`,
+      status: (guardrailStatus?.drawdown_pct || 0) < activeLimits.drawdown,
+    },
+    {
       label: "Max Trades Per Day",
       val: String(activeLimits.tradesPerDay),
       status: (guardrailStatus?.trades_today || 0) < activeLimits.tradesPerDay,
@@ -99,7 +161,7 @@ export default function Guardrails() {
     {
       label: "Capital Threshold",
       val: `${(activeLimits.capitalThreshold * 100).toFixed(0)}%`,
-      status: true,
+      status: (guardrailStatus?.capital_pct_remaining ?? 1) > activeLimits.capitalThreshold,
     },
     { label: "Kill Switch",         val: "OFF",   status: !guardrailStatus?.kill_switch_engaged },
   ];
@@ -108,9 +170,9 @@ export default function Guardrails() {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--line-dim)", background: "var(--bg-2)", display: "flex", gap: 1 }}>
         {(["status","history"] as const).map(t => (
-          <button key={t} className={`btn-t ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+          <Button key={t} active={tab === t} onClick={() => setTab(t)}>
             {t.toUpperCase()}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -119,9 +181,8 @@ export default function Guardrails() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Active risk profile banner */}
-            <div style={{
+            <div className="instrument-card" style={{
               border: `1px solid ${badgeColor}`,
-              background: "var(--bg-2)",
               padding: "14px 20px",
               display: "flex", alignItems: "center", justifyContent: "space-between",
             }}>
@@ -169,10 +230,7 @@ export default function Guardrails() {
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Rule status */}
-              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-                <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                  <span className="panel-title">Active Rules</span>
-                </div>
+              <Panel padding={0} title="Active Rules">
                 {rules.map((r, i) => (
                   <div key={r.label} style={{
                     padding: "8px 14px",
@@ -191,44 +249,44 @@ export default function Guardrails() {
                     </div>
                   </div>
                 ))}
-              </div>
+              </Panel>
 
               {/* State snapshot */}
-              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-                <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-                  <span className="panel-title">Current State</span>
-                </div>
-                <div style={{ padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 12px" }}>
+              <Panel padding={12} title="Current State">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 12px" }}>
                   {[
-                    { label: "Trades Today",       val: guardrailStatus?.trades_today || 0 },
-                    { label: "Consecutive Losses", val: guardrailStatus?.consecutive_losses || 0 },
+                    { label: "Trades Today",       val: String(guardrailStatus?.trades_today || 0) },
+                    { label: "Consecutive Losses", val: String(guardrailStatus?.consecutive_losses || 0) },
                     { label: "Cooling Off Until",  val: guardrailStatus?.cooling_off_until || "—" },
                     { label: "Capital Remaining",  val: `${((guardrailStatus?.capital_pct_remaining || 1) * 100).toFixed(1)}%` },
-                    { label: "Daily Loss",         val: `${((guardrailStatus?.daily_loss_pct || 0) * 100).toFixed(2)}%` },
-                    { label: "Weekly Loss",        val: `${((guardrailStatus?.weekly_loss_pct || 0) * 100).toFixed(2)}%` },
+                    // Signed P&L %, not always a loss — label and color follow the
+                    // actual sign instead of always reading "Loss" on a gain day.
+                    { label: "Daily P&L",  val: pnlPct(guardrailStatus?.daily_loss_pct) },
+                    { label: "Weekly P&L", val: pnlPct(guardrailStatus?.weekly_loss_pct) },
                   ].map(s => (
-                    <div key={s.label} style={{
-                      background: "var(--bg-3)", borderRadius: 4, padding: "7px 10px",
+                    <div key={s.label} className="instrument-card--flat" style={{
+                      padding: "7px 10px",
                       display: "flex", flexDirection: "column", gap: 3,
                     }}>
                       <span className="kicker">{s.label}</span>
-                      <span className="tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
-                        {String(s.val)}
+                      <span className="tnum" style={{
+                        fontSize: 14, fontWeight: 600,
+                        color: typeof s.val === "object" ? s.val.color : "var(--ink)",
+                      }}>
+                        {typeof s.val === "object" ? s.val.text : s.val}
                       </span>
                     </div>
                   ))}
                 </div>
-              </div>
+              </Panel>
             </div>
 
-            <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-              <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span className="panel-title">Reconciliation Status</span>
-                <button className="btn-t" onClick={runReconciliation} disabled={reconRunning}>
-                  {reconRunning ? "Running..." : "Run Check"}
-                </button>
-              </div>
-              <div style={{ padding: 16, display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
+            <Panel
+              padding={16}
+              title="Reconciliation Status"
+              action={<Button onClick={runReconciliation} disabled={reconRunning}>{reconRunning ? "Running..." : "Run Check"}</Button>}
+            >
+              <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
                 <div style={{
                   border: `1px solid ${reconColor}55`,
                   background: "var(--bg-1)",
@@ -253,7 +311,7 @@ export default function Guardrails() {
                       { label: "Untracked", value: reconciliation?.untracked_at_broker?.length ?? 0, color: "var(--red)" },
                       { label: "Quantity Drift", value: reconciliation?.quantity_mismatches?.length ?? 0, color: "var(--amber)" },
                     ].map((item) => (
-                      <div key={item.label} style={{ border: "1px solid var(--line-dim)", borderRadius: 4, padding: 12, background: "var(--bg-1)" }}>
+                      <div key={item.label} className="instrument-card" style={{ padding: 12 }}>
                         <div className="kicker" style={{ marginBottom: 6 }}>{item.label}</div>
                         <div className="tnum" style={{ fontSize: 16, color: item.color }}>{item.value}</div>
                       </div>
@@ -276,7 +334,7 @@ export default function Guardrails() {
                         ...(reconciliation?.error_message ? [reconciliation.error_message] : []),
                       ], empty: "No drift detected." },
                     ].map((group) => (
-                      <div key={group.title} style={{ border: "1px solid var(--line-dim)", background: "var(--bg-1)", padding: 12 }}>
+                      <div key={group.title} className="instrument-card" style={{ padding: 12 }}>
                         <div className="kicker" style={{ marginBottom: 8 }}>{group.title}</div>
                         {group.items.length === 0 ? (
                           <div style={{ color: "var(--ink-faint)", fontSize: 12 }}>{group.empty}</div>
@@ -294,28 +352,60 @@ export default function Guardrails() {
                   </div>
                 </div>
               </div>
-            </div>
+            </Panel>
           </div>
         )}
 
         {tab === "history" && (
-          <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">Guardrail Event Log</span>
-            </div>
+          <Panel padding={0} title="Guardrail Event Log">
             <table className="t-table">
               <thead><tr>
                 {["Timestamp","Event","Rule","Value","Action"].map(h => <th key={h}>{h}</th>)}
               </tr></thead>
               <tbody>
-                <tr>
-                  <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
-                    NO GUARDRAIL EVENTS — SYSTEM OPERATING WITHIN LIMITS
-                  </td>
-                </tr>
+                {historyError ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--red)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      {historyError}
+                    </td>
+                  </tr>
+                ) : history === null ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      LOADING…
+                    </td>
+                  </tr>
+                ) : history.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 40, color: "var(--ink-faint)", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      NO GUARDRAIL EVENTS RECORDED YET
+                    </td>
+                  </tr>
+                ) : history.map(e => (
+                  <tr key={e.id}>
+                    <td className="mono" style={{ color: "var(--ink-dim)" }}>
+                      {e.timestamp ? new Date(e.timestamp).toLocaleString() : "—"}
+                    </td>
+                    <td className="mono" style={{
+                      color: e.event_type === "normal" || e.event_type === "kill_switch_reset" ? "var(--green)" : "var(--red)",
+                    }}>
+                      {EVENT_TYPE_LABEL[e.event_type] || e.event_type}
+                    </td>
+                    <td className="mono" style={{ color: "var(--ink-dim)" }}>
+                      {formatMetric(e.limit_value, e.event_type)}
+                    </td>
+                    <td className="mono">{formatMetric(e.trigger_value, e.event_type)}</td>
+                    <td className="mono" style={{ color: "var(--ink-dim)" }}>
+                      {e.notes ||
+                        (e.trading_suspended_until
+                          ? `Suspended until ${new Date(e.trading_suspended_until).toLocaleString()}`
+                          : "—")}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-          </div>
+          </Panel>
         )}
       </div>
     </div>

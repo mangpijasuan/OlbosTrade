@@ -5,6 +5,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
+import { Badge } from "../../components/ui";
 import {
   type DeskLifecycle,
   lifecycleColor,
@@ -13,23 +15,6 @@ import {
 } from "../executionStatus";
 
 type Filter = "all" | DeskLifecycle;
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
-}
 
 export default function ExecutionMonitor() {
   const [log, setLog] = useState<any[]>([]);
@@ -88,27 +73,18 @@ export default function ExecutionMonitor() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--line-dim)",
-          background: "var(--bg-3)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
+      <div className="desk-tool-rail" style={{ padding: "10px 16px", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span className="panel-title">EXECUTION MONITOR</span>
+          <span className="panel-title">Execution Monitor</span>
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
             {total} events persisted · showing last {log.length}
           </span>
           <div style={{ flex: 1 }} />
-          <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={refresh}>
+          <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={refresh}>
             Refresh
           </button>
         </div>
-        <div style={{ display: "flex", gap: 0, border: "1px solid var(--line-dim)" }}>
+        <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}>
           {(
             [
               ["Submitted", stats.submitted, "var(--green)"],
@@ -117,16 +93,8 @@ export default function ExecutionMonitor() {
               ["Rejected", stats.rejected, "var(--ink-dim)"],
               ["Error", stats.error, "var(--red)"],
             ] as const
-          ).map(([label, n, color], i, arr) => (
-            <div
-              key={label}
-              style={{
-                flex: 1,
-                padding: "10px 14px",
-                borderRight: i < arr.length - 1 ? "1px solid var(--line-dim)" : undefined,
-                background: "var(--bg-2)",
-              }}
-            >
+          ).map(([label, n, color]) => (
+            <div key={label} style={{ padding: "10px 14px" }}>
               <div className="kicker" style={{ marginBottom: 4 }}>
                 {label}
               </div>
@@ -136,13 +104,13 @@ export default function ExecutionMonitor() {
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <div className="asset-toggle" style={{ flexWrap: "wrap", alignSelf: "flex-start" }}>
           {filters.map((f) => (
             <button
               key={f.key}
               type="button"
-              className={`btn-t ${filter === f.key ? "active" : ""}`}
-              style={{ fontSize: 10 }}
+              className={`asset-toggle__btn${filter === f.key ? " asset-toggle__btn--active" : ""}`}
+              style={{ fontSize: 10, padding: "5px 10px" }}
               onClick={() => setFilter(f.key)}
             >
               {f.label}
@@ -151,30 +119,15 @@ export default function ExecutionMonitor() {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
         {loading ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-              fontFamily: "var(--mono)",
-              color: "var(--ink-faint)",
-              fontSize: 11,
-            }}
-          >
-            Loading…
+          <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+            <p className="empty-chassis__title">Loading…</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-              fontFamily: "var(--mono)",
-              color: "var(--ink-faint)",
-              fontSize: 11,
-            }}
-          >
-            No execution events
+          <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+            <p className="empty-chassis__title">No execution events</p>
+            <p className="empty-chassis__hint">Submitted and blocked trades will show up here.</p>
           </div>
         ) : (
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -183,13 +136,14 @@ export default function ExecutionMonitor() {
               return (
                 <li
                   key={key}
+                  className="instrument-card"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "16px 140px 1fr auto",
                     gap: 12,
                     alignItems: "start",
-                    padding: "10px 16px",
-                    borderBottom: "1px solid var(--line-dim)",
+                    padding: "10px 14px",
+                    marginBottom: 6,
                   }}
                 >
                   <span
@@ -210,11 +164,11 @@ export default function ExecutionMonitor() {
                       <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                         {e.ticker || "—"}
                       </span>
-                      <Badge text={lifecycleLabel(life)} color={lifecycleColor(life)} />
-                      <Badge text={(e.asset_type || "eq").toUpperCase()} color="var(--ink-dim)" />
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                        {e.action || e.strategy || "—"}
-                      </span>
+                      {(e.action || e.strategy) && (
+                        <SignalDirectionBadge action={e.action || e.strategy} size="sm" />
+                      )}
+                      <Badge kind="tag" tone={lifecycleColor(life)}>{lifecycleLabel(life)}</Badge>
+                      <Badge kind="tag" tone="var(--ink-dim)">{(e.asset_type || "eq").toUpperCase()}</Badge>
                     </div>
                     {e.reason && (
                       <div

@@ -57,6 +57,7 @@ export const api = {
 
   // ── Backtest ──────────────────────────────────────────────────────────────
   runBacktest: (body: object) => request("/api/backtest/run", { method: "POST", body: JSON.stringify(body) }),
+  runEquityBacktest: (body: object) => request("/api/backtest/run-equity", { method: "POST", body: JSON.stringify(body) }),
   getBacktestResults: (id: string) => request(`/api/backtest/${id}/results`),
   getBacktestHistory: (limit?: number) =>
     request(`/api/backtest/history${limit ? `?limit=${limit}` : ""}`),
@@ -69,6 +70,7 @@ export const api = {
   getRegime: () => request("/api/market/regime"),
   getOptionsChain: (symbol: string, expiry: string) => request(`/api/market/options-chain/${symbol}?expiry=${expiry}`),
   getIVRank: (symbol: string) => request(`/api/market/iv-rank/${symbol}`),
+  getSectorRotation: () => request("/api/market/sector-rotation"),
 
   // ── Paper Trading ─────────────────────────────────────────────────────────
   getPositions: () => request("/api/paper-trade/positions"),
@@ -142,6 +144,12 @@ export const api = {
   // ── Strategy & Signals ────────────────────────────────────────────────────
   getStrategyRegistry: () => request("/api/strategy/registry"),
   getStrategyProfile: (strategyId: string) => request(`/api/strategy/registry/${strategyId}`),
+  getSignalCalendar: (days = 30) =>
+    request(`/api/signals/calendar?days=${days}`),
+  getStrategyHealth: (minSample?: number) =>
+    request(`/api/strategy/health${minSample != null ? `?min_sample=${minSample}` : ""}`),
+  getAlphaEdge: (ticker: string, assetType: "equity" | "options" = "equity") =>
+    request(`/api/alpha-edge/${encodeURIComponent(ticker)}?asset_type=${assetType}`),
   getStrategyPresets: (strategyId?: string) =>
     request(`/api/strategy${strategyId ? `/${strategyId}/presets` : "/presets"}`),
   getStrategySnapshots: (strategyId: string) => request(`/api/strategy/${strategyId}/snapshots`),
@@ -159,6 +167,14 @@ export const api = {
   getEquitySignals: (limit?: number) => request(`/api/equity/signals${limit ? `?limit=${limit}` : ""}`),
   getOptionsSignals: (limit?: number) => request(`/api/options/signals${limit ? `?limit=${limit}` : ""}`),
   scanOptionsSignals: () => request("/api/options/signals/scan", { method: "POST" }),
+  getOptionsSignalHistory: (params?: { limit?: number; strategy?: string; ticker?: string }) => {
+    const q = params
+      ? "?" + new URLSearchParams(
+          Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined)) as any
+        ).toString()
+      : "";
+    return request(`/api/options/signals/history${q}`);
+  },
   getEquityChart: (symbol: string, params?: { timeframe?: string; limit?: number }) => {
     const search = new URLSearchParams();
     if (params?.timeframe) search.set("timeframe", params.timeframe);
@@ -171,6 +187,8 @@ export const api = {
   getComparison: () => request("/api/research/comparison"),
   runComparison: (body: object) => request("/api/research/run-comparison", { method: "POST", body: JSON.stringify(body) }),
   getModelPerformance: () => request("/api/research/model-performance"),
+  transitionExperiment: (expId: string, body: object) =>
+    request(`/api/research/lab/experiments/${expId}/transition`, { method: "POST", body: JSON.stringify(body) }),
   getForecast: <T = unknown>(symbol: string, horizon: number) =>
     request<T>(`/api/forecasts/symbols/${encodeURIComponent(symbol)}?horizon=${horizon}`),
 
@@ -192,6 +210,17 @@ export const api = {
   resetToBalanced:  () => request("/api/mode/reset-to-balanced", { method: "POST" }),
 
   // ── Trade Desk (Execution Modes) ───────────────────────────────────────────
+  // Capital Rotation reviews. The GET is unauthenticated like other reads;
+  // approve/reject are auth-gated server-side and will 403 without the
+  // Operator API Key, the same way the execution-mode toggle does.
+  getRotationReviews: () => request("/api/trade-desk/rotation-reviews"),
+  approveRotationReview: (reviewId: string) =>
+    request(`/api/trade-desk/rotation-review/${encodeURIComponent(reviewId)}/approve`,
+            { method: "POST" }),
+  rejectRotationReview: (reviewId: string) =>
+    request(`/api/trade-desk/rotation-review/${encodeURIComponent(reviewId)}/reject`,
+            { method: "POST" }),
+
   getExecutionMode:   () => request("/api/trade-desk/execution-mode"),
   setExecutionMode:   (mode: string) =>
     request("/api/trade-desk/execution-mode", { method: "POST", body: JSON.stringify({ mode }) }),
@@ -217,6 +246,15 @@ export const api = {
         ...(limitPrice != null ? { limit_price: limitPrice } : {}),
       }),
     }),
+  closeUntrackedPosition: (symbol: string, orderType: "market" | "limit" = "market", limitPrice?: number) =>
+    request("/api/trade-desk/close-untracked-position", {
+      method: "POST",
+      body: JSON.stringify({
+        symbol,
+        order_type: orderType,
+        ...(limitPrice != null ? { limit_price: limitPrice } : {}),
+      }),
+    }),
   getPendingApprovals: () => request("/api/trade-desk/pending"),
   approveSignal:       (id: string) =>
     request(`/api/trade-desk/approve/${id}`, { method: "POST" }),
@@ -231,6 +269,17 @@ export const api = {
   },
   getModeDetail:         (mode: string) => request(`/api/analytics/mode/${mode}`),
   getSignalScoreImpact:  ()             => request("/api/analytics/signal-score-impact"),
+
+  // ── Signal Research (forward-outcome tracking) ──────────────────────────────
+  getSignalOutcomes:    () => request("/api/signal-research/outcomes"),
+  getSignalOutcomesRaw: (params?: { limit?: number; status?: string }) => {
+    const q = params
+      ? "?" + new URLSearchParams(
+          Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined)) as any
+        ).toString()
+      : "";
+    return request(`/api/signal-research/outcomes/raw${q}`);
+  },
 
   // ── Options Flow (Options Intelligence module) ──────────────────────────────
   getOptionsFlow: (params?: Record<string, string | number | undefined>) => {

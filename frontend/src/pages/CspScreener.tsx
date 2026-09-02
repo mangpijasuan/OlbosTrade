@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { StatTile, Badge } from "../components/ui";
 
 type RiskProfile = "conservative" | "balanced" | "aggressive";
 
@@ -77,26 +78,11 @@ function fmtUsd(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-function Badge({ tone, children }: { tone: string; children: React.ReactNode }) {
+function RiskBadge({ tone, children }: { tone: string; children: React.ReactNode }) {
   return (
-    <span
-      style={{
-        fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.03em",
-        color: tone, border: `1px solid ${tone}`, borderRadius: 3,
-        padding: "2px 7px", whiteSpace: "nowrap",
-      }}
-    >
+    <Badge kind="tag" tone={tone} style={{ fontSize: 11, letterSpacing: "0.03em", borderRadius: 3, padding: "2px 7px", opacity: 1, whiteSpace: "nowrap" }}>
       {children}
-    </span>
-  );
-}
-
-function StatChip({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div style={{ padding: "0 14px", borderLeft: "1px solid var(--line-dim)" }}>
-      <div className="kicker" style={{ marginBottom: 4 }}>{label}</div>
-      <div style={{ fontFamily: "var(--mono)", fontSize: 14, color: tone || "var(--ink)" }}>{value}</div>
-    </div>
+    </Badge>
   );
 }
 
@@ -157,19 +143,18 @@ export default function CspScreener() {
       </div>
 
       {/* Status bar */}
-      <div style={{
+      <div className="instrument-stat-strip" style={{
         display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4,
-        border: "1px solid var(--line-dim)", borderRadius: 6, padding: "10px 0",
         margin: "10px 0",
       }}>
-        <StatChip label="Env" value={(ctx?.environment || "—").toUpperCase()} tone="var(--amber)" />
-        <StatChip label="Risk Profile" value={(ctx?.trading_mode || "—").toUpperCase()} tone="var(--cyan)" />
-        <StatChip label="Profile" value={profile.toUpperCase()} />
-        <StatChip label="Buying power" value={ctx ? fmtUsd(ctx.buying_power) : "—"} />
-        <StatChip label="Heat" value={ctx ? `${ctx.portfolio_heat_pct}%` : "—"}
+        <StatTile variant="divider" size="sm" label="Env" value={(ctx?.environment || "—").toUpperCase()} tone="var(--amber)" />
+        <StatTile variant="divider" size="sm" label="Risk Profile" value={(ctx?.trading_mode || "—").toUpperCase()} tone="var(--cyan)" />
+        <StatTile variant="divider" size="sm" label="Profile" value={profile.toUpperCase()} />
+        <StatTile variant="divider" size="sm" label="Buying power" value={ctx ? fmtUsd(ctx.buying_power) : "—"} />
+        <StatTile variant="divider" size="sm" label="Heat" value={ctx ? `${ctx.portfolio_heat_pct}%` : "—"}
           tone={ctx && ctx.portfolio_heat_pct >= 70 ? "var(--amber)" : "var(--ink)"} />
-        <StatChip label="Wheels" value={ctx ? String(ctx.active_wheel_count) : "—"} />
-        <StatChip label="Macro risk" value={(ctx?.macro_event_risk || "—").toUpperCase()}
+        <StatTile variant="divider" size="sm" label="Wheels" value={ctx ? String(ctx.active_wheel_count) : "—"} />
+        <StatTile variant="divider" size="sm" label="Macro risk" value={(ctx?.macro_event_risk || "—").toUpperCase()}
           tone={levelTone(ctx?.macro_event_risk || "")} />
       </div>
 
@@ -186,7 +171,7 @@ export default function CspScreener() {
 
       <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 14, marginTop: 12 }}>
         {/* Filter panel */}
-        <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, padding: 14 }}>
+        <div className="instrument-card" style={{ padding: 14 }}>
           <div className="kicker" style={{ marginBottom: 12 }}>Filters</div>
 
           <label style={{ fontSize: 12, color: "var(--ink-dim)" }}>Risk profile</label>
@@ -263,10 +248,10 @@ function CandidateCard({ c, expanded, onToggle }: {
   const accent = statusTone(elig.status);
 
   return (
-    <div style={{
+    <div className="instrument-card" style={{
       border: `1px solid ${elig.status === "eligible" ? "var(--cyan-dim)" : "var(--line-dim)"}`,
       borderLeft: `3px solid ${accent}`,
-      borderRadius: 6, padding: 12, marginBottom: 8,
+      padding: 12, marginBottom: 8,
       opacity: blocked ? 0.9 : 1,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", cursor: "pointer" }}
@@ -279,9 +264,9 @@ function CandidateCard({ c, expanded, onToggle }: {
             ${c.stock_price} · put ${c.put_strike} · {c.dte} DTE
           </span>
         </div>
-        <Badge tone={accent}>
+        <RiskBadge tone={accent}>
           {blocked ? "BLOCKED" : `WQS ${c.wheel_quality_score}`}
-        </Badge>
+        </RiskBadge>
       </div>
 
       <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-dim)", marginTop: 8, flexWrap: "wrap", fontFamily: "var(--mono)" }}>
@@ -292,10 +277,10 @@ function CandidateCard({ c, expanded, onToggle }: {
       </div>
 
       <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-        <Badge tone={levelTone(c.assignment_risk.level)}>{c.assignment_risk.label}</Badge>
-        <Badge tone={levelTone(c.macro_event_risk.level)}>{c.macro_event_risk.label}</Badge>
-        {c.earnings_warning && <Badge tone={levelTone(c.earnings_warning.level)}>{c.earnings_warning.label}</Badge>}
-        <Badge tone="var(--ink-dim)">Overlap {c.portfolio_overlap_pct}%</Badge>
+        <RiskBadge tone={levelTone(c.assignment_risk.level)}>{c.assignment_risk.label}</RiskBadge>
+        <RiskBadge tone={levelTone(c.macro_event_risk.level)}>{c.macro_event_risk.label}</RiskBadge>
+        {c.earnings_warning && <RiskBadge tone={levelTone(c.earnings_warning.level)}>{c.earnings_warning.label}</RiskBadge>}
+        <RiskBadge tone="var(--ink-dim)">Overlap {c.portfolio_overlap_pct}%</RiskBadge>
       </div>
 
       {/* Blocked reasons are never hidden */}

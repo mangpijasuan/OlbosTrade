@@ -57,9 +57,9 @@ export default function OptionsOrderComposer({
 
   return (
     <div
+      className="instrument-card"
       style={{
         borderTop: "1px solid var(--line-dim)",
-        background: "var(--bg-2)",
         padding: "10px 12px",
         display: "flex",
         flexWrap: "wrap",
@@ -68,20 +68,11 @@ export default function OptionsOrderComposer({
         flexShrink: 0,
       }}
     >
-      <span style={{ fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.08em", color: "var(--ink-dim)" }}>
-        OPTIONS GATE · {symbol}
-      </span>
+      <span className="panel-title">Options gate · {symbol}</span>
       <select
+        className="control-input"
         value={strategy}
         onChange={(e) => setStrategy(e.target.value)}
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          padding: "6px 8px",
-          background: "var(--bg-3)",
-          color: "var(--ink)",
-          border: "1px solid var(--line)",
-        }}
       >
         <option value="bull_put_spread">Bull put spread</option>
         <option value="bear_call_spread">Bear call spread</option>
@@ -90,10 +81,10 @@ export default function OptionsOrderComposer({
         <option value="cash_secured_put">Cash-secured put</option>
         <option value="covered_call">Covered call</option>
       </select>
-      <button type="button" className="btn-t" disabled={busy} onClick={evaluate}>
-        {busy ? "…" : "EVALUATE"}
+      <button type="button" className="btn-primary" disabled={busy} onClick={evaluate}>
+        {busy ? "…" : "Evaluate"}
       </button>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: blocked ? "var(--red)" : "var(--ink-faint)" }}>
+      <span style={{ fontFamily: "var(--sans)", fontSize: 11, color: blocked ? "var(--red)" : "var(--ink-faint)", flex: 1 }}>
         {msg || "Advisory only — use Spread Scanner / Copilot to queue trades. No naked shorts. No 0DTE Autopilot."}
       </span>
     </div>

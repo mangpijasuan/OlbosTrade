@@ -12,6 +12,7 @@
  * none of those are shown or invented.
  */
 import React, { useEffect, useState } from "react";
+import { Badge, Button } from "../components/ui";
 
 interface FlowRow {
   ticker: string; type: "CALL" | "PUT"; strike: number; expiry: string;
@@ -49,11 +50,9 @@ function FlowCard({ row, onPickTicker }: { row: FlowRow; onPickTicker: (t: strin
 
   return (
     <div
+      className="instrument-card"
       style={{
-        background: "var(--bg-2)",
-        border: "1px solid var(--line-dim)",
         borderLeft: `3px solid ${tone}`,
-        borderRadius: 3,
         padding: "12px 14px",
         display: "flex",
         flexDirection: "column",
@@ -97,13 +96,13 @@ function FlowCard({ row, onPickTicker }: { row: FlowRow; onPickTicker: (t: strin
         <span style={{ fontFamily: "var(--sans)", fontSize: 11, color: "var(--ink-dim)", textTransform: "capitalize" }}>
           {row.sentiment}
         </span>
-        <span style={{
-          fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.04em",
-          color: "var(--amber)", border: "1px solid rgba(245,158,11,0.4)",
-          borderRadius: 2, padding: "1px 6px",
+        <Badge kind="tag" tone="var(--amber)" style={{
+          fontSize: 9.5, letterSpacing: "0.04em",
+          border: "1px solid rgba(245,158,11,0.4)",
+          borderRadius: 2, padding: "1px 6px", opacity: 1,
         }}>
           {unusualTag}
-        </span>
+        </Badge>
       </div>
 
       {/* Stat grid — every value is a real field from the scan row */}
@@ -186,35 +185,31 @@ export default function OptionsFlow() {
   const topPuts  = topByTicker("PUT");
 
   return (
-    <div style={{ padding: 16, height: "100%", overflowY: "auto" }}>
-      {/* Header / summary */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
-        <span className="panel-title">Unusual Options Activity</span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
-          free snapshot · volume ≫ open interest · not a real-time OPRA tape
-        </span>
-
+    <div className="page-shell" style={{ height: "100%", overflowY: "auto" }}>
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Unusual Options Activity</div>
+          <p className="page-header__sub">Free snapshot · volume ≫ open interest · not a real-time OPRA tape</p>
+        </div>
         {totalCount > 0 && (
           <div style={{ display: "flex", gap: 16, fontFamily: "var(--mono)", fontSize: 11 }}>
             <span style={{ color: "var(--green)" }}>CALLS {callCount} · {callPct}% · {usd(callPremium)}</span>
             <span style={{ color: "var(--red)" }}>PUTS {putCount} · {putPct}% · {usd(putPremium)}</span>
           </div>
         )}
-
-        <div style={{ flex: 1 }} />
-
-        <div style={{ display: "flex", gap: 4 }} role="group" aria-label="View mode">
+        <span style={{ flex: 1 }} />
+        <div className="asset-toggle" role="group" aria-label="View mode">
           <button
-            className={`btn-t ${view === "cards" ? "active" : ""}`}
-            style={{ padding: "4px 10px", fontSize: 10 }}
+            type="button"
+            className={`asset-toggle__btn${view === "cards" ? " asset-toggle__btn--active" : ""}`}
             aria-pressed={view === "cards"}
             onClick={() => setView("cards")}
           >
             CARDS
           </button>
           <button
-            className={`btn-t ${view === "table" ? "active" : ""}`}
-            style={{ padding: "4px 10px", fontSize: 10 }}
+            type="button"
+            className={`asset-toggle__btn${view === "table" ? " asset-toggle__btn--active" : ""}`}
             aria-pressed={view === "table"}
             onClick={() => setView("table")}
           >
@@ -223,22 +218,19 @@ export default function OptionsFlow() {
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <form onSubmit={submitTicker} style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input
             value={tickerInput}
             onChange={e => setTickerInput(e.target.value)}
             placeholder="Ticker"
             aria-label="Filter by ticker"
-            style={{
-              width: 80, fontFamily: "var(--mono)", fontSize: 12, textTransform: "uppercase",
-              background: "var(--bg-2)", border: "1px solid var(--line-dim)", color: "var(--ink)",
-              padding: "4px 8px",
-            }}
+            className="control-input"
+            style={{ width: 80, textTransform: "uppercase" }}
           />
-          <button className="btn-t" type="submit" style={{ padding: "4px 10px", fontSize: 10 }}>Go</button>
+          <button type="submit" className="btn-primary" style={{ padding: "6px 12px" }}>Go</button>
           {ticker && (
-            <button type="button" className="btn-t" style={{ padding: "4px 10px", fontSize: 10 }}
+            <button type="button" className="btn-ghost" style={{ padding: "6px 12px" }}
               onClick={() => { setTicker(""); setTickerInput(""); }}>
               Clear
             </button>
@@ -247,10 +239,10 @@ export default function OptionsFlow() {
 
         <div style={{ display: "flex", gap: 6 }}>
           {(["all", "call", "put"] as const).map(f => (
-            <button key={f} className={`btn-t ${f === typeFilter ? "active" : ""}`}
+            <Button key={f} active={f === typeFilter}
               style={{ padding: "2px 10px", fontSize: 10 }} onClick={() => setTypeFilter(f)}>
               {f === "all" ? "ALL" : f === "call" ? "CALLS" : "PUTS"}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -261,10 +253,10 @@ export default function OptionsFlow() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP CALLS</span>
               {topCalls.map(([tk, premium], i) => (
-                <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--green)" }}
+                <Button key={tk} style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--green)" }}
                   onClick={() => pickTicker(tk)}>
                   {i + 1}. {tk} {usd(premium)}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -272,10 +264,10 @@ export default function OptionsFlow() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ color: "var(--ink-faint)", fontSize: 9.5, letterSpacing: "0.08em" }}>TOP PUTS</span>
               {topPuts.map(([tk, premium], i) => (
-                <button key={tk} className="btn-t" style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--red)" }}
+                <Button key={tk} style={{ padding: "2px 8px", fontSize: 10.5, color: "var(--red)" }}
                   onClick={() => pickTicker(tk)}>
                   {i + 1}. {tk} {usd(premium)}
-                </button>
+                </Button>
               ))}
             </div>
           )}

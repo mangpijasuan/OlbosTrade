@@ -16,6 +16,8 @@ import {
   type ExecMode,
 } from "../utils/chartWorkstationDisplay";
 import MetricHint, { resolveMetricHint } from "../components/MetricHint";
+import { Panel, StatTile, Badge, Button } from "../components/ui";
+import CandlestickChart from "../components/CandlestickChart";
 
 type Timeframe = "5m" | "15m" | "1h" | "1d";
 
@@ -117,34 +119,14 @@ function fmtPct(value: number | null | undefined, digits = 1) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`;
 }
 
+function hintFor(label: string): React.ReactNode {
+  return resolveMetricHint(label) ? <MetricHint id={label} /> : label;
+}
+
 function normalizeReasons(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value === "string" && value.trim()) return [value];
   return [];
-}
-
-function pathFromPoints(points: Array<{ x: number; y: number }>) {
-  if (!points.length) return "";
-  return points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
-}
-
-function movingAverage(bars: ChartBar[], period: number) {
-  return bars.map((bar, idx) => {
-    if (idx < period - 1) return null;
-    const slice = bars.slice(idx - period + 1, idx + 1);
-    return slice.reduce((sum, item) => sum + item.close, 0) / period;
-  });
-}
-
-function rollingVwap(bars: ChartBar[]) {
-  let cumulativePV = 0;
-  let cumulativeVolume = 0;
-  return bars.map((bar) => {
-    const typical = (bar.high + bar.low + bar.close) / 3;
-    cumulativePV += typical * Math.max(bar.volume, 1);
-    cumulativeVolume += Math.max(bar.volume, 1);
-    return cumulativePV / cumulativeVolume;
-  });
 }
 
 function UpcomingCatalysts({ events }: { events: CatalystEvent[] }) {
@@ -196,234 +178,6 @@ function UpcomingCatalysts({ events }: { events: CatalystEvent[] }) {
         );
       })}
     </div>
-  );
-}
-
-function ChartCanvas({
-  bars,
-  levels,
-  catalysts = [],
-}: {
-  bars: ChartBar[];
-  levels: Array<{ label: string; value: number; color: string }>;
-  catalysts?: CatalystEvent[];
-}) {
-  if (!bars.length) {
-    return (
-      <div style={{
-        height: 460,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "var(--ink-faint)",
-        fontFamily: "var(--mono)",
-        fontSize: 11,
-      }}>
-        NO CHART DATA
-      </div>
-    );
-  }
-
-  const width = 960;
-  const height = 460;
-  const priceHeight = 340;
-  const volumeHeight = 70;
-  const pad = { top: 18, right: 72, bottom: 34, left: 18 };
-  const contentWidth = width - pad.left - pad.right;
-  const candleWidth = Math.max(4, Math.min(10, contentWidth / bars.length - 2));
-  const sma20 = movingAverage(bars, 20);
-  const vwap = rollingVwap(bars);
-  const priceValues = [
-    ...bars.flatMap((bar) => [bar.high, bar.low]),
-    ...levels.map((level) => level.value),
-  ];
-  const minPrice = Math.min(...priceValues) * 0.995;
-  const maxPrice = Math.max(...priceValues) * 1.005;
-  const priceRange = Math.max(maxPrice - minPrice, 0.01);
-  const maxVolume = Math.max(...bars.map((bar) => bar.volume), 1);
-
-  const xForIndex = (idx: number) => pad.left + (contentWidth * idx) / Math.max(bars.length - 1, 1);
-  const yForPrice = (price: number) => pad.top + ((maxPrice - price) / priceRange) * (priceHeight - pad.top);
-  const yForVolume = (volume: number) => priceHeight + 18 + volumeHeight - (volume / maxVolume) * volumeHeight;
-
-  const smaPath = pathFromPoints(
-    sma20.flatMap((value, idx) => value == null ? [] : [{ x: xForIndex(idx), y: yForPrice(value) }]),
-  );
-  const vwapPath = pathFromPoints(vwap.map((value, idx) => ({ x: xForIndex(idx), y: yForPrice(value) })));
-  const last = bars[bars.length - 1];
-
-  return (
-    <div style={{ position: "relative", height }}>
-      <UpcomingCatalysts events={catalysts} />
-      <div
-        aria-label="Chart legend"
-        style={{
-          position: "absolute",
-          left: 12,
-          top: 10,
-          zIndex: 2,
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          padding: "8px 10px",
-          background: "rgba(6,11,23,0.82)",
-          border: "1px solid var(--line-dim)",
-          pointerEvents: "none",
-        }}
-      >
-        {[
-          { label: "SMA-20", color: "#f4c64f", style: "solid" as const },
-          { label: "VWAP", color: "#8e7cfb", style: "dashed" as const },
-          { label: "Volume", color: "rgba(148,163,184,0.7)", style: "bar" as const },
-          ...levels.map((level) => ({ label: level.label, color: level.color, style: "level" as const })),
-        ].map((item) => (
-          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              aria-hidden="true"
-              style={{
-                width: 18,
-                height: item.style === "bar" ? 8 : 2,
-                background: item.style === "dashed" ? "transparent" : item.color,
-                borderTop: item.style === "dashed" ? `2px dashed ${item.color}` : undefined,
-                boxShadow: item.style === "level" ? `0 0 0 1px ${item.color}` : undefined,
-              }}
-            />
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", letterSpacing: "0.04em" }}>
-              {item.label}
-            </span>
-          </div>
-        ))}
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "100%", display: "block" }}>
-        <rect x="0" y="0" width={width} height={height} fill="transparent" />
-
-        {Array.from({ length: 5 }).map((_, idx) => {
-          const y = pad.top + ((priceHeight - pad.top) * idx) / 4;
-          const price = maxPrice - (priceRange * idx) / 4;
-          return (
-            <g key={idx}>
-              <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke="rgba(255,255,255,0.06)" strokeDasharray="4 6" />
-              <text x={width - pad.right + 8} y={y + 4} fill="rgba(148,163,184,0.8)" fontFamily="var(--mono)" fontSize="10">
-                {price.toFixed(2)}
-              </text>
-            </g>
-          );
-        })}
-
-        {bars.map((bar, idx) => {
-          const x = xForIndex(idx);
-          const openY = yForPrice(bar.open);
-          const closeY = yForPrice(bar.close);
-          const highY = yForPrice(bar.high);
-          const lowY = yForPrice(bar.low);
-          const isUp = bar.close >= bar.open;
-          const color = isUp ? "#18c37e" : "#ff5f6d";
-          const bodyY = Math.min(openY, closeY);
-          const bodyH = Math.max(Math.abs(closeY - openY), 1.2);
-
-          return (
-            <g key={`${bar.timestamp}-${idx}`}>
-              <line x1={x} y1={highY} x2={x} y2={lowY} stroke={color} strokeWidth="1.2" />
-              <rect
-                x={x - candleWidth / 2}
-                y={bodyY}
-                width={candleWidth}
-                height={bodyH}
-                fill={isUp ? "rgba(24,195,126,0.9)" : "rgba(255,95,109,0.9)"}
-                stroke={color}
-                strokeWidth="1"
-              />
-              <rect
-                x={x - candleWidth / 2}
-                y={yForVolume(bar.volume)}
-                width={candleWidth}
-                height={volumeHeight - (yForVolume(bar.volume) - (priceHeight + 18))}
-                fill={isUp ? "rgba(24,195,126,0.32)" : "rgba(255,95,109,0.32)"}
-              />
-            </g>
-          );
-        })}
-
-        {smaPath && <path d={smaPath} fill="none" stroke="#f4c64f" strokeWidth="2.1" />}
-        {vwapPath && <path d={vwapPath} fill="none" stroke="#8e7cfb" strokeWidth="1.8" strokeDasharray="5 5" />}
-
-        {levels.map((level) => {
-          const y = yForPrice(level.value);
-          return (
-            <line
-              key={level.label}
-              x1={pad.left}
-              y1={y}
-              x2={width - pad.right}
-              y2={y}
-              stroke={level.color}
-              strokeWidth="1.2"
-              strokeDasharray="6 5"
-              opacity="0.9"
-            />
-          );
-        })}
-
-        <text x={pad.left} y={height - 14} fill="rgba(100,116,139,0.9)" fontFamily="var(--mono)" fontSize="10">
-          {new Date(last.timestamp).toLocaleString()}
-        </text>
-        <text x={width - pad.right} y={height - 14} fill="rgba(100,116,139,0.9)" fontFamily="var(--mono)" fontSize="10">
-          Vol {Math.round(last.volume).toLocaleString()}
-        </text>
-      </svg>
-
-      {levels.map((level) => {
-        const top = pad.top + ((maxPrice - level.value) / priceRange) * (priceHeight - pad.top) - 12;
-        return (
-          <div
-            key={level.label}
-            style={{
-              position: "absolute",
-              right: 12,
-              top: Math.max(4, Math.min(top, priceHeight - 24)),
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              pointerEvents: "none",
-            }}
-          >
-            <span style={{
-              padding: "2px 8px",
-              background: level.color,
-              color: "#07111f",
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-            }}>
-              {level.label}
-            </span>
-            <span style={{
-              padding: "2px 8px",
-              background: "rgba(6,11,23,0.88)",
-              border: `1px solid ${level.color}55`,
-              color: level.color,
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-            }}>
-              {level.value.toFixed(2)}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function InfoCard({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <section className="panel" style={{ overflow: "hidden" }}>
-      <div className="panel-head">
-        <span className="panel-title">{title}</span>
-        {action}
-      </div>
-      <div style={{ padding: 14 }}>{children}</div>
-    </section>
   );
 }
 
@@ -505,7 +259,12 @@ export default function ChartWorkstation({
 
   const loadSignals = async () => {
     try {
-      const res: any = await api.getEquitySignals(12);
+      // Must cover the full watchlist (~102 tickers, deduped server-side to
+      // one entry per ticker) — selectedSignal below looks up the CURRENTLY
+      // VIEWED symbol by ticker, not just "recent" signals. A small limit
+      // here silently showed "NO SIGNAL" for any symbol that wasn't among
+      // the last few scanned, even when a real signal existed for it.
+      const res: any = await api.getEquitySignals(150);
       setSignals(res.signals || []);
     } catch {
       setSignals([]);
@@ -514,6 +273,7 @@ export default function ChartWorkstation({
 
   useEffect(() => {
     loadSignals();
+    const si = setInterval(loadSignals, 60000);
     (api.getRegime() as Promise<any>).then(setRegime).catch(() => setRegime(null));
     const loadExec = () =>
       (api.getExecutionMode() as Promise<{ mode?: string }>)
@@ -525,7 +285,10 @@ export default function ChartWorkstation({
         .catch(() => {});
     loadExec();
     const ei = setInterval(loadExec, 15000);
-    return () => clearInterval(ei);
+    return () => {
+      clearInterval(si);
+      clearInterval(ei);
+    };
   }, []);
 
   useEffect(() => {
@@ -616,10 +379,7 @@ export default function ChartWorkstation({
           { label: "Portfolio", value: fmtMoney(netLiq, 2), tone: "var(--cyan)" },
           { label: "Reconciliation", value: reconciliation?.clean ? "CLEAN" : "WATCH", tone: reconciliation?.clean ? "var(--green)" : "var(--amber)" },
         ].map((item) => (
-          <div key={item.label} className="panel" style={{ padding: "12px 14px" }}>
-            <div className="kicker" style={{ marginBottom: 8 }}>{item.label}</div>
-            <div className="data-val sm" style={{ color: item.tone }}>{item.value}</div>
-          </div>
+          <StatTile key={item.label} variant="boxed" label={item.label} hint={hintFor(item.label)} value={item.value} tone={item.tone} />
         ))}
       </div>
       )}
@@ -627,7 +387,7 @@ export default function ChartWorkstation({
       <div className="workstation-grid" style={compact ? { gridTemplateColumns: "1fr", flex: 1, minHeight: 0 } : undefined}>
         {!compact && (
         <div className="workstation-col">
-          <InfoCard title="Market Watch">
+          <Panel title="Market Watch" sectionStyle={{ overflow: "hidden" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", gap: 6 }}>
                 <input
@@ -688,9 +448,9 @@ export default function ChartWorkstation({
                 })}
               </div>
             </div>
-          </InfoCard>
+          </Panel>
 
-          <InfoCard title="Positions">
+          <Panel title="Positions" sectionStyle={{ overflow: "hidden" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {positions.length === 0 ? (
                 <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
@@ -720,38 +480,33 @@ export default function ChartWorkstation({
                 </div>
               ))}
             </div>
-          </InfoCard>
+          </Panel>
         </div>
         )}
 
         <div className="workstation-center">
-          <section className="panel" style={{ overflow: "hidden" }}>
-            <div className="panel-head" style={{ gap: 12, flexWrap: "wrap" }}>
+          <Panel
+            sectionStyle={{ overflow: "hidden" }}
+            padding={0}
+            title={
               <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 28, fontWeight: 700, color: "var(--cyan)" }}>{symbol}</span>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-dim)" }}>
                   {selectedSnapshot?.last_close != null ? fmtMoney(selectedSnapshot.last_close, 2) : "—"} · {fmtPct(selectedSnapshot?.change_pct, 2)}
                 </span>
               </div>
+            }
+            action={
               <div style={{ display: "flex", gap: 8, marginLeft: "auto", flexWrap: "wrap" }}>
                 {TIMEFRAMES.map((item) => (
-                  <button
-                    key={item.key}
-                    className={`btn-t ${timeframe === item.key ? "active" : ""}`}
-                    onClick={() => setTimeframe(item.key)}
-                  >
+                  <Button key={item.key} active={timeframe === item.key} onClick={() => setTimeframe(item.key)}>
                     {item.label}
-                  </button>
+                  </Button>
                 ))}
-                <button
-                  className="btn-t"
-                  onClick={() => setSignalDrawerOpen(true)}
-                >
-                  Signal Detail
-                </button>
+                <Button onClick={() => setSignalDrawerOpen(true)}>Signal Detail</Button>
               </div>
-            </div>
-
+            }
+          >
             <div style={{ padding: 14 }}>
               <div style={{
                 display: "grid",
@@ -759,36 +514,32 @@ export default function ChartWorkstation({
                 gap: 10,
                 marginBottom: 12,
               }} className="workstation-metrics-grid">
-                <div style={{ background: "var(--bg-3)", padding: "10px 12px", border: "1px solid var(--line-dim)" }}>
-                  <div className="kicker" style={{ marginBottom: 8 }}>Signal</div>
-                  {selectedSignal ? (
-                    <SignalAttribution data={toChartSignalAttribution(selectedSignal)} size="sm" />
-                  ) : (
-                    <div className="data-val sm" style={{ color: "var(--ink-dim)" }}>NO SIGNAL</div>
-                  )}
-                </div>
+                <StatTile
+                  variant="boxed" label="Signal" hint={hintFor("Signal")}
+                  value={selectedSignal
+                    ? <SignalAttribution data={toChartSignalAttribution(selectedSignal)} size="sm" />
+                    : <span style={{ color: "var(--ink-dim)" }}>NO SIGNAL</span>}
+                />
                 {[
                   { label: "Confidence", value: selectedSignal ? `${Math.round(selectedSignal.confidence * 100)}%` : "—", tone: "var(--amber)" },
                   { label: "IV Rank", value: ivRank?.iv_rank != null ? `${Math.round(ivRank.iv_rank)}` : "—", tone: "var(--cyan)" },
                   { label: "RSI", value: selectedSignal?.indicators?.rsi != null ? selectedSignal.indicators.rsi.toFixed(1) : "—", tone: "var(--ink)" },
                   { label: "Volume x", value: selectedSignal?.indicators?.volume_ratio != null ? selectedSignal.indicators.volume_ratio.toFixed(2) : "—", tone: "var(--ink)" },
                 ].map((item) => (
-                  <div key={item.label} style={{ background: "var(--bg-3)", padding: "10px 12px", border: "1px solid var(--line-dim)" }}>
-                    <div className="kicker" style={{ marginBottom: 8 }}>
-                      {resolveMetricHint(item.label) ? <MetricHint id={item.label} /> : item.label}
-                    </div>
-                    <div className="data-val sm" style={{ color: item.tone }}>{item.value}</div>
-                  </div>
+                  <StatTile key={item.label} variant="boxed" label={item.label} hint={hintFor(item.label)} value={item.value} tone={item.tone} />
                 ))}
               </div>
 
-              <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-3)" }}>
+              <div className="instrument-card--flat" style={{ position: "relative" }}>
                 {chartLoading ? (
                   <div className="skeleton-block" style={{ height: 460 }} aria-busy="true" aria-label="Loading chart">
                     <div className="skeleton-shimmer" />
                   </div>
                 ) : (
-                  <ChartCanvas bars={chartBars} levels={levels} catalysts={catalystEvents} />
+                  <>
+                    <UpcomingCatalysts events={catalystEvents} />
+                    <CandlestickChart bars={chartBars} levels={levels} />
+                  </>
                 )}
               </div>
               {chartError && (
@@ -797,7 +548,7 @@ export default function ChartWorkstation({
                 </div>
               )}
             </div>
-          </section>
+          </Panel>
 
           {!compact && (
           <section className="chart-intel-grid">
@@ -809,21 +560,19 @@ export default function ChartWorkstation({
 
           {!compact && (
           <div className="workstation-bottom-grid">
-            <InfoCard title={planTitle}>
+            <Panel title={planTitle} sectionStyle={{ overflow: "hidden" }}>
               {selectedSignal?.source && selectedSignal.source !== "unknown" && (
-                <div style={{
+                <div className="instrument-card--flat" style={{
                   marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
                   color: "var(--ink-dim)", padding: "8px 10px",
-                  border: "1px solid var(--line-dim)", background: "var(--bg-3)",
                 }}>
                   Source: {selectedSignal.source}
                 </div>
               )}
               {!selectedSignal && (
-                <div style={{
+                <div className="instrument-card--flat" style={{
                   marginBottom: 10, fontFamily: "var(--mono)", fontSize: 11,
                   color: "var(--ink-dim)", padding: "8px 10px",
-                  border: "1px solid var(--line-dim)", background: "var(--bg-3)",
                 }}>
                   No signal for {symbol} — levels below are chart-derived
                   (recent support/resistance), not the signal engine's own plan.
@@ -836,20 +585,17 @@ export default function ChartWorkstation({
                   { label: "Target", value: fmtMoney(target, 2), tone: "var(--green)" },
                   { label: "R:R", value: selectedSignal?.trade_plan?.risk_reward != null ? `${selectedSignal.trade_plan.risk_reward.toFixed(2)}x` : "—", tone: "var(--amber)" },
                 ].map((item) => (
-                  <div key={item.label} style={{ border: "1px solid var(--line-dim)", padding: "12px 12px", background: "var(--bg-3)" }}>
-                    <div className="kicker" style={{ marginBottom: 8 }}>{item.label}</div>
-                    <div className="data-val sm" style={{ color: item.tone }}>{item.value}</div>
-                  </div>
+                  <StatTile key={item.label} variant="boxed" label={item.label} hint={hintFor(item.label)} value={item.value} tone={item.tone} />
                 ))}
               </div>
-            </InfoCard>
+            </Panel>
 
-            <InfoCard title="Context Stack">
+            <Panel title="Context Stack" sectionStyle={{ overflow: "hidden" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span className="mode-badge balanced">{regime?.regime ? regime.regime.replace(/_/g, " ") : "unknown"}</span>
-                  <span className="mode-badge conservative">VIX {regime?.vix != null ? regime.vix.toFixed(1) : "—"}</span>
-                  <span className="mode-badge aggressive">IVR {ivRank?.iv_rank != null ? Math.round(ivRank.iv_rank) : "—"}</span>
+                  <Badge kind="mode" tone="balanced">{regime?.regime ? regime.regime.replace(/_/g, " ") : "unknown"}</Badge>
+                  <Badge kind="mode" tone="conservative">VIX {regime?.vix != null ? regime.vix.toFixed(1) : "—"}</Badge>
+                  <Badge kind="mode" tone="aggressive">IVR {ivRank?.iv_rank != null ? Math.round(ivRank.iv_rank) : "—"}</Badge>
                 </div>
                 <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
                   {normalizeReasons(selectedSignal?.reasons).length
@@ -857,7 +603,7 @@ export default function ChartWorkstation({
                     : "Signal stack will describe momentum, trend, volume, and volatility context when available."}
                 </div>
               </div>
-            </InfoCard>
+            </Panel>
           </div>
           )}
         </div>
@@ -865,19 +611,14 @@ export default function ChartWorkstation({
         {!compact && (
         <div className="workstation-col workstation-right">
           <SetupScannerPanel />
-          <InfoCard
+          <Panel
             title="Research & Execution"
-            action={(
-              <button className="btn-t" onClick={() => loadSignals()}>
-                Refresh
-              </button>
-            )}
+            sectionStyle={{ overflow: "hidden" }}
+            action={<Button onClick={() => loadSignals()}>Refresh</Button>}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{
-                border: "1px solid var(--line-dim)",
+              <div className="instrument-card--flat" style={{
                 padding: "10px 12px",
-                background: "var(--bg-3)",
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--green)" }}>
@@ -914,23 +655,33 @@ export default function ChartWorkstation({
                 </button>
               ))}
             </div>
-          </InfoCard>
+          </Panel>
 
-          <InfoCard title="Operator Safety">
+          <Panel title="Operator Safety" sectionStyle={{ overflow: "hidden" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {[
-                { label: "Kill Switch", value: killSwitch?.active ? "ACTIVE" : "ARMED", tone: killSwitch?.active ? "var(--red)" : "var(--green)" },
-                { label: "Daily Loss", value: fmtPct(guardrailStatus?.daily_loss_pct, 2), tone: "var(--red)" },
-                { label: "Open Positions", value: String(portfolio?.open_positions ?? positions.length ?? 0), tone: "var(--ink)" },
-                { label: "Win Rate", value: portfolio?.win_rate != null ? `${Math.round(portfolio.win_rate * 100)}%` : "—", tone: "var(--cyan)" },
-              ].map((row) => (
-                <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 16, borderBottom: "1px solid var(--line-dim)", paddingBottom: 8 }}>
-                  <span className="kicker">{row.label}</span>
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: row.tone }}>{row.value}</span>
-                </div>
-              ))}
+              {/* daily_loss_pct is a signed P&L ratio (fraction, e.g. 0.0015
+                  for 0.15%) that's positive on a gain day — clamp to the
+                  negative portion and scale to a percent before display, so
+                  a gain doesn't render as a small red "loss" (it also wasn't
+                  being multiplied by 100 here, unlike every other consumer
+                  of this field). */}
+              {(() => {
+                const raw = guardrailStatus?.daily_loss_pct;
+                const dailyLossPct = typeof raw === "number" ? Math.max(0, -raw) * 100 : null;
+                return [
+                  { label: "Kill Switch", value: killSwitch?.active ? "ACTIVE" : "ARMED", tone: killSwitch?.active ? "var(--red)" : "var(--green)" },
+                  { label: "Daily Loss", value: fmtPct(dailyLossPct, 2), tone: dailyLossPct ? "var(--red)" : "var(--green)" },
+                  { label: "Open Positions", value: String(portfolio?.open_positions ?? positions.length ?? 0), tone: "var(--ink)" },
+                  { label: "Win Rate", value: portfolio?.win_rate != null ? `${Math.round(portfolio.win_rate * 100)}%` : "—", tone: "var(--cyan)" },
+                ].map((row) => (
+                  <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 16, borderBottom: "1px solid var(--line-dim)", paddingBottom: 8 }}>
+                    <span className="kicker">{row.label}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: row.tone }}>{row.value}</span>
+                  </div>
+                ));
+              })()}
             </div>
-          </InfoCard>
+          </Panel>
         </div>
         )}
       </div>

@@ -26,6 +26,7 @@ class GuardrailStatus:
     daily_loss_pct: float
     weekly_loss_pct: float
     monthly_loss_pct: float
+    drawdown_pct: float          # peak-to-trough decline, always >= 0
     consecutive_losses: int
     trades_today: int
     capital_pct_remaining: float  # 1.0 = full capital, 0.85 = 85% remaining
@@ -45,6 +46,7 @@ class PortfolioState:
     consecutive_losses: int
     trades_today: int
     cooling_off_until: Optional[datetime] = None
+    peak_value: float = 0.0  # 0.0 = untracked; treated as current_value (0% drawdown)
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -58,15 +60,17 @@ class GuardrailEngine:
     2. Daily loss limit
     3. Weekly loss limit
     4. Monthly loss limit
-    5. Consecutive loss limit
-    6. Daily trade cap
-    7. Capital preservation mode check
+    5. Maximum drawdown limit (peak-to-trough, not period-based)
+    6. Consecutive loss limit
+    7. Daily trade cap
+    8. Capital preservation mode check
     """
 
     def __init__(self) -> None:
         self.max_daily_loss_pct = settings.effective_max_daily_loss_pct
         self.max_weekly_loss_pct = settings.effective_max_weekly_loss_pct
         self.max_monthly_loss_pct = settings.effective_max_monthly_loss_pct
+        self.max_drawdown_pct = settings.effective_max_drawdown_pct
         self.cooling_off_hours = settings.effective_cooling_off_hours
         self.max_trades_per_day = settings.effective_max_trades_per_day
         self.max_consecutive_losses = settings.effective_max_consecutive_losses
@@ -85,6 +89,13 @@ class GuardrailEngine:
         daily_loss_pct   = float(Decimal(str(portfolio.daily_pnl))   / base)
         weekly_loss_pct  = float(Decimal(str(portfolio.weekly_pnl))  / base)
         monthly_loss_pct = float(Decimal(str(portfolio.monthly_pnl)) / base)
+
+        # Peak-to-trough drawdown — distinct from the period-based loss
+        # checks above (which reset each day/week/month): a book that ran
+        # up then fell back near/above starting capital can still have
+        # breached a real drawdown limit that daily/weekly/monthly never see.
+        peak = portfolio.peak_value if portfolio.peak_value > 0 else portfolio.current_value
+        drawdown_pct = max(0.0, (peak - portfolio.current_value) / peak) if peak > 0 else 0.0
 
         # ── 1. Cooling off period ──────────────────────────────────────────
         if portfolio.cooling_off_until:
@@ -105,6 +116,7 @@ class GuardrailEngine:
                     daily_loss_pct=daily_loss_pct,
                     weekly_loss_pct=weekly_loss_pct,
                     monthly_loss_pct=monthly_loss_pct,
+                    drawdown_pct=drawdown_pct,
                     consecutive_losses=portfolio.consecutive_losses,
                     trades_today=portfolio.trades_today,
                     capital_pct_remaining=capital_pct,
@@ -130,6 +142,7 @@ class GuardrailEngine:
                 daily_loss_pct=daily_loss_pct,
                 weekly_loss_pct=weekly_loss_pct,
                 monthly_loss_pct=monthly_loss_pct,
+                drawdown_pct=drawdown_pct,
                 consecutive_losses=portfolio.consecutive_losses,
                 trades_today=portfolio.trades_today,
                 capital_pct_remaining=capital_pct,
@@ -155,6 +168,7 @@ class GuardrailEngine:
                 daily_loss_pct=daily_loss_pct,
                 weekly_loss_pct=weekly_loss_pct,
                 monthly_loss_pct=monthly_loss_pct,
+                drawdown_pct=drawdown_pct,
                 consecutive_losses=portfolio.consecutive_losses,
                 trades_today=portfolio.trades_today,
                 capital_pct_remaining=capital_pct,
@@ -180,13 +194,40 @@ class GuardrailEngine:
                 daily_loss_pct=daily_loss_pct,
                 weekly_loss_pct=weekly_loss_pct,
                 monthly_loss_pct=monthly_loss_pct,
+                drawdown_pct=drawdown_pct,
                 consecutive_losses=portfolio.consecutive_losses,
                 trades_today=portfolio.trades_today,
                 capital_pct_remaining=capital_pct,
                 flags=flags,
             )
 
-        # ── 5. Consecutive loss limit ──────────────────────────────────────
+        # ── 5. Maximum drawdown limit ────────────────────────────────────────
+        if drawdown_pct >= self.max_drawdown_pct:
+            suspended_until = datetime.now(timezone.utc) + timedelta(days=30)
+            reason = (
+                f"Max drawdown limit hit: {drawdown_pct:.2%} from peak "
+                f"(limit: {self.max_drawdown_pct:.2%}). "
+                f"Full review required. Trading suspended for 30 days."
+            )
+            logger.warning("GUARDRAIL BLOCK — drawdown: %s", reason)
+            flags.append("max_drawdown_limit")
+            return GuardrailStatus(
+                trading_allowed=False,
+                trading_mode="suspended",
+                reason=reason,
+                cooling_off_until=suspended_until,
+                suspended_until=suspended_until,
+                daily_loss_pct=daily_loss_pct,
+                weekly_loss_pct=weekly_loss_pct,
+                monthly_loss_pct=monthly_loss_pct,
+                drawdown_pct=drawdown_pct,
+                consecutive_losses=portfolio.consecutive_losses,
+                trades_today=portfolio.trades_today,
+                capital_pct_remaining=capital_pct,
+                flags=flags,
+            )
+
+        # ── 6. Consecutive loss limit ──────────────────────────────────────
         if portfolio.consecutive_losses >= self.max_consecutive_losses:
             suspended_until = datetime.now(timezone.utc) + timedelta(hours=48)
             reason = (
@@ -205,13 +246,14 @@ class GuardrailEngine:
                 daily_loss_pct=daily_loss_pct,
                 weekly_loss_pct=weekly_loss_pct,
                 monthly_loss_pct=monthly_loss_pct,
+                drawdown_pct=drawdown_pct,
                 consecutive_losses=portfolio.consecutive_losses,
                 trades_today=portfolio.trades_today,
                 capital_pct_remaining=capital_pct,
                 flags=flags,
             )
 
-        # ── 6. Daily trade cap ─────────────────────────────────────────────
+        # ── 7. Daily trade cap ─────────────────────────────────────────────
         if portfolio.trades_today >= self.max_trades_per_day:
             reason = (
                 f"Daily trade cap reached: {portfolio.trades_today}/{self.max_trades_per_day}. "
@@ -228,13 +270,14 @@ class GuardrailEngine:
                 daily_loss_pct=daily_loss_pct,
                 weekly_loss_pct=weekly_loss_pct,
                 monthly_loss_pct=monthly_loss_pct,
+                drawdown_pct=drawdown_pct,
                 consecutive_losses=portfolio.consecutive_losses,
                 trades_today=portfolio.trades_today,
                 capital_pct_remaining=capital_pct,
                 flags=flags,
             )
 
-        # ── 7. Capital preservation mode ──────────────────────────────────
+        # ── 8. Capital preservation mode ──────────────────────────────────
         trading_mode = "normal"
         if capital_pct <= self.preservation_threshold:
             trading_mode = "capital_preservation"
@@ -258,6 +301,7 @@ class GuardrailEngine:
             daily_loss_pct=daily_loss_pct,
             weekly_loss_pct=weekly_loss_pct,
             monthly_loss_pct=monthly_loss_pct,
+            drawdown_pct=drawdown_pct,
             consecutive_losses=portfolio.consecutive_losses,
             trades_today=portfolio.trades_today,
             capital_pct_remaining=capital_pct,

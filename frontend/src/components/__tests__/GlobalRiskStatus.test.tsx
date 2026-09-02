@@ -106,10 +106,24 @@ describe("GlobalRiskStatus", () => {
     mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
     mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
     mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
-    mockedApi.getPortfolioState.mockResolvedValue({ state: { daily_loss_pct: 0.005, max_daily_loss_pct: 0.02 } });
+    // daily_loss_pct is a signed P&L ratio — negative here means an actual
+    // 0.5% loss, consuming half a percent of the 2% budget.
+    mockedApi.getPortfolioState.mockResolvedValue({ state: { daily_loss_pct: -0.005, max_daily_loss_pct: 0.02 } });
 
     render(<GlobalRiskStatus />);
     await waitFor(() => expect(screen.getByText("1.5%")).toBeInTheDocument());
+  });
+
+  it("shows the full risk budget on a gain day, not a reduced one", async () => {
+    mockBroker({ broker: "ibkr", paper_mode: true, status: "connected" });
+    mockedApi.getExecutionMode.mockResolvedValue({ mode: "manual" });
+    mockedApi.getTradeDeskKillSwitch.mockResolvedValue({ engaged: false });
+    // A positive daily_loss_pct is a gain — it must not eat into the
+    // displayed loss budget (the bug this fix addresses).
+    mockedApi.getPortfolioState.mockResolvedValue({ state: { daily_loss_pct: 0.005, max_daily_loss_pct: 0.02 } });
+
+    render(<GlobalRiskStatus />);
+    await waitFor(() => expect(screen.getByText("2.0%")).toBeInTheDocument());
   });
 
   it("shows risk budget as unavailable rather than guessing when the limit is missing", async () => {

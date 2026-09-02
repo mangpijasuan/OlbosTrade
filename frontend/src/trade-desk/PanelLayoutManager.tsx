@@ -93,12 +93,11 @@ export function PanelChrome({
 }) {
   return (
     <div
+      className="instrument-card"
       style={{
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        border: "1px solid var(--line-dim)",
-        background: "var(--bg-2)",
         ...style,
       }}
     >

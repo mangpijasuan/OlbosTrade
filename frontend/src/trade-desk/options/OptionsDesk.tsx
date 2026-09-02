@@ -67,49 +67,27 @@ export default function OptionsDesk() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--bg)" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "6px 10px",
-          borderBottom: "1px solid var(--line-dim)",
-          flexShrink: 0,
-          background: "var(--bg-2)",
-          flexWrap: "wrap",
-        }}
-      >
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.1em", color: "var(--ink-dim)" }}>
-          OPTIONS DESK
+      <div className="desk-tool-rail" style={{ flexWrap: "wrap", alignItems: "center" }}>
+        <span className="kicker" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          Options desk
         </span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700, color: "var(--cyan)" }}>
+        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)" }}>
           {symbol}
         </span>
-        <div style={{ display: "flex", gap: 0, flexWrap: "wrap", marginLeft: 8 }}>
+        <div style={{ display: "flex", gap: 2, marginLeft: 8, flexWrap: "wrap" }}>
           {TOOLS.map((t) => (
             <button
               key={t.key}
               type="button"
               onClick={() => setTool(t.key)}
-              style={{
-                padding: "6px 10px",
-                border: "none",
-                borderBottom: tool === t.key ? "2px solid var(--cyan)" : "2px solid transparent",
-                background: "transparent",
-                color: tool === t.key ? "var(--cyan)" : "var(--ink-dim)",
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                cursor: "pointer",
-              }}
+              className={`desk-tool-rail__btn${tool === t.key ? " desk-tool-rail__btn--active" : ""}`}
             >
               {t.label}
             </button>
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={reset}>
+        <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={reset}>
           Reset panels
         </button>
       </div>
@@ -149,17 +127,12 @@ export default function OptionsDesk() {
           <button
             type="button"
             onClick={() => toggle("activity")}
+            className="desk-tool-rail__btn"
             style={{
-              border: "none",
+              width: "100%",
+              borderRadius: 0,
               borderTop: "1px solid var(--line-dim)",
-              background: "var(--bg-3)",
-              color: "var(--ink-faint)",
-              fontFamily: "var(--mono)",
-              fontSize: 9,
-              letterSpacing: "0.1em",
-              padding: 4,
-              cursor: "pointer",
-              flexShrink: 0,
+              padding: 6,
             }}
           >
             {layout.activityCollapsed ? "SHOW GATE" : "HIDE GATE"}

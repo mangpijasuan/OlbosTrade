@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import AlertsManager from "../components/AlertsManager";
+import { Badge, Button } from "../components/ui";
 
 type Tab = "calendar" | "watchlists" | "why" | "alerts";
 
@@ -35,9 +36,9 @@ const SEV_TONE: Record<string, string> = {
 function SevBadge({ s }: { s: string }) {
   const tone = SEV_TONE[s] || "var(--ink-dim)";
   return (
-    <span style={{ fontSize: 11, color: tone, border: `1px solid ${tone}`, borderRadius: 3, padding: "1px 7px", whiteSpace: "nowrap" }}>
+    <Badge kind="tag" tone={tone} style={{ fontSize: 11, borderRadius: 3, padding: "1px 7px", whiteSpace: "nowrap", opacity: 1 }}>
       {s.replace("_", " ")}
-    </span>
+    </Badge>
   );
 }
 
@@ -49,7 +50,7 @@ function CalendarTab() {
       .then(d => setEvents(d.events || [])).finally(() => setLoading(false));
   }, []);
   return (
-    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, overflow: "hidden" }}>
+    <div className="instrument-card" style={{ overflow: "hidden" }}>
       <table className="t-table">
         <thead><tr>
           <th>Event</th><th>Date</th><th style={{ textAlign: "right" }}>In</th><th>Type</th><th>Severity</th><th>Source</th>
@@ -81,15 +82,15 @@ function WatchlistsTab() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
       {lists.map(w => (
-        <div key={w.slug} style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+        <div key={w.slug} className="instrument-card" style={{ padding: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{w.name}</span>
-            {w.is_system && <span style={{ fontSize: 10, color: "var(--ink-faint)", border: "1px solid var(--line-dim)", borderRadius: 2, padding: "0 4px" }}>system</span>}
+            {w.is_system && <Badge kind="tag" tone="var(--ink-faint)" style={{ fontSize: 10, borderRadius: 2, padding: "0 4px", opacity: 1 }}>system</Badge>}
           </div>
           <div style={{ fontSize: 12, color: "var(--ink-dim)", marginBottom: 8 }}>{w.description}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
             {w.symbols.map(s => (
-              <span key={s.symbol} className="mono" style={{ fontSize: 11, color: "var(--ink)", background: "var(--bg-3)", borderRadius: 3, padding: "2px 7px" }}>{s.symbol}</span>
+              <Badge key={s.symbol} kind="tag" tone="var(--ink)" bg="var(--bg-3)" style={{ fontFamily: "var(--mono)", fontSize: 11, borderRadius: 3, padding: "2px 7px" }}>{s.symbol}</Badge>
             ))}
           </div>
         </div>
@@ -114,7 +115,7 @@ function Bucket({ title, items, tone }: { title: string; items: string[]; tone: 
 
 function FeedList({ title, items, render }: { title: string; items: FeedItem[]; render: (i: FeedItem) => React.ReactNode }) {
   return (
-    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+    <div className="instrument-card" style={{ padding: 12 }}>
       <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
       {items.length === 0 ? (
         <div style={{ fontSize: 12, color: "var(--ink-faint)" }}>None available.</div>
@@ -146,12 +147,14 @@ const DIR_TONE: Record<string, string> = {
 };
 const IMPACT_TONE: Record<string, string> = { high: "var(--red)", moderate: "var(--amber)", low: "var(--ink-dim)" };
 
+const CLASS_BADGE_STYLE = { fontSize: 10, borderRadius: 3, padding: "0 5px", opacity: 1 } as const;
+
 function ClassBadges({ c }: { c: Classification }) {
   return (
     <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 3 }}>
-      <span style={{ fontSize: 10, color: "var(--ink-dim)", border: "1px solid var(--line-dim)", borderRadius: 3, padding: "0 5px" }}>{c.category}</span>
-      <span style={{ fontSize: 10, color: DIR_TONE[c.direction], border: `1px solid ${DIR_TONE[c.direction]}`, borderRadius: 3, padding: "0 5px" }}>{c.direction}</span>
-      <span style={{ fontSize: 10, color: IMPACT_TONE[c.impact], border: `1px solid ${IMPACT_TONE[c.impact]}`, borderRadius: 3, padding: "0 5px" }}>{c.impact} impact</span>
+      <Badge kind="tag" tone="var(--ink-dim)" style={{ ...CLASS_BADGE_STYLE, border: "1px solid var(--line-dim)" }}>{c.category}</Badge>
+      <Badge kind="tag" tone={DIR_TONE[c.direction]} style={CLASS_BADGE_STYLE}>{c.direction}</Badge>
+      <Badge kind="tag" tone={IMPACT_TONE[c.impact]} style={CLASS_BADGE_STYLE}>{c.impact} impact</Badge>
     </div>
   );
 }
@@ -182,7 +185,7 @@ function WhyTab() {
         <input value={sym} onChange={e => setSym(e.target.value.toUpperCase())}
           onKeyDown={e => { if (e.key === "Enter") run(sym); }}
           style={{ background: "var(--bg-3)", border: "1px solid var(--line-dim)", color: "var(--ink)", fontFamily: "var(--mono)", fontSize: 13, padding: "7px 10px", borderRadius: 4, outline: "none", width: 120 }} />
-        <button className="btn-t active" onClick={() => run(sym)} disabled={loading}>{loading ? "Loading…" : "Explain"}</button>
+        <Button active onClick={() => run(sym)} disabled={loading}>{loading ? "Loading…" : "Explain"}</Button>
         {quality && (
           <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12, color: "var(--ink-dim)" }}>
             Data quality <span className="tnum" style={{ color: quality.score >= 70 ? "var(--green)" : "var(--amber)" }}>{quality.score}/100</span>
@@ -191,7 +194,7 @@ function WhyTab() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
         {data && (
-          <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 14 }}>
+          <div className="instrument-card" style={{ padding: 14 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 12 }}>{data.headline}</div>
             <Bucket title="Observed facts" items={data.facts} tone="var(--ink)" />
             <Bucket title="Possible drivers (inference)" items={data.inferences} tone="var(--ink-dim)" />
@@ -204,10 +207,10 @@ function WhyTab() {
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {insider && (
-            <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)", padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span className="kicker">Insider activity</span>
-                {insider.cluster && <span style={{ fontSize: 10, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 3, padding: "0 6px" }}>cluster</span>}
+                {insider.cluster && <Badge kind="tag" tone="var(--amber)" style={{ fontSize: 10, borderRadius: 3, padding: "0 6px", opacity: 1 }}>cluster</Badge>}
               </div>
               <div style={{ fontSize: 13, color: "var(--ink)" }}>
                 <span className="tnum" style={{ fontWeight: 600 }}>{insider.insider_filings}</span> Form 3/4/5 filings
@@ -255,7 +258,7 @@ export default function Intel() {
       </div>
       <div style={{ display: "flex", gap: 6, borderBottom: "1px solid var(--line-dim)", paddingBottom: 8 }}>
         {TABS.map(t => (
-          <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>{t.label}</button>
+          <Button key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>{t.label}</Button>
         ))}
       </div>
       {tab === "calendar" && <CalendarTab />}

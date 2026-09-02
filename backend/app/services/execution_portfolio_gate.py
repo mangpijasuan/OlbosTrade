@@ -20,15 +20,36 @@ execution_portfolio_gate=false.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.core.config import settings
-from app.services.portfolio_engine import HEAT_HIGH, position_risk_dollars, sector_for
+from app.services.portfolio_engine import (
+    HEAT_HIGH, is_cappable_sector, position_risk_dollars, sector_for,
+)
 from app.services.risk_manager import PortfolioRiskState, ProposedTrade, RiskManager
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Per-regime concurrency tightening — separate from regime_classifier.py's
+# REGIME_CONFIG size_multiplier because position-size economics and
+# concurrent-position-count risk appetite don't necessarily move together
+# (e.g. LOW_VOL_TRENDING options get less premium per trade but that's not
+# a headcount-risk signal). Tighten-only: every value must be <= 1.0 — this
+# gate must never raise capacity above the mode/global caps computed below.
+# Unrecognized/missing regime strings default to 1.0 (no-op) via
+# REGIME_CONCURRENCY_MULTIPLIER.get(..., 1.0) at the call site — new logic
+# added to an already-live, production-consequential gate must fail toward
+# current behavior, not toward maximum restriction.
+REGIME_CONCURRENCY_MULTIPLIER: dict[str, float] = {
+    "low_vol_trending":   1.0,   # calm/directional — REGIME_CONFIG's own equity_size_multiplier is a full 1.0, no headcount risk elevation
+    "normal_mean_revert": 1.0,   # baseline "ideal for premium selling" regime — no tightening
+    "high_vol_trending":  0.75,  # "elevated risk" per REGIME_CONFIG — matches its own options_size_multiplier=0.75
+    "crisis":             0.0,   # defense-in-depth only; the real CRISIS block is upstream (signal generation already skips CRISIS entirely)
+    "unknown":            0.5,   # matches REGIME_CONFIG's own options_size_multiplier=0.5 for uncertain classification
+}
 
 
 @dataclass
@@ -92,14 +113,22 @@ def evaluate_portfolio_gates(
     from app.services.trading_mode import trading_mode_manager
     max_pos = min(rm.max_concurrent, trading_mode_manager.config.max_concurrent)
 
+    # Regime can only ever tighten max_pos further, never loosen past the
+    # mode/global caps already computed above.
+    regime_multiplier = REGIME_CONCURRENCY_MULTIPLIER.get(signal.get("regime"), 1.0)
+    regime_tightened = regime_multiplier < 1.0
+    if regime_tightened:
+        max_pos = max(1, math.floor(max_pos * regime_multiplier))
+
     if portfolio.open_position_count >= max_pos:
         return PortfolioGateResult(
             allowed=False,
             reason=(
                 f"Max concurrent positions reached: "
                 f"{portfolio.open_position_count}/{max_pos}"
+                + (f" (regime-tightened: {signal.get('regime')})" if regime_tightened else "")
             ),
-            flags=["max_positions"],
+            flags=["max_positions"] + (["regime_tightened_capacity"] if regime_tightened else []),
             proposed_risk_dollars=risk_dollars,
         )
 
@@ -120,7 +149,9 @@ def evaluate_portfolio_gates(
 
         current_s = portfolio.positions_by_sector.get(sector, 0.0)
         new_s_pct = (current_s + risk_dollars) / portfolio.portfolio_value
-        if new_s_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
+        # An unclassified ticker is not in a sector with the other
+        # unclassified ones — see portfolio_engine.is_cappable_sector.
+        if is_cappable_sector(sector) and new_s_pct > RiskManager.MAX_SECTOR_CONCENTRATION:
             return PortfolioGateResult(
                 allowed=False,
                 reason=(
@@ -189,6 +220,19 @@ async def load_portfolio_risk_state(portfolio_value: float) -> PortfolioRiskStat
     Build PortfolioRiskState from open trades (same dollars/sectors as /api/portfolio/heat).
     On DB failure returns empty exposures with open_position_count=0 and logs a warning
     (caller treats that as fail-open for this gate only).
+
+    open_position_count is the max of the DB's tracked open-Trade count and
+    the broker's own live distinct-underlying position count. The DB count
+    alone can silently undercount whenever a position exists at the broker
+    with no matching Trade row — confirmed live in production 2026-08-26,
+    where several untracked positions consumed real margin/risk capacity
+    while this gate believed only 3 positions were open, since every
+    position-count check here only ever queried the Trade table. The
+    broker read (get_positions(), used below) is a local ib.portfolio()
+    cache lookup, not a network round-trip — same convention already used
+    by position_rotation.py/kill_switch.py — so this adds no meaningful
+    latency and needs no coordinator/timeout handling. A broker-read
+    failure fails open to the DB-only count rather than blocking the gate.
     """
     by_underlying: dict[str, float] = {}
     by_sector: dict[str, float] = {}
@@ -209,6 +253,21 @@ async def load_portfolio_risk_state(portfolio_value: float) -> PortfolioRiskStat
             r = position_risk_dollars(t)
             by_underlying[u] = by_underlying.get(u, 0.0) + r
             by_sector[s] = by_sector.get(s, 0.0) + r
+
+        try:
+            from app.broker.broker_factory import get_broker
+            live_positions = await get_broker().get_positions()
+            broker_open_count = len({
+                (p.underlying or "").upper()
+                for p in live_positions
+                if p.quantity != 0
+            })
+            open_count = max(open_count, broker_open_count)
+        except Exception as broker_exc:
+            logger.warning(
+                "portfolio gate: could not cross-check live broker position "
+                "count (using DB-tracked count only): %s", broker_exc,
+            )
     except Exception as exc:
         logger.warning(
             "portfolio gate: could not load open positions (fail open for this gate): %s",

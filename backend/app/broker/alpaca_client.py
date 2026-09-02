@@ -199,12 +199,14 @@ class AlpacaClient(BrokerInterface):
                     symbol=p["symbol"], underlying=underlying, strike=strike,
                     expiration=expiration, option_type=option_type, quantity=qty,
                     avg_cost=avg_cost, current_price=current_price, unrealized_pnl=unrealized_pnl,
+                    asset_type="option",
                 ))
             else:
                 positions.append(Position(
                     symbol=p["symbol"], underlying=p["symbol"], strike=Decimal("0"),
                     expiration=date.today(), option_type="call", quantity=qty,
                     avg_cost=avg_cost, current_price=current_price, unrealized_pnl=unrealized_pnl,
+                    asset_type="equity",
                 ))
         return positions
 

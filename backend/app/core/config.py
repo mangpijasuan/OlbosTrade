@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     max_daily_loss_pct: float = Field(default=0.02)
     max_weekly_loss_pct: float = Field(default=0.05)
     max_monthly_loss_pct: float = Field(default=0.10)
+    max_drawdown_pct: float = Field(default=0.15)
     max_concurrent_positions: int = Field(default=5)
     max_trades_per_day: int = Field(default=6)
     max_consecutive_losses: int = Field(default=3)
@@ -67,14 +68,39 @@ class Settings(BaseSettings):
     paper_visibility_max_daily_loss_pct: float = Field(default=0.08)
     paper_visibility_max_weekly_loss_pct: float = Field(default=0.15)
     paper_visibility_max_monthly_loss_pct: float = Field(default=0.25)
+    paper_visibility_max_drawdown_pct: float = Field(default=0.30)
     paper_visibility_max_trades_per_day: int = Field(default=20)
     paper_visibility_max_consecutive_losses: int = Field(default=8)
     paper_visibility_cooling_off_hours: int = Field(default=1)
     paper_visibility_capital_preservation_threshold: float = Field(default=0.65)
 
     # ── Equity signal settings ────────────────────────────────────────────
+    # The real, current Nasdaq-100 constituent list (102 tickers, including
+    # both GOOGL/GOOG share classes) — fetched live from
+    # https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies rather than
+    # hand-picked, and spot-checked against yfinance to confirm every symbol
+    # actually resolves to a real, currently-traded instrument. Previously an
+    # ad-hoc ~59-name list (mega-cap tech/financials/healthcare/etc, hand
+    # assembled); this replaces it with an objective, sourced index rather
+    # than a curated guess. Confirmed safe at this size (~1.7x the prior
+    # list): the scan loop's bounded concurrency (equity_scan_concurrency
+    # below) means wall-clock time scales with ticker-count/concurrency, not
+    # ticker count alone — a live production options scan of 50 symbols
+    # completed in ~47s, well under the 240s scan-cycle guard, so ~102
+    # comfortably fits. Going all the way to the full S&P 500 was considered
+    # separately and rejected: that needs a genuinely different bulk-data
+    # architecture, not a config change.
     equity_watchlist: str = Field(
-        default="AAPL,NVDA,MSFT,META,AMZN,GOOGL,AMD,TSLA,SPY,QQQ,JPM,V,MA"
+        default=(
+            "AAPL,ABNB,ADBE,ADI,ADP,ADSK,AEP,ALAB,ALNY,AMAT,AMD,AMGN,AMZN,APP,"
+            "ARM,ASML,AVGO,AXON,BKNG,BKR,CCEP,CDNS,CEG,CMCSA,COST,CPRT,CRWD,"
+            "CRWV,CSCO,CSX,CTAS,DASH,DDOG,DXCM,EXC,FANG,FAST,FER,FTNT,GEHC,"
+            "GILD,GOOG,GOOGL,HON,HONA,IDXX,INTC,INTU,ISRG,KDP,KHC,KLAC,LIN,"
+            "LITE,LRCX,MAR,MCHP,MDLZ,MELI,META,MNST,MPWR,MRVL,MSFT,MSTR,MU,"
+            "NBIS,NFLX,NVDA,NXPI,ODFL,ORLY,PANW,PAYX,PCAR,PDD,PEP,PLTR,PYPL,"
+            "QCOM,REGN,RKLB,ROP,ROST,SBUX,SHOP,SNDK,SNPS,SPCX,STX,TER,TMUS,"
+            "TRI,TSLA,TTWO,TXN,VRTX,WBD,WDAY,WDC,WMT,XEL"
+        )
     )
     equity_signal_interval_minutes: int = Field(default=15)
     # Symbols scanned per background-scan tick. 0 = scan the whole watchlist
@@ -84,6 +110,12 @@ class Settings(BaseSettings):
     # chance to clear the confidence bar. Widening this changes how many
     # candidates get evaluated, not how good a candidate has to be.
     equity_scan_window_size: int = Field(default=0)
+    # Bounded parallelism for the per-ticker scan loop (bars fetch + live
+    # quote + scoring). At 8 concurrent tickers, ~59 symbols clears in well
+    # under a minute of wall-clock time instead of ~90s+ sequential, while
+    # keeping simultaneous IBKR market-data requests far below its pacing
+    # limits — a burst of 8, not 59, in flight at once.
+    equity_scan_concurrency: int = Field(default=8)
     equity_min_confidence: float = Field(default=0.62)
     # Paper mode uses a lower confidence threshold to accumulate trade data
     # for ML model training. Set equal to equity_min_confidence for live.
@@ -136,6 +168,65 @@ class Settings(BaseSettings):
     execution_portfolio_gate: bool = Field(default=True)
     # Greeks delta/vega caps — OFF by default (miscalibrated for live spreads).
     execution_enforce_portfolio_greeks: bool = Field(default=False)
+    # When True and max concurrent positions is hit, close N equity positions
+    # (worst quality score/confidence among non-winners — see
+    # position_rotation_winner_pnl_floor) to free a slot for a new equity
+    # entry. Off by default — money-path auto-close.
+    position_rotation_on_max: bool = Field(default=False)
+    # LEGACY / VESTIGIAL as of 2026-08-28. Read at exactly one production
+    # line — position_rotation.py's rotate_for_blocked_entry(), which has no
+    # production callers since Stage 2b was changed to raise a ROTATION_REVIEW
+    # instead of closing. The approval path proposes exactly ONE incumbent by
+    # design (one slot freed needs one close; this setting's value of 2
+    # over-rotated every time the old path fired), so nothing reachable
+    # consults it. Kept, not deleted, until the legacy path is confirmed
+    # permanently unreachable and removed as a unit.
+    position_rotation_closes: int = Field(default=2)
+    # Positions with unrealized P&L above this (dollars) are never rotation
+    # targets — Winner Protection floor. A position must be at or below this
+    # to even be eligible for closure; it never trades off against quality
+    # score or confidence.
+    position_rotation_winner_pnl_floor: float = Field(default=0.0)
+    # How far the challenger's composite must exceed the incumbent's before a
+    # replacement is even recommended (0-100 scale). Two heuristics differing
+    # by a point or two is noise, and acting on noise churns capital and pays
+    # spread twice. Raise it to make reviews rarer and more decisive; 0 would
+    # recommend on any positive difference and is not advised.
+    rotation_review_materiality_margin: float = Field(default=15.0)
+    # Hours after ANY position close (stop, target, manual, rotation) before
+    # the same (underlying, asset class) can be re-entered — stops a name
+    # that just got stopped out from being whipsawed right back in. 0 =
+    # disabled (skips the check entirely, no DB query). 2h spans several
+    # scan cycles (equity every 15min, options every 30min) without
+    # suppressing a legitimate same-day re-entry.
+    position_cooldown_hours: int = Field(default=2)
+
+    # ── Reconciliation: auto-adopt untracked broker positions ─────────────
+    # When the periodic reconciler (_reconcile_positions, main.py) finds a
+    # live equity position at the broker with no matching open Trade row,
+    # write one in automatically (strategy="adopted_untracked") so it stops
+    # being invisible to every DB-derived guardrail (max_positions,
+    # concentration, heat — see execution_portfolio_gate.py). Confirmed
+    # live in production 2026-08-26: several untracked equity positions
+    # consumed real margin/risk capacity while every position-count check
+    # believed far fewer positions were open. Options positions are
+    # deliberately NOT auto-adopted — reconstructing a 2-leg spread's
+    # short/long strikes from raw broker legs is a real, harder problem
+    # (see close_options_trade's own leg-reconstruction design); an
+    # untracked options position is logged for manual review instead.
+    # Rollback: set false.
+    reconciliation_auto_adopt_untracked: bool = Field(default=True)
+    # When the reconciler finds an open Trade row whose tracked quantity
+    # disagrees with the broker's live quantity for that underlying,
+    # correct the DB row to match the broker (source of truth) -- confirmed
+    # live 2026-08-26: MRVL/SNDK rows still held stale quantities from
+    # before the close_equity_trade() sizing bug was fixed (commit
+    # 1cc3eb8); that fix stops new mismatches but never retroactively
+    # corrected rows it had already damaged. Only corrects when there is
+    # exactly one open equity Trade row for the ticker -- ambiguous
+    # (multiple open rows, or an options position) cases are skipped and
+    # logged for manual review. Rollback: set false.
+    reconciliation_auto_correct_quantity: bool = Field(default=True)
 
     # ── AI Signal Scorer ──────────────────────────────────────────────────
     signal_score_threshold: float = Field(default=0.65)
@@ -208,6 +299,12 @@ class Settings(BaseSettings):
         if self.paper_visibility_active:
             return self.paper_visibility_max_monthly_loss_pct
         return self.max_monthly_loss_pct
+
+    @property
+    def effective_max_drawdown_pct(self) -> float:
+        if self.paper_visibility_active:
+            return self.paper_visibility_max_drawdown_pct
+        return self.max_drawdown_pct
 
     @property
     def effective_max_trades_per_day(self) -> int:

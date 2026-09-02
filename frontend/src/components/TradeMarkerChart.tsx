@@ -18,8 +18,8 @@ function pathFromPoints(points: Array<{ x: number; y: number }>) {
 }
 
 export default function TradeMarkerChart({
-  bars, markers, equityCurve,
-}: { bars: Bar[]; markers: Marker[]; equityCurve: EquityPoint[] }) {
+  bars, markers, equityCurve, cursor,
+}: { bars: Bar[]; markers: Marker[]; equityCurve: EquityPoint[]; cursor?: { date: string } }) {
   if (!bars.length) {
     return (
       <div style={{
@@ -39,6 +39,8 @@ export default function TradeMarkerChart({
 
   const dateIndex = new Map(bars.map((b, i) => [b.date, i]));
   const xForIndex = (idx: number) => pad.left + (contentWidth * idx) / Math.max(bars.length - 1, 1);
+  const cursorIdx = cursor ? dateIndex.get(cursor.date) : undefined;
+  const cursorX = cursorIdx !== undefined ? xForIndex(cursorIdx) : undefined;
 
   // ── Price panel ────────────────────────────────────────────────────────
   const closes = bars.map((b) => b.close);
@@ -60,6 +62,7 @@ export default function TradeMarkerChart({
     <div>
       <svg viewBox={`0 0 ${width} ${equityHeight}`} style={{ width: "100%", height: equityHeight, display: "block" }}>
         {equityPath && <path d={equityPath} fill="none" stroke="var(--cyan)" strokeWidth="1.6" />}
+        {cursorX !== undefined && <line x1={cursorX} y1={0} x2={cursorX} y2={equityHeight} stroke="var(--amber)" strokeWidth="1" strokeDasharray="3 3" />}
         <text x={pad.left} y={12} fill="var(--ink-faint)" fontFamily="var(--mono)" fontSize="9">EQUITY</text>
       </svg>
       <svg viewBox={`0 0 ${width} ${priceHeight}`} style={{ width: "100%", height: priceHeight, display: "block" }}>
@@ -91,6 +94,10 @@ export default function TradeMarkerChart({
             : `${x},${y - 10} ${x - size},${y - 10 - size} ${x + size},${y - 10 - size}`;
           return <polygon key={`${m.date}-${m.action}-${i}`} points={trianglePoints} fill={color} />;
         })}
+
+        {cursorX !== undefined && (
+          <line x1={cursorX} y1={pad.top} x2={cursorX} y2={priceHeight} stroke="var(--amber)" strokeWidth="1" strokeDasharray="3 3" />
+        )}
       </svg>
     </div>
   );

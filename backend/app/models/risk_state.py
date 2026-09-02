@@ -1,6 +1,7 @@
 """
 portfolio_snapshots — point-in-time account state snapshots.
 guardrail_events   — log of every guardrail trigger.
+risk_peak_state    — singleton row tracking the all-time portfolio peak.
 """
 
 from __future__ import annotations
@@ -74,3 +75,18 @@ class GuardrailEvent(Base):
     )
     portfolio_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 4), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class RiskPeakState(Base):
+    """Singleton row (id=1) tracking the portfolio's all-time peak value
+    for the Drawdown Control guardrail. Updated in place — unlike
+    PortfolioSnapshot/GuardrailEvent this never accumulates history rows.
+    Deliberately not built on portfolio_snapshots (its writer is dead
+    code, never called anywhere in the app — out of scope here)."""
+    __tablename__ = "risk_peak_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    peak_value: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

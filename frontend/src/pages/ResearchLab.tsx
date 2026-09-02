@@ -8,6 +8,7 @@
  * Monitor. Backed by /api/research/lab/*.
  */
 import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
 
 interface Experiment {
   id: string; name: string; strategy: string; hypothesis: string | null;
@@ -29,6 +30,14 @@ const NEXT: Record<string, string | null> = {
 
 const STRATEGIES = ["bull_put_spread", "bear_call_spread", "iron_condor", "bull_call_debit_spread"];
 
+// Same polling interval/cap as the established precedent (useBacktest.ts) —
+// a real backtest is a background job, not an instant response.
+const POLL_INTERVAL_MS = 1500;
+const POLL_TIMEOUT_MS = 180_000;
+// Backtest.tsx's own hardcoded default date range, reused rather than
+// inventing a new convention or adding date-picker UI to this page.
+const RESEARCH_BACKTEST_RANGE = { start_date: "2022-01-01", end_date: "2024-12-31" };
+
 export default function ResearchLab() {
   const [exps, setExps] = useState<Experiment[]>([]);
   const [name, setName] = useState("");
@@ -36,7 +45,12 @@ export default function ResearchLab() {
   const [hypothesis, setHypothesis] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgKind, setMsgKind] = useState<"error" | "gate" | "info">("info");
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Keyed per-experiment (not the shared busy flag) — a real backtest can
+  // run for up to 3 minutes and shouldn't freeze every other experiment's
+  // buttons on the page while it's in flight.
+  const [backtestRuns, setBacktestRuns] = useState<Record<string, { status: string; runId?: string }>>({});
 
   // AI Research Assistant
   const [question, setQuestion] = useState("");
@@ -98,25 +112,73 @@ export default function ResearchLab() {
     load();
   };
 
+  // Runs a real backtest (POST /run, poll /results) and returns the
+  // completed result, or throws — on backtest failure, a poll timeout, or
+  // a network error. Never falls back to fabricated metrics; the caller
+  // only proceeds to /transition after this resolves successfully.
+  const runRealBacktest = async (exp: Experiment) => {
+    const run = await (api.runBacktest({
+      strategy: exp.strategy, ...RESEARCH_BACKTEST_RANGE,
+    }) as Promise<any>);
+    const runId = run?.run_id;
+    if (!runId) throw new Error("backtest did not return a run id");
+    setBacktestRuns(prev => ({ ...prev, [exp.id]: { status: run.status ?? "queued", runId } }));
+
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+      const res = await (api.getBacktestResults(runId) as Promise<any>);
+      setBacktestRuns(prev => ({ ...prev, [exp.id]: { status: res.status, runId } }));
+      if (res.status === "completed") return res;
+      if (res.status === "failed") throw new Error(res.error || "backtest failed");
+    }
+    throw new Error("backtest timed out after 3 minutes — check server logs");
+  };
+
+  const advanceToBacktested = async (e: Experiment) => {
+    setMsg(null);
+    try {
+      const result = await runRealBacktest(e);
+      // evaluate_backtest_gate() reads metrics["sharpe"] — the backtest
+      // engine's own result key is sharpe_ratio. Must map explicitly, or
+      // the gate silently reads 0 and always fails.
+      const metrics = {
+        sharpe: result.sharpe_ratio,
+        total_return_pct: result.total_return_pct,
+        max_drawdown_pct: result.max_drawdown_pct,
+      };
+      const r = await (api.transitionExperiment(e.id, { target: "backtested", metrics }) as Promise<any>);
+      if (r?.error) { setMsgKind("error"); setMsg(`${e.name}: ${r.error}`); return; }
+      if (r?.ok === false) { setMsgKind("gate"); setMsg(`${e.name}: ${r.reason || "gate rejected"}`); return; }
+      setMsgKind("info");
+      setMsg(`${e.name}: backtest complete (sharpe ${result.sharpe_ratio.toFixed(2)}) — advanced to BACKTESTED.`);
+    } catch (err: any) {
+      setMsgKind("error");
+      setMsg(`${e.name}: backtest error — ${err.message}`);
+    } finally {
+      setBacktestRuns(prev => { const { [e.id]: _drop, ...rest } = prev; return rest; });
+      load();
+    }
+  };
+
   return (
-    <div style={{ padding: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <span style={{ width: 3, height: 17, background: "var(--cyan)", boxShadow: "0 0 10px var(--cyan-glow)" }} />
-        <span className="mono" style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.16em", color: "var(--ink)" }}>
-          RESEARCH LAB
-        </span>
-        <span className="kicker" style={{ marginLeft: 8 }}>hypothesis → backtest → paper → promoted</span>
+    <div className="page-shell">
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Research Lab</div>
+          <p className="page-header__sub">Hypothesis → backtest → paper → promoted</p>
+        </div>
       </div>
 
       {/* AI Research Assistant */}
-      <div className="exec-card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="instrument-card" style={{ padding: 16 }}>
         <div className="panel-title" style={{ marginBottom: 12 }}>AI Research Assistant</div>
         <div style={{ display: "flex", gap: 10 }}>
           <input value={question} onChange={e => setQuestion(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") ask(); }}
             placeholder="e.g. Which strategy performs best in high IV? Why is bull put declining?"
-            className="mono" style={inp} />
-          <button onClick={ask} disabled={asking} className="mono" style={btn}>
+            className="mono control-input" style={{ flex: 1 }} />
+          <button onClick={ask} disabled={asking} className="btn-primary">
             {asking ? "…" : "Ask"}
           </button>
         </div>
@@ -133,7 +195,7 @@ export default function ResearchLab() {
       </div>
 
       {/* New experiment */}
-      <div className="exec-card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className="instrument-card" style={{ padding: 16 }}>
         <div className="panel-title" style={{ marginBottom: 12 }}>New Experiment</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <label style={{ flex: 2, minWidth: 180 }}>
@@ -157,7 +219,8 @@ export default function ResearchLab() {
             {busy ? "…" : "Create"}
           </button>
         </div>
-        {msg && <div className="mono" style={{ fontSize: 11, color: "var(--amber)", marginTop: 10 }}>{msg}</div>}
+        {msg && <div className="mono" style={{ fontSize: 11, marginTop: 10,
+          color: msgKind === "error" ? "var(--red)" : "var(--amber)" }}>{msg}</div>}
       </div>
 
       {/* Experiments */}
@@ -173,20 +236,37 @@ export default function ResearchLab() {
         </div>
       )}
       {exps.length === 0
-        ? <div className="mono" style={{ color: "var(--ink-faint)", fontSize: 12 }}>No experiments yet.</div>
+        ? <div className="instrument-card instrument-card--flat empty-chassis">
+            <p className="empty-chassis__title">No experiments yet</p>
+            <p className="empty-chassis__hint">Create a hypothesis above to start the promotion funnel.</p>
+          </div>
         : exps.map(e => (
-          <div key={e.id} className="exec-card" style={{ padding: 14, marginBottom: 10 }}>
+          <div key={e.id} className="instrument-card" style={{ padding: 14, marginBottom: 10 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
                 <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{e.name}</span>
                 <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>{e.strategy}</span>
               </div>
               <Pipeline stage={e.stage} />
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {NEXT[e.stage] && (
-                  <button onClick={() => advance(e, NEXT[e.stage]!)} disabled={busy} className="mono" style={btnSm}>
-                    → {NEXT[e.stage]}
-                  </button>
+                  e.stage === "draft" ? (
+                    backtestRuns[e.id] ? (
+                      <span className="mono" style={{ fontSize: 10.5, color: "var(--amber)" }}>
+                        running backtest… ({backtestRuns[e.id].status})
+                      </span>
+                    ) : (
+                      <button onClick={() => advanceToBacktested(e)} disabled={busy || !!backtestRuns[e.id]}
+                        className="mono" style={btnSm}>
+                        → backtested
+                      </button>
+                    )
+                  ) : (
+                    <button onClick={() => advance(e, NEXT[e.stage]!)} disabled={busy} className="mono" style={btnSm}>
+                      → {NEXT[e.stage]}
+                      {NEXT[e.stage] === "paper" && <DemoBadge />}
+                    </button>
+                  )
                 )}
                 {e.stage !== "archived" && e.stage !== "promoted" && (
                   <button onClick={() => advance(e, "archived")} disabled={busy} className="mono"
@@ -203,6 +283,15 @@ export default function ResearchLab() {
           </div>
         ))}
     </div>
+  );
+}
+
+function DemoBadge() {
+  return (
+    <span title="Uses placeholder walk-forward metrics — real out-of-sample evaluation not built yet."
+      style={{ marginLeft: 6, color: "var(--amber)", fontSize: 9, fontWeight: 700 }}>
+      (demo)
+    </span>
   );
 }
 

@@ -15,6 +15,8 @@ import ExecutionMonitor from "../trade-desk/execution/ExecutionMonitor";
 import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
 import { useTerminalNav } from "../components/TerminalNavContext";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
+import { Button } from "../components/ui";
+import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -24,7 +26,7 @@ function HintedTh({ label }: { label: string }) {
   );
 }
 type ExecMode = "manual" | "copilot" | "autopilot";
-type Tab = "overview" | "signals" | "positions" | "approvals" | "execution" | "pnl" | "mode";
+type Tab = "overview" | "signals" | "positions" | "approvals" | "execution" | "pnl" | "mode" | "manual";
 
 const Badge = ({ text, color }: { text: string; color: string }) => (
   <span style={{
@@ -76,9 +78,9 @@ function ExecModeBar() {
     }}>
       <span className="kicker" style={{ marginRight: 4 }}>Execution</span>
       {modes.map(m => (
-        <button
+        <Button
           key={m.key}
-          className={`btn-t ${mode === m.key ? "active" : ""}`}
+          active={mode === m.key}
           style={{
             fontSize: 12,
             ...(mode === m.key ? { borderColor: m.color, color: m.color, background: `${m.color}15` } : {}),
@@ -89,7 +91,7 @@ function ExecModeBar() {
         >
           {m.label}
           {mode === m.key && <span style={{ marginLeft: 4, opacity: 0.6 }}>●</span>}
-        </button>
+        </Button>
       ))}
       {mode === "autopilot" && (
         <span style={{
@@ -259,22 +261,21 @@ function ApprovalsQueue() {
                 )}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  className="btn-t"
+                <Button
                   disabled={acting === s.id}
                   onClick={() => act(s.id, "approve")}
                   style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
                 >
                   APPROVE
-                </button>
-                <button
-                  className="btn-t danger"
+                </Button>
+                <Button
+                  danger
                   disabled={acting === s.id}
                   onClick={() => act(s.id, "reject")}
                   style={{ fontSize: 11 }}
                 >
                   REJECT
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -350,7 +351,7 @@ function PnLBreakdown() {
   });
 
   const StatBox = ({ label, value, color }: any) => (
-    <div style={{ background: "var(--bg-3)", padding: "14px 18px", flex: 1, borderRight: "1px solid var(--line-dim)" }}>
+    <div style={{ padding: "14px 18px", flex: 1, borderRight: "1px solid var(--line-dim)" }}>
       <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
       <div className="data-val sm" style={{ color: color || "var(--ink)" }}>{value}</div>
     </div>
@@ -363,7 +364,7 @@ function PnLBreakdown() {
         <Badge text="COMMISSIONS + SLIPPAGE INCLUDED" color="var(--amber)" />
       </div>
 
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, border: "1px solid var(--line-dim)" }}>
+      <div className="instrument-stat-strip" style={{ display: "flex", gap: 0, marginBottom: 16 }}>
         <StatBox label="Net P&L"         value={`${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`}  color={totalPnl >= 0 ? "var(--green)" : "var(--red)"} />
         <StatBox label="Gross P&L"       value={`$${grossPnl.toFixed(2)}`}    color="var(--ink)" />
         <StatBox label="Commission Drag" value={`-$${totalComm.toFixed(2)}`}  color="var(--amber)" />
@@ -372,10 +373,10 @@ function PnLBreakdown() {
         <StatBox label="Win / Loss"      value={`${wins.length} / ${losses.length}`} color="var(--ink)" />
       </div>
 
-      <div style={{
+      <div className="instrument-card" style={{
         fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
-        padding: "8px 12px", background: "var(--bg-3)", marginBottom: 14,
-        border: "1px solid var(--line-dim)", lineHeight: 1.7,
+        padding: "8px 12px", marginBottom: 14,
+        lineHeight: 1.7,
       }}>
         Commission: $0.65/contract · $1.30 per spread (IBKR standard) ·
         Slippage: VIX-adjusted est. ~15% of bid-ask spread at VIX 17, widens at higher VIX ·
@@ -384,10 +385,10 @@ function PnLBreakdown() {
 
       <div style={{ display: "flex", gap: 1, marginBottom: 12 }}>
         {(["date","pnl","commission"] as const).map(s => (
-          <button key={s} className={`btn-t ${sort === s ? "active" : ""}`}
+          <Button key={s} active={sort === s}
             style={{ borderRadius: 0, fontSize: 10 }} onClick={() => setSort(s)}>
             SORT: {s === "commission" ? "COMMISSION" : s.toUpperCase()}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -458,6 +459,23 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
     }
   };
 
+  // Same action, but for a broker position with no matching DB Trade row
+  // (e.g. a fill the app lost track of after an order-placement timeout) —
+  // keyed by symbol instead of a trade id, since there is no id.
+  const closeUntrackedPosition = async (symbol: string) => {
+    setClosingId(symbol);
+    setCloseMsg(null);
+    try {
+      const res: any = await api.closeUntrackedPosition(symbol);
+      setCloseMsg(`${symbol}: ${res.status === "filled" ? "closed" : `order ${res.status}`}`);
+      refresh();
+    } catch (e: any) {
+      setCloseMsg(`${symbol}: ${e?.message || "close failed"}`);
+    } finally {
+      setClosingId(null);
+    }
+  };
+
   // Command Overview's queue cards link out to specific workspaces — map its
   // V2-shaped tab keys onto this page's own tab set (no V2 shell involved).
   // Options has no in-page tab here (unlike V2's own Options Desk), so that
@@ -500,6 +518,7 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
     { key: "execution", label: "Execution Monitor" },
     { key: "pnl",       label: "P&L breakdown" },
     { key: "mode",      label: "Trading style" },
+    { key: "manual",    label: "Manual Trade" },
   ];
 
   return (
@@ -516,16 +535,16 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
       }}>
         <div style={{ display: "flex", gap: 4 }}>
           {tabs.map(t => (
-            <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`}
+            <Button key={t.key} active={tab === t.key}
               onClick={() => setTab(t.key)}>
               {t.label}
-            </button>
+            </Button>
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn-t active" onClick={runCycle}>
+        <Button active onClick={runCycle}>
           {loading ? "Running…" : "▶ Run signal cycle"}
-        </button>
+        </Button>
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
@@ -539,9 +558,9 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
         {tab === "signals" && (
           <div>
             {lastSignal && (
-              <div style={{
+              <div className="instrument-card" style={{
                 padding: "12px 16px", borderBottom: "1px solid var(--line-dim)",
-                background: "var(--bg-3)", display: "flex", gap: 24, alignItems: "center",
+                display: "flex", gap: 24, alignItems: "center",
               }}>
                 <span className="panel-title">LAST SIGNAL</span>
                 <Badge text={lastSignal.strategy?.toUpperCase() || "—"} color="var(--ink-dim)" />
@@ -625,17 +644,29 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                   No open positions
                 </td></tr>
               ) : (positions || []).map((p: any, i: number) => {
-                const pnl = p.unrealized_pnl || 0;
+                // unrealized_pnl requires a live broker mark (paper_trade.py
+                // only sets it when the IBKR position was matched to a
+                // current price) — absent whenever the broker is
+                // disconnected or the position is DB-only. `|| 0` here used
+                // to silently show a fabricated "+$0" instead of the real
+                // "unavailable" state MFE/MAE already show correctly below.
+                const pnl: number | null | undefined = p.unrealized_pnl;
                 const isEquity = p.spread_type === "equity_long" || p.spread_type === "equity_short";
                 const canClose = isEquity && !!p.id;
+                // A broker position with no matching DB Trade row (e.g. an
+                // order-placement timeout that filled after the app already
+                // gave up on it) — asset_type now comes from the broker's
+                // own contract type for these, not a DB field, so it's
+                // reliable even with no DB row to read.
+                const canCloseUntracked = p.tracked === false && !p.id && p.asset_type === "equity";
                 return (
                   <tr key={i}>
                     <td className="mono" style={{ color: "var(--ink)" }}>{p.symbol || p.underlying || "—"}</td>
                     <td><Badge text={p.asset_type?.toUpperCase() || "OPTIONS"} color="var(--ink-dim)" /></td>
                     <td className="mono" style={{ fontSize: 10 }}>{p.strategy?.replace(/_/g," ").toUpperCase() || "—"}</td>
                     <td className="mono">${(p.credit_received ?? p.entry_credit ?? p.avg_cost ?? 0).toFixed(2)}</td>
-                    <td className="mono" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
-                      {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
+                    <td className="mono" style={{ color: pnl == null ? "var(--ink-faint)" : pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {fmtDollars(pnl)}
                     </td>
                     <td className="mono" style={{ color: "var(--green)" }}>{fmtDollars(p.mfe_pnl)}</td>
                     <td className="mono" style={{ color: "var(--red)" }}>{fmtDollars(p.mae_pnl)}</td>
@@ -650,6 +681,14 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
                           holdMs={1200}
                           disabled={closingId === p.id}
                           onConfirm={() => closePosition(p.id, p.symbol || p.underlying || "?")}
+                        />
+                      ) : canCloseUntracked ? (
+                        <HoldToConfirmButton
+                          label="Hold to close"
+                          confirmingLabel="Closing"
+                          holdMs={1200}
+                          disabled={closingId === (p.symbol || p.underlying)}
+                          onConfirm={() => closeUntrackedPosition(p.symbol || p.underlying)}
                         />
                       ) : (
                         <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>
@@ -675,10 +714,10 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
         {tab === "mode" && (
           <div style={{ padding: 20, maxWidth: 720 }}>
             <div className="panel-title" style={{ marginBottom: 16 }}>Market Regime & Trading Style</div>
-            <div style={{
+            <div className="instrument-card" style={{
               fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)",
-              padding: "8px 12px", background: "var(--bg-3)", marginBottom: 20,
-              border: "1px solid var(--line-dim)", lineHeight: 1.7,
+              padding: "8px 12px", marginBottom: 20,
+              lineHeight: 1.7,
             }}>
               Risk Profile controls position sizing, strategy selection, and risk budget.<br />
               Execution Mode (bar above) controls whether trades need your approval.<br />
@@ -687,6 +726,9 @@ export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Ta
             <TradingModeSelector />
           </div>
         )}
+
+        {/* MANUAL TRADE */}
+        {tab === "manual" && <ManualTradePanel />}
       </div>
     </div>
   );

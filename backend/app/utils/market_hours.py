@@ -10,6 +10,7 @@ only order submission is paused outside RTH and resumes automatically at the ope
 from __future__ import annotations
 
 from datetime import datetime, time
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo("America/New_York")
@@ -59,6 +60,19 @@ def is_market_open(now: datetime | None = None) -> bool:
     if et.strftime("%Y-%m-%d") in _MARKET_HOLIDAYS:
         return False
     return RTH_OPEN <= et.time() < RTH_CLOSE
+
+
+def minutes_to_close(now: datetime | None = None) -> Optional[float]:
+    """Minutes remaining until RTH_CLOSE, or None outside RTH."""
+    et = now_et(now)
+    if not is_market_open(et):
+        return None
+    close_dt = et.replace(hour=RTH_CLOSE.hour, minute=RTH_CLOSE.minute, second=0, microsecond=0)
+    # Never negative — a caller with a stale/mocked is_market_open() that
+    # says "open" past the real close would otherwise get a nonsensical
+    # negative "minutes left," which reads as a false positive wherever
+    # it's compared against a floor (e.g. "< 30 minutes to close").
+    return max((close_dt - et).total_seconds() / 60.0, 0.0)
 
 
 def market_status(now: datetime | None = None) -> dict:

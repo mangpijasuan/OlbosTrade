@@ -1,24 +1,24 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:        #080e1a;
-  --bg-1:      #0a1220;
-  --bg-2:      #0d1526;
-  --bg-3:      #111e35;
-  --bg-4:      #162240;
-  --line:      rgba(212, 175, 55, 0.12);
-  --line-dim:  rgba(255,255,255,0.07);
-  --ink:       #e2e8f0;
-  --ink-dim:   #94a3b8;   /* brightened from #64748b — passes AA on dark */
-  --ink-faint: #64748b;   /* brightened from #334155 — table headers now legible */
+  --bg:        #070c14;
+  --bg-1:      #0a101c;
+  --bg-2:      #0e1624;
+  --bg-3:      #131c2e;
+  --bg-4:      #1a2538;
+  --line:      rgba(212, 175, 55, 0.18);
+  --line-dim:  rgba(255,255,255,0.09);
+  --ink:       #e8edf4;
+  --ink-dim:   #9aa8bc;
+  --ink-faint: #6b7a90;
   /* Brand gold — LOGO & brand chrome ONLY. Never P&L, prices, or metrics. */
   --brand:     #D4AF37;
   /* Interactive accent (blue) — links, focus rings, non-active affordances. */
   --accent:    #3b82f6;
   /* Solid slate fill for ACTIVE tabs/buttons (not a thin border). */
-  --fill-active: #1e293b;
+  --fill-active: #243044;
   /* Legacy aliases — kept so existing references resolve while screens migrate. */
   --cyan:      var(--accent);
   --cyan-dim:  rgba(59,130,246,0.12);
@@ -29,12 +29,55 @@
   --blue:      #3b82f6;
   --orange:    #f97316;
   --mono:      "JetBrains Mono", monospace;
-  --sans:      "Inter", system-ui, sans-serif;
+  --sans:      "IBM Plex Sans", system-ui, sans-serif;
+  /* Brand wordmark uses the same sans stack — no serif/manuscript faces. */
+  --brand-font: var(--sans);
+
+  /* Instrument console (skeuomorphic-lite) — crisp bezels, not soft/glass UI.
+     Highlight = top edge catching light; shade = bottom/right recess. */
+  --bevel-hi:     rgba(255,255,255,0.14);
+  --bevel-lo:     rgba(0,0,0,0.5);
+  --inset-well:   inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 var(--bevel-lo);
+  /* Raised card lift: top catch-light + a real drop shadow off the page
+     (not just the 4px smudge this used to be) + inner top/bottom bevel.
+     Dark-on-dark shadows have little contrast on their own, so the read
+     leans on a bright top edge + a wide, dark, close-in shadow — visible
+     at normal scale, not just on a zoomed inspection. */
+  --raised-bezel: 0 1px 0 var(--bevel-hi),
+                  0 16px 32px -12px rgba(0,0,0,0.75),
+                  0 4px 10px rgba(0,0,0,0.5),
+                  inset 0 1px 0 rgba(255,255,255,0.10),
+                  inset 0 -1px 0 rgba(0,0,0,0.4);
+  --chassis-edge: 1px solid rgba(212, 175, 55, 0.22);
+  --rack-groove:  linear-gradient(180deg, #0a101c 0%, #121a2a 48%, #0a101c 100%);
+  /* Corner radii — one scale so every raised surface reads as one family. */
+  --radius-card:    12px;
+  --radius-control: 7px;
+
+  /* Depth & motion — glass for FLOATING overlays only; never on .panel. */
+  --violet:      #8e7cfb;
+  --violet-dim:  rgba(142,124,251,0.12);
+  --violet-glow: rgba(142,124,251,0.35);
+
+  --glass-bg:     rgba(13,21,38,0.72);
+  --glass-border: rgba(255,255,255,0.10);
+  --glass-blur:   blur(14px);
+
+  --glow-pos:    0 0 10px rgba(34,197,94,0.28);
+  --glow-neg:    0 0 10px rgba(239,68,68,0.28);
+  --glow-active: 0 0 10px rgba(59,130,246,0.28);
+  --glow-violet: 0 0 10px rgba(142,124,251,0.28);
+  --shadow-md:   0 6px 18px rgba(0,0,0,0.4);
+
+  --motion-fast: 0.14s ease;
+  --motion-med:  0.22s ease;
 }
 
 html { font-size: 14px; }
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(212,175,55,0.04), transparent 55%),
+    var(--bg);
   color: var(--ink);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -54,6 +97,13 @@ body {
 
 /* Typography */
 .mono { font-family: var(--mono); }
+.brand-wordmark {
+  font-family: var(--brand-font);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--brand);
+  text-shadow: 0 0 10px rgba(212, 175, 55, 0.3);
+}
 /* tabular-nums: proportional sans with monospaced digits — for ALL P&L,
    prices, percentages, and metrics so columns align without using --mono. */
 .tnum { font-family: var(--sans); font-variant-numeric: tabular-nums; }
@@ -73,11 +123,14 @@ body {
   color: var(--ink);
 }
 
-/* Panel */
+/* Panel — instrument chassis: crisp edge + light top bevel (not soft UI). */
 .panel {
-  background: var(--bg-2);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
   border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  box-shadow: var(--raised-bezel);
   position: relative;
+  border-radius: var(--radius-card);
 }
 .panel-head {
   display: flex;
@@ -85,6 +138,9 @@ body {
   justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line-dim);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  box-shadow: inset 0 -1px 0 var(--bevel-lo);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
 
 /* Data cells — sans + tabular-nums (Rule B). Monospace is reserved for tickers. */
@@ -142,19 +198,37 @@ body {
 .t-table tr:last-child td { border-bottom: none; }
 .t-table tr:hover td { background: var(--bg-3); }
 
-/* Mode badge — solid colored fills, sans (Active-state rule). */
+/* Mode badge — physical indicator lamps */
 .mode-badge {
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  padding: 2px 8px;
-  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 2px;
+  box-shadow: var(--raised-bezel);
 }
-.mode-badge.conservative { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
-.mode-badge.balanced     { background: rgba(59,130,246,0.15); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
-.mode-badge.aggressive   { background: rgba(249,115,22,0.15); color: var(--orange);border: 1px solid rgba(249,115,22,0.3); }
-.mode-badge.scalper      { background: rgba(239,68,68,0.15);  color: var(--red);  border: 1px solid rgba(239,68,68,0.3); }
+.mode-badge.conservative {
+  background: linear-gradient(180deg, rgba(34,197,94,0.28) 0%, rgba(34,197,94,0.12) 100%);
+  color: var(--green);
+  border: 1px solid rgba(34,197,94,0.45);
+}
+.mode-badge.balanced {
+  background: linear-gradient(180deg, rgba(59,130,246,0.28) 0%, rgba(59,130,246,0.12) 100%);
+  color: var(--accent);
+  border: 1px solid rgba(59,130,246,0.45);
+}
+.mode-badge.aggressive {
+  background: linear-gradient(180deg, rgba(249,115,22,0.28) 0%, rgba(249,115,22,0.12) 100%);
+  color: var(--orange);
+  border: 1px solid rgba(249,115,22,0.45);
+}
+.mode-badge.scalper {
+  background: linear-gradient(180deg, rgba(239,68,68,0.28) 0%, rgba(239,68,68,0.12) 100%);
+  color: var(--red);
+  border: 1px solid rgba(239,68,68,0.45);
+}
 
 /* Directional signal chips — do not reuse trading-style mode-badge classes. */
 .signal-badge {
@@ -197,22 +271,47 @@ body {
   .skeleton-shimmer { animation: none; opacity: 0.35; }
 }
 
-/* Btn — sans; ACTIVE gets a solid slate fill (not a thin border). */
+/* Btn — raised console key */
 .btn-t {
-  font-family: var(--sans);
-  font-size: 12px;
-  letter-spacing: 0.01em;
-  padding: 6px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 14px;
   border: 1px solid var(--line-dim);
-  background: transparent;
+  border-top-color: rgba(255,255,255,0.12);
+  border-bottom-color: rgba(0,0,0,0.35);
+  background: linear-gradient(180deg, #1a2538 0%, #121a2a 100%);
   color: var(--ink-dim);
   cursor: pointer;
-  transition: all 0.12s;
+  border-radius: var(--radius-control);
+  box-shadow: var(--raised-bezel);
+  transition: border-color var(--motion-fast), color var(--motion-fast), background var(--motion-fast);
 }
-.btn-t:hover { border-color: var(--accent); color: var(--ink); }
-.btn-t.active { border-color: transparent; background: var(--fill-active); color: var(--ink); }
-.btn-t.danger { border-color: rgba(239,68,68,0.5); color: var(--red); }
+.btn-t:hover { border-color: var(--brand); color: var(--ink); }
+.btn-t:active { box-shadow: var(--inset-well); transform: translateY(1px); }
+.btn-t.active {
+  border-color: rgba(212,175,55,0.35);
+  background: linear-gradient(180deg, #2a3548 0%, var(--fill-active) 100%);
+  color: var(--ink);
+}
+.btn-t.danger { border-color: rgba(239,68,68,0.55); color: var(--red); }
 .btn-t.danger:hover { background: rgba(239,68,68,0.12); }
+
+/* Segmented group (style/mode switches) — same raised console-key chassis
+   as .btn-t, shared here so per-instance components stop hand-rolling
+   their own copy of the radius/border/gradient/shadow inline. */
+.segmented-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line-dim);
+  background: linear-gradient(180deg, #1a2538 0%, #121a2a 100%);
+  box-shadow: var(--raised-bezel);
+}
+.segmented-group button { border-radius: calc(var(--radius-control) - 3px); }
 .workspace-tab:hover { color: var(--ink); background: rgba(255,255,255,0.03); }
 
 .btn-t:focus-visible,
@@ -400,25 +499,89 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
 
 /* ── Executive / dashboard cards (Bloomberg-style) ───────────────────────── */
 .exec-card {
-  background: linear-gradient(180deg, var(--bg-2) 0%, rgba(8,14,26,0.55) 100%);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
   border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: var(--radius-card);
+  box-shadow: var(--raised-bezel);
   position: relative;
   overflow: hidden;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 .exec-card:hover {
   border-color: var(--line);
-  box-shadow: 0 8px 26px rgba(0,0,0,0.35);
+  box-shadow: var(--raised-bezel), var(--shadow-md);
   transform: translateY(-1px);
 }
-/* subtle gold accent tab, top-left */
+/* subtle accent tab, top-left — color follows --tab-color when a card sets
+   it (e.g. Kpi's per-card badge color), falls back to cyan otherwise. */
 .exec-card::after {
   content: "";
   position: absolute;
   left: 0; top: 0;
   height: 2px; width: 40px;
-  background: var(--cyan);
+  background: var(--tab-color, var(--cyan));
   opacity: 0.5;
+}
+
+/* Instrument card — same raised chassis as Trade Desk Submitted queue.
+   Use for columns, queue tiles, signal cards, and desk wells. */
+.instrument-card {
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: var(--radius-card);
+  box-shadow: var(--raised-bezel);
+  position: relative;
+}
+.instrument-card--flat {
+  /* Nested wells inside a raised card — inset, not another lift. */
+  background: #0a1018;
+  border: 1px solid var(--line-dim);
+  border-radius: var(--radius-control);
+  box-shadow: var(--inset-well);
+}
+
+/* Alias used by pages migrating off flat bg-2 shells */
+.surface-card {
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: var(--radius-card);
+  box-shadow: var(--raised-bezel);
+  position: relative;
+}
+
+/* Stat-bar / KPI strip: raised chassis with inset cell dividers */
+.instrument-stat-strip {
+  display: grid;
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.16);
+  border-radius: var(--radius-card);
+  box-shadow: var(--raised-bezel);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 40%, #0c1420 100%);
+  overflow: hidden;
+}
+.instrument-stat-strip > * {
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 70%);
+  box-shadow: inset -1px 0 0 rgba(0,0,0,0.25);
+}
+
+/* Opt-in hover-lift for Panel — generalizes .exec-card's existing hover
+   treatment. Apply only where a panel is genuinely clickable/navigable. */
+.panel-interactive { cursor: pointer; transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast); }
+.panel-interactive:hover { border-color: var(--line); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) {
+  .panel-interactive { transition: none; }
+  .panel-interactive:hover { transform: none; }
+}
+
+/* Glass utility — floating/overlay surfaces ONLY. */
+.glass-surface {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-color: var(--glass-border);
 }
 
 /* Pills (flags / tags) */
@@ -434,8 +597,156 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
 /* Slightly richer scrollbar on hover for the terminal feel */
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-dim); }
 
-/* Panel title gets a faint gold glow to lift the hierarchy */
-.panel-title { text-shadow: 0 0 10px var(--cyan-glow); }
+/* Panel titles stay crisp — no glow on dense data chrome */
+.panel-title { text-shadow: none; }
+
+/* ── Instrument console chrome (skeuomorphic-lite) ───────────────────────── */
+.instrument-ticker {
+  background: var(--rack-groove);
+  border-bottom: var(--chassis-edge);
+  box-shadow: inset 0 1px 0 var(--bevel-hi), 0 2px 0 rgba(0,0,0,0.25);
+}
+.instrument-status {
+  background: var(--rack-groove);
+  border-top: var(--chassis-edge);
+  box-shadow: inset 0 1px 0 var(--bevel-hi);
+}
+.instrument-rail {
+  background: linear-gradient(180deg, #101826 0%, #0c1320 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(212,175,55,0.12);
+  box-shadow: var(--raised-bezel);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.instrument-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 12px;
+  min-width: 0;
+  border-right: 1px solid var(--line-dim);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 70%);
+  box-shadow: inset -1px 0 0 rgba(0,0,0,0.25);
+}
+.instrument-chip-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.instrument-chip-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.instrument-well {
+  background: #0a1018;
+  border: 1px solid var(--line-dim);
+  border-radius: var(--radius-control);
+  box-shadow: var(--inset-well);
+}
+.instrument-mode-card {
+  text-align: left;
+  padding: 12px;
+  cursor: pointer;
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, #161f30 0%, #101826 100%);
+  border: 1px solid var(--line-dim);
+  border-top-color: rgba(255,255,255,0.1);
+  box-shadow: var(--raised-bezel);
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.instrument-mode-card:hover { border-color: rgba(212,175,55,0.35); }
+.instrument-mode-card.is-active {
+  border-color: rgba(212,175,55,0.45);
+  box-shadow: var(--raised-bezel), inset 0 0 0 1px rgba(212,175,55,0.12);
+}
+.instrument-halt {
+  appearance: none;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-top-color: rgba(255, 160, 160, 0.22);
+  background: linear-gradient(180deg, #2c1418 0%, #160a0c 100%);
+  box-shadow: var(--raised-bezel);
+  border-radius: var(--radius-control);
+  color: #fca5a5;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast),
+    color var(--motion-fast);
+}
+.instrument-halt:hover:not(:disabled):not(.is-engaged) {
+  border-color: rgba(239, 68, 68, 0.72);
+  background: linear-gradient(180deg, #3a181c 0%, #1c0c0e 100%);
+  color: #fecaca;
+  box-shadow: var(--raised-bezel), 0 0 0 1px rgba(239, 68, 68, 0.12);
+}
+.instrument-halt:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.65);
+  outline-offset: 2px;
+}
+.instrument-halt:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+.instrument-halt.is-engaged {
+  border-color: rgba(239, 68, 68, 0.85);
+  background: linear-gradient(180deg, #7f1d1d 0%, #450a0a 100%);
+  color: #fee2e2;
+  box-shadow: var(--raised-bezel), var(--glow-neg);
+  cursor: default;
+}
+.instrument-halt__icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: inherit;
+}
+.instrument-halt.is-engaged .instrument-halt__icon {
+  background: rgba(254, 226, 226, 0.16);
+  border-color: rgba(254, 226, 226, 0.45);
+}
+.instrument-halt__label {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.instrument-halt__badge {
+  flex-shrink: 0;
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+.instrument-halt.is-engaged .instrument-halt__badge {
+  color: #450a0a;
+  background: #fecaca;
+  border-color: #fecaca;
+}
 
 /* ── Chart Workstation layout ─────────────────────────────────────────────
    Three columns: compact Market Watch / Positions on the left, the chart
@@ -482,6 +793,546 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   background: var(--cyan-dim);
 }
 
+/* ── App-wide page chrome (A+ instrument family) ──────────────────────────── */
+.page-shell {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-left: 2px solid var(--accent);
+}
+.page-header__title {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.page-header__sub {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  margin-top: 3px;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg-0, #070c14);
+  border: none;
+  border-radius: var(--radius-control);
+  padding: 8px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-primary:disabled {
+  background: var(--bg-3);
+  color: var(--ink-faint);
+  cursor: default;
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--ink-dim);
+  border: 1px solid var(--line-dim);
+  border-radius: var(--radius-control);
+  padding: 8px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--inset-well);
+}
+.btn-ghost:hover { border-color: var(--line); color: var(--ink); }
+.control-input {
+  background: #0a1018;
+  border: 1px solid var(--line-dim);
+  border-radius: var(--radius-control);
+  padding: 6px 10px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  box-shadow: var(--inset-well);
+}
+.asset-toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  height: fit-content;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-dim);
+  border-radius: 10px;
+  box-shadow: var(--inset-well);
+}
+.asset-toggle__btn {
+  background: transparent;
+  color: var(--ink-dim);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 8px 16px;
+  min-width: 108px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+}
+.asset-toggle__btn--active {
+  background: rgba(34, 197, 94, 0.14);
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.4);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.08);
+}
+.asset-toggle__btn:hover:not(.asset-toggle__btn--active) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Mission cards — earn-style task rows */
+.mission-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mission-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--line-dim);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #141c2a 0%, var(--bg-2) 55%, #0f1520 100%);
+  box-shadow: var(--raised-bezel);
+  overflow: hidden;
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+.mission-card--interactive {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.mission-card--interactive:hover {
+  border-color: rgba(34, 197, 94, 0.28);
+  transform: translateY(-1px);
+}
+.mission-card--selected {
+  border-color: rgba(34, 197, 94, 0.45);
+  box-shadow: var(--raised-bezel), 0 0 0 1px rgba(34, 197, 94, 0.12);
+  background: linear-gradient(180deg, #162032 0%, var(--bg-3) 55%, #111827 100%);
+}
+.mission-card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.mission-card__reward {
+  flex-shrink: 0;
+  min-width: 58px;
+  padding: 8px 8px;
+  border: 1.5px solid rgba(34, 197, 94, 0.55);
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.06);
+  text-align: center;
+  line-height: 1.1;
+}
+.mission-card__reward-prefix {
+  display: block;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  margin-bottom: 2px;
+}
+.mission-card__reward-value {
+  display: block;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--green);
+}
+.mission-card__content {
+  flex: 1;
+  min-width: 0;
+}
+.mission-card__title {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.25;
+}
+.mission-card__subtitle {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-dim);
+  line-height: 1.35;
+}
+.mission-card__meta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-4);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+}
+.mission-card__meta-icon {
+  display: inline-flex;
+  opacity: 0.85;
+  font-size: 10px;
+}
+.mission-card__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+.mission-card__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--bg-4);
+}
+.mission-card__progress-fill {
+  height: 100%;
+  border-radius: 0 2px 2px 0;
+  transition: width var(--motion-med);
+}
+.mission-card--skeleton {
+  pointer-events: none;
+}
+.mission-card--compact {
+  padding: 10px 10px 9px;
+  border-radius: 10px;
+}
+.mission-card--compact .mission-card__row {
+  gap: 8px;
+  align-items: center;
+}
+.mission-card--compact .mission-card__reward {
+  min-width: 46px;
+  padding: 5px 6px;
+  border-radius: 8px;
+}
+.mission-card--compact .mission-card__reward-prefix {
+  font-size: 7px;
+  margin-bottom: 1px;
+}
+.mission-card--compact .mission-card__reward-value {
+  font-size: 11px;
+}
+.mission-card--compact .mission-card__title {
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.mission-card--compact .mission-card__subtitle {
+  font-size: 9px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mission-card--compact .mission-card__meta {
+  padding: 4px 6px;
+  font-size: 8px;
+  border-radius: 6px;
+}
+.mission-card--compact .mission-card__progress {
+  height: 2px;
+}
+.mission-card--buy {
+  border-color: rgba(34, 197, 94, 0.28);
+}
+.mission-card--sell {
+  border-color: rgba(239, 68, 68, 0.28);
+}
+.mission-card__details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-dim);
+}
+.mission-card--compact .mission-card__details {
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.mission-card__shimmer {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-3) 0%, var(--bg-4) 50%, var(--bg-3) 100%);
+  background-size: 200% 100%;
+  animation: alpha-edge-shimmer 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mission-card--interactive:hover { transform: none; }
+  .mission-card__shimmer { animation: none; }
+}
+.empty-chassis {
+  padding: 36px 24px;
+  text-align: center;
+  border-radius: var(--radius-card);
+}
+.empty-chassis--compact {
+  padding: 16px 12px;
+}
+.empty-chassis__title {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+.empty-chassis__hint {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+/* Discovery rail tab strip — full-width sibling of .asset-toggle */
+.discovery-rail-tabs {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 100%);
+  border-bottom: 1px solid var(--line-dim);
+  border-top-color: rgba(212, 175, 55, 0.14);
+  box-shadow: inset 0 1px 0 var(--bevel-hi);
+}
+.discovery-rail-tabs__btn {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 7px 4px;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.discovery-rail-tabs__btn--active {
+  background: var(--fill-active);
+  color: var(--ink);
+  border-color: var(--line);
+}
+.discovery-rail-row {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.discovery-rail-row--selected {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: var(--raised-bezel), var(--glow-active);
+}
+.desk-tablist {
+  display: flex;
+  gap: 0;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  overflow-x: auto;
+  background: var(--rack-groove);
+  border-bottom: var(--chassis-edge);
+  box-shadow: inset 0 1px 0 var(--bevel-hi), 0 2px 0 rgba(0,0,0,0.25);
+  -webkit-overflow-scrolling: touch;
+}
+.desk-tab {
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+.desk-tab:hover { color: var(--ink); }
+.desk-tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: linear-gradient(180deg, rgba(59,130,246,0.08) 0%, transparent 100%);
+}
+.desk-tab__badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border: 1px solid rgba(245,158,11,0.4);
+  border-radius: 8px;
+  color: var(--amber);
+  background: rgba(245,158,11,0.1);
+}
+.desk-tool-rail {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--rack-groove);
+  border-bottom: 1px solid var(--line-dim);
+  box-shadow: inset 0 1px 0 var(--bevel-hi);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.desk-tool-rail__btn {
+  padding: 6px 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--ink-dim);
+}
+.desk-tool-rail__btn--active {
+  background: var(--fill-active);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.trade-plan-well {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: #0a1018;
+  border: 1px solid var(--line-dim);
+  box-shadow: var(--inset-well);
+}
+
+/* ── Alpha Edge panel ─────────────────────────────────────────────────────── */
+.alpha-edge-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (min-width: 1080px) {
+  .alpha-edge-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  }
+  .alpha-edge-detail-pane {
+    position: sticky;
+    top: 12px;
+  }
+}
+.alpha-edge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 960px) {
+  .alpha-edge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .alpha-edge-grid { grid-template-columns: 1fr; }
+}
+.alpha-edge-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--line-dim);
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, #121b2c 0%, var(--bg-2) 55%, #0c1420 100%);
+  box-shadow: var(--raised-bezel);
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+.alpha-edge-card:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+  transform: translateY(-1px);
+}
+.alpha-edge-card--selected {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: var(--raised-bezel), var(--glow-active);
+  background: linear-gradient(180deg, #152238 0%, var(--bg-3) 55%, #0e1624 100%);
+}
+.alpha-edge-card__hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.alpha-edge-card__opp {
+  margin-left: auto;
+  text-align: right;
+  flex-shrink: 0;
+}
+.alpha-edge-score-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.alpha-edge-score-bar__track {
+  height: 4px;
+  background: var(--bg-4);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: var(--inset-well);
+}
+.alpha-edge-score-bar__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width var(--motion-med);
+}
+.alpha-edge-skeleton {
+  height: 118px;
+  border-radius: var(--radius-card);
+  background: linear-gradient(90deg, var(--bg-3) 0%, var(--bg-4) 50%, var(--bg-3) 100%);
+  background-size: 200% 100%;
+  animation: alpha-edge-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes alpha-edge-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alpha-edge-card { transition: none; }
+  .alpha-edge-card:hover { transform: none; }
+  .alpha-edge-skeleton { animation: none; }
+}
+
 @media (max-width: 1280px) {
   .workstation-grid { grid-template-columns: 190px minmax(0, 1fr); }
   .workstation-right { grid-column: 1 / -1; }
@@ -491,4 +1342,92 @@ summary span[aria-hidden="true"] { display: inline-block; transition: transform 
   .workstation-grid { grid-template-columns: 1fr; }
   .chart-intel-grid,
   .workstation-bottom-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Mobile shell ──────────────────────────────────────────────────────────
+   Phones, not "narrow desktop". Three things the ad-hoc reflow rules above
+   never covered: a viewport unit that survives the iOS URL bar, chrome that
+   clears the home indicator, and touch targets a finger can actually hit. */
+
+/* 100vh on mobile Safari counts the URL bar, so the bottom of a
+   height:100vh shell sits under it and the status bar is unreachable.
+   100dvh tracks the visible viewport; the 100vh line stays as the fallback
+   for browsers without dvh. */
+.app-shell { height: 100vh; height: 100dvh; }
+
+.mobile-bottom-nav {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  background: var(--bg-panel, var(--bg));
+  border-top: 1px solid var(--line);
+  /* Clear the home indicator on notched phones without padding a device
+     that has none. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mobile-bottom-nav__tab {
+  flex: 1 1 0;
+  min-width: 0;
+  /* 44px is the floor a finger needs; the icon+label stack lands near 52. */
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  background: none;
+  border: none;
+  border-top: 2px solid transparent;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  /* Kill the 300ms tap delay and the grey flash on iOS. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-bottom-nav__tab:active { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+.mobile-bottom-nav__tab.is-active {
+  color: var(--brand);
+  border-top-color: var(--brand);
+}
+
+.mobile-bottom-nav__tab:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.mobile-bottom-nav__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The overlay sidebar and its backdrop must clear the bottom nav rather than
+   sit under it — a nav you cannot see is a nav you cannot dismiss. */
+@media (max-width: 768px) {
+  .instrument-status {
+    /* The status lamps matter more than the version string on a phone, so the
+       bar scrolls sideways rather than wrapping. Without nowrap the labels
+       break onto a second line and collide with the lamps inside the fixed
+       28px height — every indicator becomes unreadable at once. */
+    gap: 10px !important;
+    padding: 0 10px !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    white-space: nowrap;
+  }
+  .instrument-status > * { flex-shrink: 0; }
+  /* The spacer that right-aligns the version block on desktop would otherwise
+     absorb the scroll width and push the lamps back off screen. */
+  .instrument-status > div[style*="flex: 1"] { display: none; }
+  .instrument-status::-webkit-scrollbar { display: none; }
 }

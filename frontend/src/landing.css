@@ -33,8 +33,10 @@
   height: 64px;
 }
 .landing-wordmark {
-  font-family: 'Georgia', 'Times New Roman', serif;
+  font-family: var(--brand-font);
   font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   color: var(--brand);
   text-shadow: 0 0 10px rgba(212, 175, 55, 0.3);
   flex-shrink: 0;

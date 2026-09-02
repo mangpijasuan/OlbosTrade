@@ -99,9 +99,38 @@ async def scan_equity_signals(tickers: list[str] = None, limit: int = 10):
 
 
 @router.get("/signals")
-async def list_equity_signals(limit: int = 50):
-    """Return recent equity signals (most recent first)."""
-    return {"signals": _recent_signals[:limit], "total": len(_recent_signals)}
+async def list_equity_signals(limit: int = 150):
+    """
+    Return recent equity signals, deduped to one (most recent) entry per
+    ticker.
+
+    _recent_signals holds one raw entry per ticker PER SCAN CYCLE (every
+    equity_signal_interval_minutes), newest-first — once more than one
+    cycle has run, the same ticker appears multiple times with different
+    ids, which rendered as duplicate cards in the frontend and inflated
+    the "total"/"actionable" counts. Dedupe by first-seen ticker (== most
+    recent, since the list is newest-first) before slicing, matching the
+    pattern already used by flow_recommender._bias_from_signals and
+    EquityScanPanel.tsx's client-side workaround.
+
+    Default bumped from 50 — the same "stale, unexamined default" pattern
+    the watchlist itself had. A single scan cycle across the equity
+    watchlist (102 tickers as of the Nasdaq-100 switch) produces one entry
+    per ticker; a limit of 50 silently truncated a full cycle to half of
+    it. 150 comfortably covers the current watchlist with room to grow,
+    while staying under the 200-entry store cap (_recent_signals) so
+    nothing already recorded gets hidden.
+    """
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for sig in _recent_signals:
+        ticker = sig.get("ticker")
+        if ticker and ticker in seen:
+            continue
+        if ticker:
+            seen.add(ticker)
+        deduped.append(sig)
+    return {"signals": deduped[:limit], "total": len(deduped)}
 
 
 @router.post("/signals/{signal_id}/approve")

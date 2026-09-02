@@ -78,7 +78,7 @@ export default function OptionsIntelligenceRail({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 8, overflow: "auto", height: "100%" }}>
-      <div style={{ border: "1px solid rgba(245,158,11,0.4)", padding: "10px 12px", background: "var(--bg-3)" }}>
+      <div className="instrument-card" style={{ border: "1px solid rgba(245,158,11,0.4)", padding: "10px 12px" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.1em", color: "var(--amber)" }}>
           0DTE POLICY
         </div>
@@ -87,7 +87,7 @@ export default function OptionsIntelligenceRail({
         </div>
       </div>
 
-      <div style={{ border: `1px solid ${statusColor}55`, padding: "10px 12px", background: "var(--bg-3)" }}>
+      <div className="instrument-card" style={{ border: `1px solid ${statusColor}55`, padding: "10px 12px" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.1em", color: "var(--ink-faint)" }}>
           ELIGIBILITY (BACKEND)
         </div>
@@ -107,14 +107,14 @@ export default function OptionsIntelligenceRail({
         )}
       </div>
 
-      <div style={{ border: "1px solid var(--line-dim)", padding: "10px 12px", background: "var(--bg-3)" }}>
+      <div className="instrument-card" style={{ padding: "10px 12px" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.1em", color: "var(--ink-faint)" }}>
           IV RANK · {symbol}
         </div>
         <div style={{ fontFamily: "var(--mono)", fontSize: 16, color: "var(--ink)", marginTop: 4 }}>{ivRank}</div>
       </div>
 
-      <div style={{ border: "1px solid var(--line-dim)", padding: "10px 12px", background: "var(--bg-3)" }}>
+      <div className="instrument-card" style={{ padding: "10px 12px" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.1em", color: "var(--ink-faint)", marginBottom: 6 }}>
           SAMPLE CREDIT PUT INTEL (ILLUSTRATIVE)
         </div>

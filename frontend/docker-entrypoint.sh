@@ -28,7 +28,11 @@ server {
     # Healthcheck must stay open (container probe has no credentials).
     location = /health { auth_basic off; return 200 "ok"; add_header Content-Type text/plain; }
 
-    location /api         { proxy_pass http://olbostrade-backend:8000; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$remote_addr; }
+    # nginx's default proxy_read_timeout (60s) is shorter than the backend's
+    # own OPTION_CHAIN coordinator timeout (120s, market_data.py) — without
+    # this, nginx would 504 the connection before the backend's own timeout
+    # (and its clean error body) ever gets a chance to fire.
+    location /api         { proxy_pass http://olbostrade-backend:8000; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$remote_addr; proxy_read_timeout 130s; proxy_send_timeout 130s; }
     location /docs        { proxy_pass http://olbostrade-backend:8000; }
     location /openapi.json { proxy_pass http://olbostrade-backend:8000; }
     location /ws {

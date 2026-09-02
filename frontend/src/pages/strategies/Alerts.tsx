@@ -5,8 +5,19 @@
  * services/alerts/service.py).
  */
 import React, { useEffect, useState } from "react";
+import { Button } from "../../components/ui";
 
-const METRICS = ["iv_rank", "iv_percentile", "vix", "rsi_14", "change_pct", "price", "volume"];
+// Only metrics the background equity scan actually populates in the alert
+// snapshot (app/main.py's _scan_one, via app/services/alerts/service.py).
+// iv_rank/iv_percentile/vix need options/vol-surface data this scan doesn't
+// fetch — a separate, larger options-desk wiring slice, not silently faked
+// here. Existing rules referencing them keep safely never firing; this only
+// affects new rule creation.
+const METRICS = [
+  "price", "change_pct", "rsi_14", "volume",
+  "alpha_edge_entry_score", "alpha_edge_risk_score", "opportunity_score",
+  "iv_rank", "vix_used",
+];
 const OPS = ["gt", "gte", "lt", "lte", "eq", "ne"] as const;
 
 interface Predicate { metric: string; op: string; value: string }
@@ -103,7 +114,7 @@ export default function Alerts() {
             <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>cooldown (min)</span>
             <input style={{ ...inp, width: 60 }} type="number" value={cooldown} onChange={e => setCooldown(+e.target.value)} />
           </label>
-          <button onClick={create} disabled={busy} className="btn-t active">{busy ? "…" : "Create"}</button>
+          <Button onClick={create} disabled={busy} active>{busy ? "…" : "Create"}</Button>
         </div>
         {msg && <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)", marginTop: 8 }}>{msg}</div>}
       </div>

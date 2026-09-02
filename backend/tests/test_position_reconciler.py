@@ -46,7 +46,7 @@ async def test_reconcile_clean_no_positions(mock_broker):
 
 @pytest.mark.asyncio
 async def test_reconcile_untracked_broker_position_raises(mock_broker):
-    """Broker has a position OlbosQuant doesn't know about — must raise."""
+    """Broker has a position OlbosTrade doesn't know about — must raise."""
     mock_broker.get_positions = AsyncMock(
         return_value=[make_position("SPY240119P00450000", "SPY")]
     )
@@ -122,6 +122,7 @@ async def test_check_quantity_mismatch_warns(mock_broker):
         _wire_db(mock_db, [t])
         res = await reconciler.check()
     assert res.clean is False and any("QUANTITY MISMATCH" in w for w in res.warnings)
+    assert res.quantity_mismatch_tickers == ["SPY"]
 
 
 @pytest.mark.asyncio

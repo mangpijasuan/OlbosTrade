@@ -152,7 +152,7 @@ export default function WatchlistManager({
         {!compareMode ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Save section */}
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>
                 Save Current Scan ({currentCandidates.length} candidates)
               </h3>
@@ -206,10 +206,8 @@ export default function WatchlistManager({
                   {filteredWatchlists.map((wl) => (
                     <div
                       key={wl.id}
+                      className="instrument-card"
                       style={{
-                        background: "var(--bg-2)",
-                        border: "1px solid var(--line-dim)",
-                        borderRadius: 4,
                         padding: 10,
                         display: "flex",
                         justifyContent: "space-between",
@@ -271,7 +269,7 @@ export default function WatchlistManager({
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600 }}>
                 Compare Two Watchlists
               </h3>

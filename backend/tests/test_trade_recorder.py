@@ -47,10 +47,39 @@ async def test_record_fill_success_returns_trade_id():
             strategy="bull_put_spread", underlying="SPY", option_type="put",
             short_strike=450, long_strike=445, expiration=date(2025, 6, 20),
             entry_credit=1.50, quantity=1, signal_score=0.8, iv_rank=40,
-            regime="neutral", trading_mode="balanced", dispatch_id="D-1",
+            regime="neutral", approved_by="autopilot", dispatch_id="D-1",
         )
     assert tid and len(tid) == 36          # uuid string
     assert session.add.call_count == 2     # Trade + JournalEntry
+
+
+@pytest.mark.asyncio
+async def test_record_fill_tags_real_risk_mode_not_approver():
+    """
+    trading_mode_at_entry must hold the actual risk-style mode
+    (conservative|balanced|aggressive|scalper) read live from
+    trading_mode_manager — NOT the approved_by value ("manual"/"autopilot"),
+    which is a separate concept stored in its own column. These two were
+    previously conflated: record_fill stored approved_by into
+    trading_mode_at_entry, silently feeding ModeAnalyticsEngine and the
+    Trade Desk mode badge the wrong data for every trade ever recorded.
+    """
+    session = _session(trade=None)
+    rec = TradeRecorder()
+    fake_manager = MagicMock()
+    fake_manager.current.active_mode.value = "aggressive"
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.services.trading_mode.trading_mode_manager", fake_manager):
+        tid = await rec.record_fill(
+            strategy="bull_put_spread", underlying="SPY", option_type="put",
+            short_strike=450, long_strike=445, expiration=date(2025, 6, 20),
+            entry_credit=1.50, quantity=1, signal_score=0.8, iv_rank=40,
+            regime="neutral", approved_by="manual", dispatch_id="D-3",
+        )
+    assert tid
+    trade_arg = session.add.call_args_list[0].args[0]
+    assert trade_arg.trading_mode_at_entry == "aggressive"
+    assert trade_arg.approved_by == "manual"
 
 
 @pytest.mark.asyncio
@@ -63,7 +92,7 @@ async def test_record_fill_db_failure_returns_none():
             strategy="equity", underlying="AAPL", option_type="equity_long",
             short_strike=0, long_strike=0, expiration=date(2025, 1, 1),
             entry_credit=150, quantity=10, signal_score=0.7, iv_rank=0,
-            regime="x", trading_mode="balanced", dispatch_id="D-2",
+            regime="x", approved_by="autopilot", dispatch_id="D-2",
         )
     assert tid is None
 
@@ -153,7 +182,7 @@ async def test_record_fill_pending_status_persisted():
             strategy="bull_put_spread", underlying="QQQ", option_type="put",
             short_strike=400, long_strike=395, expiration=date(2025, 6, 20),
             entry_credit=2.98, quantity=4, signal_score=0.8, iv_rank=40,
-            regime="neutral", trading_mode="balanced", dispatch_id="D-P1",
+            regime="neutral", approved_by="autopilot", dispatch_id="D-P1",
             status="pending",
         )
     assert tid
@@ -177,6 +206,32 @@ async def test_confirm_fill_overwrites_credit_with_real_fill():
     with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
         ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()), net_fill_price=3.10)
     assert ok and t.status == "open" and float(t.credit_received) == 3.10
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_corrects_quantity_to_broker_reality():
+    """The exact bug this covers: a pending trade's quantity used to stay
+    frozen at whatever was planned at signal time forever, even once the
+    real fill (or a broker holding built from prior activity) differed —
+    confirmed in production as MU/SNDK/MRVL each under-reporting their
+    broker quantity by 2-7x. confirm_fill() must now correct it, the same
+    way it already corrects credit_received from net_fill_price."""
+    t = _Trade(status="pending", credit_received=Decimal("2.98"), quantity=21)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()), quantity=63.0)
+    assert ok and t.status == "open" and t.quantity == 63
+
+
+@pytest.mark.asyncio
+async def test_confirm_fill_without_quantity_leaves_it_unchanged():
+    """No quantity passed (e.g. the underlying wasn't found in live_qty) —
+    don't clobber a legitimate value with None."""
+    t = _Trade(status="pending", credit_received=Decimal("2.98"), quantity=21)
+    rec = TradeRecorder()
+    with patch("app.core.database.AsyncSessionLocal", return_value=_session(trade=t)):
+        ok = await rec.confirm_fill(trade_id=str(uuid.uuid4()))
+    assert ok and t.quantity == 21
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,6 @@ export function tabFromNavKey(pageKey: string): TradeDeskTab {
     "trade:execlog": "execution",
     "trade:replay": "replay",
     "trade:settings": "settings",
-    // Legacy aliases while flag is on
     "trade:logs": "overview",
     paper: "overview",
   };
@@ -85,20 +84,7 @@ export default function TradeDeskTabs({
   };
 
   return (
-    <div
-      role="tablist"
-      aria-label="Trade Desk workspaces"
-      style={{
-        display: "flex",
-        gap: 0,
-        borderBottom: "1px solid var(--line-dim)",
-        background: "var(--bg-2)",
-        flexWrap: "nowrap",
-        flexShrink: 0,
-        overflowX: "auto",
-        WebkitOverflowScrolling: "touch",
-      }}
-    >
+    <div role="tablist" aria-label="Trade Desk workspaces" className="desk-tablist">
       {TRADE_DESK_TABS.map((t, index) => {
         const on = t.key === active;
         const badge = badges?.[t.key];
@@ -111,37 +97,11 @@ export default function TradeDeskTabs({
             key={t.key}
             onClick={() => onChange(t.key)}
             onKeyDown={(e) => moveFocus(e, index)}
-            className="mono"
-            style={{
-              padding: "10px 14px",
-              fontSize: 11,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-              background: "transparent",
-              border: "none",
-              borderBottom: on ? "2px solid var(--cyan)" : "2px solid transparent",
-              color: on ? "var(--cyan)" : "var(--ink-dim)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              flexShrink: 0,
-              whiteSpace: "nowrap",
-            }}
+            className={`desk-tab${on ? " desk-tab--active" : ""}`}
           >
             {t.label}
             {badge != null && badge !== 0 && badge !== "" && (
-              <span
-                style={{
-                  fontSize: 9,
-                  padding: "1px 5px",
-                  border: "1px solid var(--line)",
-                  color: "var(--amber)",
-                  background: "var(--bg-3)",
-                }}
-              >
-                {badge}
-              </span>
+              <span className="desk-tab__badge">{badge}</span>
             )}
           </button>
         );

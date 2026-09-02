@@ -1,8 +1,9 @@
 /**
- * Desk Settings — Phase B flag toggle for rollback to legacy Trade Desk.
+ * Desk Settings — V2 toggle + Trading Style (risk mode).
  */
 
 import React, { useState } from "react";
+import TradingModeSelector from "../components/TradingModeSelector";
 import { isTradeDeskV2Enabled, setFlagEnabled } from "./featureFlags";
 
 export default function DeskSettings() {
@@ -17,41 +18,48 @@ export default function DeskSettings() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 520, display: "flex", flexDirection: "column", gap: 14 }}>
-      <h2
-        style={{
-          margin: 0,
-          fontFamily: "var(--mono)",
-          fontSize: 14,
-          letterSpacing: "0.08em",
-          color: "var(--ink)",
-        }}
-      >
-        DESK SETTINGS
-      </h2>
-      <p style={{ margin: 0, fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.6 }}>
-        Trade Desk 2.0 is opt-in. Default experience stays the legacy Trade Desk
-        until you enable this. Turning it on switches nav + pages to V2
-        (Equity/Options desks, Copilot Queue, Orders, Execution, Replay). No
-        execution-path change — same OMS.
-      </p>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          fontFamily: "var(--mono)",
-          fontSize: 12,
-          color: "var(--ink)",
-          cursor: "pointer",
-        }}
-      >
-        <input type="checkbox" checked={enabled} onChange={toggle} />
-        Trade Desk 2.0 enabled ({enabled ? "ON" : "OFF — legacy default"})
-      </label>
-      <p style={{ margin: 0, fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
-        Storage key: olbos.flags.trade_desk_v2 · set to 1 to opt in, 0 to roll back
-      </p>
+    <div className="page-shell" style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">Desk Settings</div>
+          <p className="page-header__sub">Trading style floors and Trade Desk version</p>
+        </div>
+      </div>
+
+      <section className="instrument-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="panel-title">Trading style</div>
+        <p className="kicker" style={{ lineHeight: 1.6 }}>
+          Sets Autopilot entry floors (min confidence, daily caps, sizing).
+          Balanced requires ~90% confidence — that is why ~75% top signals were
+          blocked. Aggressive floors at 70%. Same OMS for every style.
+        </p>
+        <TradingModeSelector />
+      </section>
+
+      <section className="instrument-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="panel-title">Trade Desk version</div>
+        <p className="kicker" style={{ lineHeight: 1.6 }}>
+          Trade Desk 2.0 is the default. Turn it off to roll back to the legacy
+          Trade Desk nav/pages. Same OMS either way — no execution-path change.
+        </p>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            fontFamily: "var(--sans)",
+            fontSize: 12,
+            color: "var(--ink)",
+            cursor: "pointer",
+          }}
+        >
+          <input type="checkbox" checked={enabled} onChange={toggle} />
+          Trade Desk 2.0 enabled ({enabled ? "ON — default" : "OFF — legacy"})
+        </label>
+        <p className="empty-chassis__hint" style={{ margin: 0 }}>
+          Storage key: olbos.flags.trade_desk_v2 · set to 0 to roll back
+        </p>
+      </section>
     </div>
   );
 }

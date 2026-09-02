@@ -30,7 +30,7 @@ def make_preset(**overrides) -> StrategyPreset:
         validation_status="live_validated",
         paper_validated=True,
         live_validated=True,
-        author="OlbosQuant",
+        author="OlbosTrade",
         approval_owner="Risk Committee",
         approval_notes="baseline",
         enabled=True,
@@ -52,7 +52,7 @@ def make_snapshot(**overrides) -> StrategySnapshot:
         config_payload={"confidence_threshold": 0.67, "timeframe": "21-35 DTE"},
         is_active=True,
         inherited_from_verified_preset=True,
-        created_by="OlbosQuant",
+        created_by="OlbosTrade",
         created_at=datetime.now(timezone.utc),
     )
     defaults.update(overrides)

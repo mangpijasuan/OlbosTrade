@@ -50,4 +50,28 @@ describe("SignalAttribution", () => {
     expect(summary).not.toBeNull();
     expect(summary).toHaveTextContent("HOLD");
   });
+
+  it("renders SHAP evidence factors when present", () => {
+    render(
+      <SignalAttribution
+        data={{
+          direction: "SELL_SPREAD",
+          topPositiveFactors: [{ feature: "iv_rank", value: 45.2, impact: 0.12 }],
+          topNegativeFactors: [{ feature: "days_to_expiry", value: 3.0, impact: -0.08 }],
+        }}
+      />
+    );
+    expect(screen.getByText("Supporting factors")).toBeInTheDocument();
+    expect(screen.getByText("Deteriorating factors")).toBeInTheDocument();
+    expect(screen.getByText("iv rank")).toBeInTheDocument();
+    expect(screen.getByText("days to expiry")).toBeInTheDocument();
+    expect(screen.getByText("+0.120")).toBeInTheDocument();
+    expect(screen.getByText("-0.080")).toBeInTheDocument();
+  });
+
+  it("renders no evidence section at all when factors are absent (not an 'unknown' row)", () => {
+    render(<SignalAttribution data={{ direction: "BUY" }} />);
+    expect(screen.queryByText("Supporting factors")).not.toBeInTheDocument();
+    expect(screen.queryByText("Deteriorating factors")).not.toBeInTheDocument();
+  });
 });

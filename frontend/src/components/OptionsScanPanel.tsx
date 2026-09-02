@@ -13,6 +13,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import WatchlistManager from "./WatchlistManager";
 import IBKRLiveControl from "./IBKRLiveControl";
 import SignalAttribution from "./SignalAttribution";
+import SignalDirectionBadge from "./SignalDirectionBadge";
 import { useLiveData } from "../hooks/useLiveData";
 import { api, apiAuthHeaders } from "../api/client";
 
@@ -21,6 +22,7 @@ interface Candidate {
   option_type: "put" | "call";
   short_strike: number;
   long_strike: number;
+  expiration?: string;
   dte: number;
   credit: number;
   action: "BUY" | "SELL" | "HOLD";
@@ -211,7 +213,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
             marginBottom: 20,
           }}
         >
-          <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+          <div className="instrument-card" style={{ padding: 12 }}>
             <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontFamily: "var(--mono)", fontWeight: 600, letterSpacing: "0.08em" }}>
               EXPECTED VALUE
             </div>
@@ -219,7 +221,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               ${candidate.expected_value.toFixed(0)}
             </div>
           </div>
-          <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+          <div className="instrument-card" style={{ padding: 12 }}>
             <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontFamily: "var(--mono)", fontWeight: 600, letterSpacing: "0.08em" }}>
               CONFIDENCE
             </div>
@@ -227,7 +229,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               {(candidate.confidence * 100).toFixed(0)}%
             </div>
           </div>
-          <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+          <div className="instrument-card" style={{ padding: 12 }}>
             <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 4, fontFamily: "var(--mono)", fontWeight: 600, letterSpacing: "0.08em" }}>
               KELLY %
             </div>
@@ -249,7 +251,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               gap: 12,
             }}
           >
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 11, color: "var(--ink-dim)", marginBottom: 8 }}>
                 <span style={{ fontWeight: 600 }}>Max Loss (if assigned)</span>
                 <div style={{ color: "var(--red)", fontSize: 14, fontWeight: 700, marginTop: 4, fontFamily: "var(--mono)" }}>
@@ -260,7 +262,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 Risk if long strike is breached
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 6, padding: 12 }}>
+            <div className="instrument-card" style={{ padding: 12 }}>
               <div style={{ fontSize: 11, color: "var(--ink-dim)", marginBottom: 8 }}>
                 <span style={{ fontWeight: 600 }}>Max Profit (if expires OTM)</span>
                 <div style={{ color: "var(--green)", fontSize: 14, fontWeight: 700, marginTop: 4, fontFamily: "var(--mono)" }}>
@@ -273,9 +275,8 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
             </div>
           </div>
           <div
+            className="instrument-card"
             style={{
-              background: "var(--bg-3)",
-              borderRadius: 6,
               padding: 12,
               marginTop: 12,
               display: "grid",
@@ -319,10 +320,8 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
             {candidate.entry_ladder.map((t, idx) => (
               <div
                 key={idx}
+                className="instrument-card"
                 style={{
-                  background: "var(--bg-2)",
-                  border: "1px solid var(--line-dim)",
-                  borderRadius: 4,
                   padding: "10px 12px",
                   display: "flex",
                   justifyContent: "space-between",
@@ -364,7 +363,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
               gap: 8,
             }}
           >
-            <div style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="instrument-card" style={{ padding: "8px 10px" }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                 SHORT DELTA
               </div>
@@ -372,7 +371,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 {candidate.short_delta.toFixed(3)}
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="instrument-card" style={{ padding: "8px 10px" }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                 IV RANK
               </div>
@@ -380,7 +379,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 {candidate.iv_rank.toFixed(1)}%
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="instrument-card" style={{ padding: "8px 10px" }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                 EV / RISK
               </div>
@@ -388,7 +387,7 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
                 {candidate.ev_per_risk.toFixed(3)}
               </div>
             </div>
-            <div style={{ background: "var(--bg-2)", borderRadius: 4, padding: "8px 10px" }}>
+            <div className="instrument-card" style={{ padding: "8px 10px" }}>
               <div style={{ fontSize: 10, color: "var(--ink-dim)", marginBottom: 2, fontWeight: 600 }}>
                 SKEW ADJ
               </div>
@@ -483,22 +482,6 @@ function CandidateModal({ candidate, onClose }: { candidate: Candidate; onClose:
           >
             CLOSE
           </button>
-          <button
-            style={{
-              flex: 1,
-              background: "var(--green)",
-              border: "none",
-              borderRadius: 4,
-              padding: "8px 12px",
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: "pointer",
-              color: "var(--bg)",
-            }}
-          >
-            EXECUTE LADDER
-          </button>
         </div>
       </div>
     </div>
@@ -530,14 +513,25 @@ export default function OptionsScanPanel() {
   const ITEM_HEIGHT = isMobile ? 180 : isTablet ? 240 : 300;
   const VISIBLE_ITEMS = Math.ceil((window.innerHeight - 200) / ITEM_HEIGHT);
 
-  const executeTopCandidates = async (count: number) => {
+  const queueTopCandidates = async (count: number) => {
     if (!result?.candidates || count <= 0) return;
 
     const topCandidates = result.candidates.slice(0, count);
-    const toExecute = new Set(topCandidates.map((c) => c.ticker));
-    setExecutingCandidates(toExecute);
+    const pending = new Set(topCandidates.map((c) => c.ticker));
+    setExecutingCandidates(pending);
+    let queued = 0;
+    let failed = 0;
 
     for (const candidate of topCandidates) {
+      const impliedStrategy =
+        candidate.option_type === "put"
+          ? candidate.credit > 0 ? "bull_put_spread" : "bear_put_debit_spread"
+          : candidate.credit > 0 ? "bear_call_spread" : "bull_call_debit_spread";
+      const expiration =
+        candidate.expiration ||
+        new Date(Date.now() + Math.max(candidate.dte || 30, 1) * 86400000)
+          .toISOString()
+          .slice(0, 10);
       try {
         const response = await fetch("/api/trade-desk/signal", {
           method: "POST",
@@ -545,6 +539,9 @@ export default function OptionsScanPanel() {
           body: JSON.stringify({
             ticker: candidate.ticker,
             action: candidate.action,
+            asset_type: "options",
+            strategy: impliedStrategy,
+            quantity: 1,
             entry_price: candidate.credit,
             stop_price: 0,
             target_price: candidate.credit * 1.5,
@@ -554,19 +551,37 @@ export default function OptionsScanPanel() {
             pop: candidate.pop,
             confidence: candidate.confidence,
             source: "options_scan_engine",
+            spread: {
+              expiration,
+              short_strike: candidate.short_strike,
+              long_strike: candidate.long_strike,
+              option_type: candidate.option_type,
+              net_credit: candidate.credit,
+              max_loss: candidate.max_loss,
+            },
           }),
         });
 
         if (response.ok) {
-          toExecute.delete(candidate.ticker);
-          setExecutingCandidates(new Set(toExecute));
+          queued += 1;
+          pending.delete(candidate.ticker);
+          setExecutingCandidates(new Set(pending));
+        } else {
+          failed += 1;
         }
       } catch (e) {
-        console.error(`Failed to execute ${candidate.ticker}:`, e);
+        failed += 1;
+        console.error(`Failed to queue ${candidate.ticker}:`, e);
       }
     }
 
-    setToast({ message: `Executed ${count} top candidates`, type: "success" });
+    setToast({
+      message:
+        failed > 0
+          ? `Queued ${queued} for approval (${failed} failed)`
+          : `Queued ${queued} top candidates for approval`,
+      type: failed > 0 ? "warning" : "success",
+    });
     setAutoExecuteTop(0);
   };
 
@@ -762,66 +777,30 @@ export default function OptionsScanPanel() {
         }}
       >
         <button
+          type="button"
           onClick={runScan}
           disabled={scanning}
-          style={{
-            background: scanning ? "var(--bg-3)" : "var(--cyan)",
-            color: scanning ? "var(--ink-faint)" : "var(--bg)",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 16px",
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: scanning ? "default" : "pointer",
-            letterSpacing: "0.08em",
-          }}
+          className="btn-primary"
         >
-          {scanning ? "SCANNING..." : "RUN SCAN"}
+          {scanning ? "SCANNING…" : "RUN SCAN"}
         </button>
 
         {result && result.candidates.length > 0 && (
           <>
-            <button
-              onClick={exportCSV}
-              style={{
-                background: "var(--bg-2)",
-                border: "1px solid var(--line-dim)",
-                borderRadius: 4,
-                padding: "8px 12px",
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: "pointer",
-                color: "var(--ink-dim)",
-              }}
-            >
-              ⬇ CSV
+            <button type="button" onClick={exportCSV} className="btn-ghost">
+              CSV
             </button>
-            <button
-              onClick={() => setShowWatchlistManager(true)}
-              style={{
-                background: "var(--bg-2)",
-                border: "1px solid var(--line-dim)",
-                borderRadius: 4,
-                padding: "8px 12px",
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: "pointer",
-                color: "var(--ink-dim)",
-              }}
-            >
-              📋 Watchlist
+            <button type="button" onClick={() => setShowWatchlistManager(true)} className="btn-ghost">
+              Watchlist
             </button>
           </>
         )}
 
-        {/* Auto-execute top N */}
+        {/* Queue top N for approval (does not place broker orders) */}
         {result && result.candidates.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
             <label style={{ color: "var(--ink-dim)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
-              Auto-execute top:
+              Queue top for approval:
             </label>
             <input
               type="number"
@@ -841,7 +820,7 @@ export default function OptionsScanPanel() {
               }}
             />
             <button
-              onClick={() => autoExecuteTop > 0 && executeTopCandidates(autoExecuteTop)}
+              onClick={() => autoExecuteTop > 0 && queueTopCandidates(autoExecuteTop)}
               disabled={autoExecuteTop <= 0 || executingCandidates.size > 0}
               style={{
                 background: autoExecuteTop > 0 ? "var(--green)" : "var(--bg-3)",
@@ -855,7 +834,7 @@ export default function OptionsScanPanel() {
                 cursor: autoExecuteTop > 0 ? "pointer" : "default",
               }}
             >
-              GO
+              QUEUE
             </button>
           </div>
         )}
@@ -1072,9 +1051,9 @@ export default function OptionsScanPanel() {
             return (
               <div
                 key={`${cand.ticker}-${cand.short_strike}-${cand.long_strike}`}
+                className="instrument-card"
                 onClick={() => setSelectedCandidate(cand)}
                 style={{
-                  background: "var(--bg-2)",
                   border: `1px solid ${
                     cand.action === "BUY"
                       ? "rgba(34,197,94,0.25)"
@@ -1082,7 +1061,6 @@ export default function OptionsScanPanel() {
                       ? "rgba(239,68,68,0.25)"
                       : "var(--line-dim)"
                   }`,
-                  borderRadius: 6,
                   padding: 12,
                   display: "flex",
                   flexDirection: "column",
@@ -1103,6 +1081,7 @@ export default function OptionsScanPanel() {
                     >
                       {cand.ticker}
                     </span>
+                    <SignalDirectionBadge action={cand.action} size="sm" />
                     <SignalAttribution
                       data={{
                         direction: cand.action,
@@ -1112,12 +1091,11 @@ export default function OptionsScanPanel() {
                         timeframe: typeof cand.dte === "number" ? `${cand.dte} DTE` : null,
                         confidence: typeof cand.confidence === "number" ? cand.confidence : null,
                         updatedAt: (cand as unknown as { last_update?: string }).last_update ?? null,
-                        // The scan panel can submit this candidate to
-                        // /api/trade-desk/signal directly (see EXECUTE
-                        // control below) — that only reaches the broker
-                        // through the same guardrail/execution-mode gate as
-                        // every other path, so "advisory" (not
-                        // execution-authoritative on its own).
+                        // The scan panel can queue this candidate via
+                        // /api/trade-desk/signal ("Queue top for approval") —
+                        // that only reaches the broker through the same
+                        // guardrail/execution-mode gate as every other path,
+                        // so "advisory" (not execution-authoritative on its own).
                         authority: "advisory",
                       }}
                       size="sm"
@@ -1170,12 +1148,11 @@ export default function OptionsScanPanel() {
 
                 {!isMobile && (
                   <div
+                    className="instrument-card--flat"
                     style={{
                       display: "grid",
                       gridTemplateColumns: "repeat(3, 1fr)",
                       gap: 4,
-                      background: "var(--bg-3)",
-                      borderRadius: 3,
                       padding: "6px 8px",
                       fontSize: 9,
                     }}
@@ -1225,32 +1202,16 @@ export default function OptionsScanPanel() {
           })}
         </div>
       ) : result && result.candidates.length === 0 ? (
-        <div
-          style={{
-            background: "var(--bg-2)",
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: "20px",
-            textAlign: "center",
-            color: "var(--ink-dim)",
-            fontSize: 13,
-          }}
-        >
-          No options candidates match your filters. Try running a new scan or adjusting filters.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">No options candidates match your filters</p>
+          <p className="empty-chassis__hint">Run a new scan or adjust filters.</p>
         </div>
       ) : (
-        <div
-          style={{
-            background: "var(--bg-2)",
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: "20px",
-            textAlign: "center",
-            color: "var(--ink-dim)",
-            fontSize: 13,
-          }}
-        >
-          Click "RUN SCAN" to analyze options spreads.
+        <div className="instrument-card instrument-card--flat empty-chassis">
+          <p className="empty-chassis__title">No scan yet</p>
+          <p className="empty-chassis__hint">
+            Click <strong style={{ color: "var(--ink)" }}>RUN SCAN</strong> to analyze options spreads.
+          </p>
         </div>
       )}
 

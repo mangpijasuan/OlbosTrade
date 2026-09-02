@@ -12,11 +12,17 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, and_, case
 
 from app.api.deps import require_api_key_configured
+from app.api.rate_limit import rate_limit
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.reconciliation_snapshot import ReconciliationSnapshot
 from app.models.trade import Trade
 from app.models.risk_state import PortfolioSnapshot
+
+# ibkr_coordinator's own default (30s) is too slow for these polled UI
+# routes — get_account_summary() can stall for the full default when the
+# broker connection is degraded, making the route itself look hung.
+ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
 from app.services.kill_switch import kill_switch_service
 from app.services.position_reconciler import PositionReconciler, ReconciliationError
 
@@ -53,8 +59,12 @@ async def get_portfolio_state():
     """
     try:
         from app.broker.broker_factory import get_broker
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
         broker = get_broker()
-        acct   = await broker.get_account_summary()
+        acct   = await ibkr_coordinator.submit(
+            Priority.P0, broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
+            timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+        )
         acct_value    = float(acct.net_liquidation)
         buying_power  = float(acct.buying_power)
         cash          = float(acct.cash_balance)
@@ -255,7 +265,7 @@ async def get_kill_switch_status():
     return kill_switch_service.status
 
 
-@router.post("/kill-switch/trigger", dependencies=[Depends(require_api_key_configured)])
+@router.post("/kill-switch/trigger", dependencies=[Depends(require_api_key_configured), Depends(rate_limit)])
 async def trigger_kill_switch(
     reason: str = "manual",
 ):
@@ -333,23 +343,66 @@ async def reset_kill_switch(body: KillSwitchResetRequest):
 
 
 # ── Scenario / stress analysis + parametric VaR (Phase 2 Batch 4) ──────────────────
-def _trade_to_scenario_position(t, spot_iv: float = 0.25) -> dict:
+async def _fetch_spot(symbol: str) -> float:
+    """Live last-price lookup via yfinance — same primitive already used by
+    income_screener.py and unusual_activity.py, wrapped for async use the
+    same way main.py's _yf_bars wraps its own sync yfinance call."""
+    import asyncio as _asyncio
+    import yfinance as yf
+
+    loop = _asyncio.get_running_loop()
+
+    def _fetch():
+        tk = yf.Ticker(symbol)
+        try:
+            return float(tk.fast_info["last_price"])
+        except Exception:
+            h = tk.history(period="1d")
+            if h.empty:
+                raise ValueError(f"no price data for {symbol}")
+            return float(h["Close"].iloc[-1])
+
+    return await loop.run_in_executor(None, _fetch)
+
+
+def _trade_to_scenario_position(t, spot: float, spot_iv: float = 0.25) -> dict:
     """
-    Approximate a stored options trade as a scenario position. Uses the short
-    strike as the spot proxy and a flat IV when live marks aren't available;
-    refined automatically once market data is wired in.
+    Turn a stored trade into a scenario position using its real live spot
+    (caller resolves this per-underlying). IV/rate stay flat for options —
+    real per-position IV needs a live options-chain lookup, deliberately
+    deferred (same reasoning as Alerts' unwired iv_rank/iv_percentile).
+
+    spread_type is "equity_long"/"equity_short" for equity trades, or
+    "call"/"put" for options — never a strategy name (that's t.strategy).
+    Same equity-vs-option detection convention as position_risk_dollars()
+    in portfolio_engine.py.
     """
+    spread_type = (getattr(t, "spread_type", "") or "").lower()
+    is_equity = (getattr(t, "strategy", "") == "equity") or spread_type.startswith("equity")
     qty = int(t.quantity or 1)
-    # Credit spreads are net short the near leg → negative quantity.
-    short = str(t.spread_type or "").startswith(("bull_put", "bear_call", "iron"))
+
+    if is_equity:
+        # Direction lives in the string, not quantity sign — same
+        # convention trade_recorder.py/trade_desk.py/main.py already use.
+        signed = -qty if spread_type == "equity_short" else qty
+        return {
+            "symbol": t.underlying, "kind": "equity",
+            "spot": spot, "quantity": signed, "multiplier": 1,
+        }
+
+    # Options: spread_type is "call"/"put" here, not a strategy-name
+    # string — this short/long derivation is a pre-existing approximation
+    # (single synthetic leg from short_strike only) left unchanged.
+    short = spread_type.startswith(("bull_put", "bear_call", "iron"))
     signed = -qty if short else qty
     strike = float(t.short_strike or 0) or 100.0
+    option_type = "call" if spread_type.startswith("c") else "put"
     from datetime import date as _date
     dte = max(0, (t.expiration - _date.today()).days) if t.expiration else 0
     return {
         "symbol": t.underlying, "kind": "option",
-        "option_type": t.option_type or "put",
-        "spot": strike, "strike": strike, "dte_days": dte,
+        "option_type": option_type,
+        "spot": spot, "strike": strike, "dte_days": dte,
         "iv": spot_iv, "r": 0.04, "quantity": signed, "multiplier": 100,
     }
 
@@ -357,26 +410,54 @@ def _trade_to_scenario_position(t, spot_iv: float = 0.25) -> dict:
 @router.get("/scenarios")
 async def get_scenarios():
     """Stress the open book under the standard shock set (crash, vol spike, …)."""
+    import asyncio
+
+    from app.services import spot_price_cache
     from app.services.scenario_engine import run_all
+
     try:
         async with AsyncSessionLocal() as session:
             open_trades = (await session.execute(
                 select(Trade).where(Trade.status == "open")
             )).scalars().all()
-        positions = [_trade_to_scenario_position(t) for t in open_trades]
+
+        underlyings = sorted({t.underlying for t in open_trades})
+        excluded_symbols: list[dict] = []
+        sem = asyncio.Semaphore(5)
+
+        async def _resolve(symbol: str):
+            async with sem:
+                try:
+                    spot, _status = await spot_price_cache.get_spot(
+                        symbol, lambda: _fetch_spot(symbol)
+                    )
+                    return symbol, spot
+                except Exception as exc:
+                    excluded_symbols.append({"ticker": symbol, "reason": f"spot unavailable: {exc}"})
+                    return symbol, None
+
+        resolved = await asyncio.gather(*(_resolve(u) for u in underlyings))
+        spot_by_underlying = {sym: spot for sym, spot in resolved if spot is not None}
+
+        positions = [
+            _trade_to_scenario_position(t, spot_by_underlying[t.underlying])
+            for t in open_trades if t.underlying in spot_by_underlying
+        ]
+        result = run_all(positions, capital=settings.starting_capital)
+        result["excluded_symbols"] = excluded_symbols
+        return result
     except Exception as exc:
         return {"error": str(exc), "scenarios": [], "worst_scenario": None, "worst_pnl": 0.0}
-    return run_all(positions, capital=settings.starting_capital)
 
 
 @router.get("/var")
 async def get_var(confidence: float = 0.95, horizon_days: int = 1):
     """Parametric (delta-vega-normal) portfolio VaR / Expected Shortfall."""
+    from app.services import spot_price_cache
     from app.services.portfolio_risk_sim import portfolio_var
 
     net_delta = net_vega = 0.0
     vol = 0.18
-    spot = 450.0
     try:
         from app.main import _greeks_tracker, _current_regime
         if _greeks_tracker:
@@ -390,13 +471,29 @@ async def get_var(confidence: float = 0.95, horizon_days: int = 1):
 
     try:
         from app.broker.broker_factory import get_broker
-        acct = await get_broker().get_account_summary()
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+        acct = await ibkr_coordinator.submit(
+            Priority.P0, get_broker().get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+        )
         pv = float(acct.net_liquidation)
     except Exception:
         pv = settings.starting_capital
 
-    return portfolio_var(net_delta, net_vega, spot, vol, pv,
-                         confidence=confidence, horizon_days=horizon_days)
+    try:
+        spot, spot_status = await spot_price_cache.get_spot("SPY", lambda: _fetch_spot("SPY"))
+    except Exception as exc:
+        return {
+            "available": False, "reason": f"spot price unavailable: {exc}",
+            "confidence": confidence, "horizon_days": horizon_days,
+            "var": None, "expected_shortfall": None, "var_pct": None, "es_pct": None,
+        }
+
+    result = portfolio_var(net_delta, net_vega, spot, vol, pv,
+                            confidence=confidence, horizon_days=horizon_days)
+    return {
+        "available": True, "spot_price": spot, "spot_source": "SPY",
+        "spot_data_status": spot_status, **result,
+    }
 
 
 @router.get("/margin")
@@ -411,7 +508,10 @@ async def get_margin():
 
     try:
         from app.broker.broker_factory import get_broker
-        acct = await get_broker().get_account_summary()
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+        acct = await ibkr_coordinator.submit(
+            Priority.P0, get_broker().get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY", timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+        )
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
 
@@ -427,7 +527,16 @@ async def get_margin():
         warn_pct=settings.margin_warn_pct,
         critical_pct=settings.margin_critical_pct,
     )
-    return {"available": True, **status.to_dict()}
+    # Age travels with the figures. The utilization number reads as a live
+    # measurement whether or not it still is one, so the reader needs the
+    # clock alongside it to tell a current 57% from a 57% that stopped
+    # updating an hour ago.
+    return {
+        "available": True,
+        **status.to_dict(),
+        "data_age_seconds": acct.data_age_seconds,
+        "is_stale": acct.is_stale,
+    }
 
 
 @router.get("/reconciliation")

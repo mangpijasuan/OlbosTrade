@@ -80,7 +80,7 @@ async def test_record_fill_idempotent_on_duplicate_dispatch_id():
             signal_score=0.75,
             iv_rank=35.0,
             regime="neutral",
-            trading_mode="balanced",
+            approved_by="autopilot",
             dispatch_id="DISP-DUPE-001",
         )
 
@@ -145,7 +145,7 @@ async def test_record_fill_emits_critical_on_db_failure():
                 signal_score=0.75,
                 iv_rank=35.0,
                 regime="neutral",
-                trading_mode="balanced",
+                approved_by="autopilot",
                 dispatch_id="DISP-FAIL-001",
             )
 

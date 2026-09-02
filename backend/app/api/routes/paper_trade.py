@@ -3,6 +3,7 @@ Paper trading routes — wired to live broker positions + DB trade history.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -13,8 +14,42 @@ from app.broker.broker_factory import get_broker
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.trade import Trade
+from app.services.trade_identity import asset_class_from_trade, position_identity_key
 
 router = APIRouter()
+
+# get_account_summary() has no timeout of its own; this route is polled by
+# the frontend every 30s (usePaperTrade.ts).
+ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5.0
+
+
+def _hold_days_utc(entry: Optional[datetime]) -> Optional[int]:
+    """Calendar days a position has been held, computed entirely in UTC.
+
+    Trade.entry_date is DateTime(timezone=True) — tz-aware UTC. This used to
+    be measured against date.today(), which returns the *system-local* date,
+    so the answer was one short for part of every day on any host west of
+    UTC. Caught by a test asserting a 5-day hold: it read 4 on a UTC-7
+    machine while passing in CI at UTC, i.e. the same code disagreeing with
+    itself depending on where it ran.
+
+    Scope, checked rather than assumed: the production host is Etc/UTC with
+    TZ unset in the container, so date.today() has always equalled the UTC
+    date there and displayed values were never wrong in production. This is a
+    latent defect that surfaces on any non-UTC host — real, but not an
+    incident. Verified post-deploy: LITE/MRVL/MSTR hold_days were 3/8/3
+    before and after, exactly as a behaviour-preserving fix should leave
+    them.
+
+    Naive datetimes are treated as UTC rather than rejected — the column is
+    tz-aware, but a naive value can still arrive from a fixture or an older
+    row, and assuming local for those would reintroduce the same bug.
+    """
+    if entry is None:
+        return None
+    e = entry if entry.tzinfo else entry.replace(tzinfo=timezone.utc)
+    today_utc = datetime.now(timezone.utc).date()
+    return max((today_utc - e.astimezone(timezone.utc).date()).days, 0)
 
 
 # ── Portfolio summary ─────────────────────────────────────────────────────────
@@ -25,14 +60,18 @@ async def get_portfolio():
     broker_data: dict = {}
     try:
         broker = get_broker()
-        acct = await broker.get_account_summary()
+        acct = await asyncio.wait_for(broker.get_account_summary(), timeout=ACCOUNT_SUMMARY_TIMEOUT_SECONDS)
         broker_data = {
             "account_value": float(acct.net_liquidation),
             "cash":          float(acct.cash_balance),
             "buying_power":  float(acct.buying_power),
         }
     except Exception as exc:
-        broker_data = {"broker_error": str(exc)}
+        # str(asyncio.TimeoutError()) is "" — an empty message reads as falsy
+        # to every `if (broker_error)` check downstream, so a timeout silently
+        # presented as "no error" (confirmed live 2026-08-27). Always carry a
+        # non-empty description.
+        broker_data = {"broker_error": str(exc) or type(exc).__name__}
 
     try:
         async with AsyncSessionLocal() as session:
@@ -63,7 +102,9 @@ async def get_portfolio():
         total_pnl    = float(stats.total_pnl or 0)
         wins         = int(stats.wins or 0)
         win_rate     = round(wins / total_trades, 3) if total_trades > 0 else 0.0
-        acct_value   = broker_data.get("account_value", settings.starting_capital + total_pnl)
+        # No synthetic substitute: when the broker read fails, return_pct is
+        # unknown rather than computed off starting capital + DB P&L.
+        acct_value   = broker_data.get("account_value")
 
         return {"portfolio": {
             **broker_data,
@@ -73,7 +114,10 @@ async def get_portfolio():
             "open_positions":   open_count,
             "trades_today":     trades_today,
             "starting_capital": settings.starting_capital,
-            "return_pct":       round((acct_value - settings.starting_capital) / settings.starting_capital * 100, 2),
+            "return_pct":       (
+                round((acct_value - settings.starting_capital) / settings.starting_capital * 100, 2)
+                if acct_value is not None else None
+            ),
         }}
     except Exception as exc:
         return {"portfolio": {**broker_data, "db_error": str(exc)}}
@@ -96,7 +140,12 @@ async def get_positions():
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Trade).where(Trade.status == "open"))
-            db_trades = {t.underlying: t for t in result.scalars().all()}
+            # Key by (underlying, equity|options) — not bare underlying — so
+            # SPY shares and a SPY spread do not clobber each other.
+            db_trades = {
+                position_identity_key(t.underlying, asset_class_from_trade(t)): t
+                for t in result.scalars().all()
+            }
     except Exception:
         db_trades = {}
 
@@ -126,8 +175,18 @@ async def get_positions():
     for pos in broker_positions:
         sym = getattr(pos, "symbol", str(pos))
         underlying = getattr(pos, "underlying", sym)
-        seen.add(sym)
-        db = db_trades.get(underlying)
+        broker_asset = (
+            "equity" if getattr(pos, "asset_type", "option") == "equity" else "options"
+        )
+        id_key = position_identity_key(underlying, broker_asset)
+        seen.add(id_key)
+        # Prefer exact (underlying, asset) match; fall back to underlying-only
+        # equity/options pair only when broker did not report asset_type well.
+        db = db_trades.get(id_key)
+        if db is None and getattr(pos, "asset_type", None) is None:
+            db = db_trades.get(position_identity_key(underlying, "equity")) or db_trades.get(
+                position_identity_key(underlying, "options")
+            )
         qty      = getattr(pos, "quantity", 0)
         avg_cost = float(getattr(pos, "avg_cost", 0) or 0)
         cur_price = price_map.get(sym)
@@ -162,11 +221,22 @@ async def get_positions():
             "market_value":   market_value,
             "unrealized_pnl": unrealized_pnl,
             "strategy":       db.strategy if db else "unknown",
-            "asset_type":     "equity" if (spread_type or "").lower().startswith("equity") else "options",
+            # Tracked: derive from the DB's spread_type (trusted, already
+            # correct). Untracked: no DB row means spread_type is always
+            # None here, which silently defaulted to "options" for every
+            # untracked position regardless of its real asset class — use
+            # the broker's own reported asset_type instead (Position.
+            # asset_type, set from the live contract's secType).
+            "asset_type": (
+                ("equity" if (spread_type or "").lower().startswith("equity") else "options")
+                if db else
+                ("equity" if getattr(pos, "asset_type", "option") == "equity" else "options")
+            ),
             "entry_date":     db.entry_date.isoformat() if db and db.entry_date else None,
             "spread_type":    spread_type,
-            "hold_days":      max((date.today() - db.entry_date.date()).days, 0) if (db and db.entry_date) else None,
+            "hold_days":      _hold_days_utc(db.entry_date) if db else None,
             "trading_mode":   db.trading_mode_at_entry if db else None,
+            "approved_by":    db.approved_by if db else None,
             "credit_received": float(db.credit_received) if (db and db.credit_received is not None) else None,
             "mfe_pnl":        float(db.mfe) if (db and db.mfe is not None) else None,
             "mae_pnl":        float(db.mae) if (db and db.mae is not None) else None,
@@ -178,17 +248,19 @@ async def get_positions():
         })
 
     # Add any DB-open trades not in broker positions (may be paper-only)
-    for sym, t in db_trades.items():
-        if sym not in seen:
+    for (_sym, _asset), t in db_trades.items():
+        id_key = (_sym, _asset)
+        if id_key not in seen:
             positions.append({
                 "id":              str(t.id),
-                "symbol":          sym,
+                "symbol":          _sym,
                 "strategy":        t.strategy,
-                "asset_type":      "equity" if (t.spread_type or "").lower().startswith("equity") else "options",
+                "asset_type":      _asset,
                 "spread_type":     t.spread_type,
                 "entry_date":      t.entry_date.isoformat() if t.entry_date else None,
-                "hold_days":       max((date.today() - t.entry_date.date()).days, 0) if t.entry_date else None,
+                "hold_days":       _hold_days_utc(t.entry_date),
                 "trading_mode":    t.trading_mode_at_entry,
+                "approved_by":     t.approved_by,
                 "credit_received": float(t.credit_received or 0),
                 "mfe_pnl":         float(t.mfe_pnl or 0),
                 "mae_pnl":         float(t.mae_pnl or 0),
@@ -250,6 +322,7 @@ async def get_trade_history(
                     "signal_score":    float(t.signal_score or 0),
                     "hold_days":       max(((t.exit_date or datetime.now(timezone.utc)) - t.entry_date).days, 0) if t.entry_date else None,
                     "trading_mode":    getattr(t, "trading_mode_at_entry", None),
+                    "approved_by":     getattr(t, "approved_by", None),
                 }
                 for t in trades
             ],

@@ -4,10 +4,29 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
+import MissionCard from "../../components/MissionCard";
+import { useDeskBlockContext } from "../../hooks/useDeskBlockContext";
+import { deriveSignalBlockReason } from "../../utils/signalBlockReason";
 
 const DEFAULT_WATCH = ["AAPL", "NVDA", "MSFT", "META", "AMZN", "QQQ", "SPY"];
 
+function railConfidenceTone(pct: number): string {
+  return pct >= 75 ? "var(--green)" : pct >= 62 ? "var(--cyan)" : "var(--amber)";
+}
+
 type DiscTab = "watch" | "signals" | "positions";
+
+function RailEmpty({ title, hint, tone }: { title: string; hint?: string; tone?: "error" }) {
+  return (
+    <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+      <p className="empty-chassis__title" style={tone === "error" ? { color: "var(--red)" } : undefined}>
+        {title}
+      </p>
+      {hint && <p className="empty-chassis__hint">{hint}</p>}
+    </div>
+  );
+}
 
 export default function EquityDiscoveryRail({
   symbol,
@@ -20,6 +39,10 @@ export default function EquityDiscoveryRail({
   const [snaps, setSnaps] = useState<Record<string, { last_close: number | null; change_pct: number | null }>>({});
   const [signals, setSignals] = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
+  const [signalsError, setSignalsError] = useState(false);
+  const [positionsError, setPositionsError] = useState(false);
+  const blockCtx = useDeskBlockContext();
+  const { minConfidence } = blockCtx;
 
   useEffect(() => {
     let alive = true;
@@ -38,15 +61,15 @@ export default function EquityDiscoveryRail({
       setSnaps(Object.fromEntries(entries));
       try {
         const sig: any = await api.getEquitySignals(30);
-        if (alive) setSignals(sig.signals || []);
+        if (alive) { setSignals(sig.signals || []); setSignalsError(false); }
       } catch {
-        if (alive) setSignals([]);
+        if (alive) { setSignals([]); setSignalsError(true); }
       }
       try {
         const pos: any = await api.getPositions();
-        if (alive) setPositions(pos.positions || (Array.isArray(pos) ? pos : []));
+        if (alive) { setPositions(pos.positions || (Array.isArray(pos) ? pos : [])); setPositionsError(false); }
       } catch {
-        if (alive) setPositions([]);
+        if (alive) { setPositions([]); setPositionsError(true); }
       }
     };
     load();
@@ -63,147 +86,116 @@ export default function EquityDiscoveryRail({
     { key: "positions", label: "Held" },
   ];
 
+  const actionable = signals.filter((s) => s.action !== "HOLD").slice(0, 20);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <div style={{ display: "flex", borderBottom: "1px solid var(--line-dim)", flexShrink: 0 }}>
+      <div className="discovery-rail-tabs" role="tablist" aria-label="Equity discovery">
         {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
+            role="tab"
+            aria-selected={tab === t.key}
             onClick={() => setTab(t.key)}
-            style={{
-              flex: 1,
-              padding: "8px 4px",
-              border: "none",
-              background: "transparent",
-              borderBottom: tab === t.key ? "2px solid var(--cyan)" : "2px solid transparent",
-              color: tab === t.key ? "var(--cyan)" : "var(--ink-dim)",
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-            }}
+            className={`discovery-rail-tabs__btn${tab === t.key ? " discovery-rail-tabs__btn--active" : ""}`}
           >
             {t.label}
           </button>
         ))}
       </div>
-      <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
+      <div className="mission-list" style={{ flex: 1, overflow: "auto", padding: 8 }}>
         {tab === "watch" &&
           DEFAULT_WATCH.map((t) => {
             const s = snaps[t];
             const on = t === symbol;
             const pct = s?.change_pct;
+            const pctTone = (pct ?? 0) >= 0 ? "var(--green)" : "var(--red)";
             return (
-              <button
+              <MissionCard
                 key={t}
-                type="button"
+                variant="compact"
+                as="button"
                 onClick={() => onSelect(t)}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "8px 10px",
-                  marginBottom: 4,
-                  border: on ? "1px solid var(--cyan)" : "1px solid var(--line-dim)",
-                  background: on ? "var(--cyan-dim)" : "var(--bg-3)",
-                  color: "var(--ink)",
-                  cursor: "pointer",
-                  fontFamily: "var(--mono)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontWeight: 700, fontSize: 12 }}>{t}</span>
-                  <span style={{ fontSize: 10, color: (pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                    {typeof pct === "number" ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : "—"}
-                  </span>
-                </div>
-                <div style={{ fontSize: 10, color: "var(--ink-dim)", marginTop: 2 }}>
-                  {typeof s?.last_close === "number" ? `$${s.last_close.toFixed(2)}` : "—"}
-                </div>
-              </button>
+                selected={on}
+                aria-pressed={on}
+                aria-label={`Select ${t}`}
+                reward={typeof pct === "number" ? {
+                  value: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`,
+                  tone: pctTone,
+                } : undefined}
+                title={t}
+                subtitle={typeof s?.last_close === "number" ? `$${s.last_close.toFixed(2)}` : "—"}
+              />
             );
           })}
 
         {tab === "signals" &&
-          (signals.length === 0 ? (
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)", padding: 8 }}>
-              No equity signals yet.
-            </div>
+          (actionable.length === 0 ? (
+            <RailEmpty
+              title={signalsError ? "Failed to load signals" : "No equity signals yet"}
+              hint={signalsError ? undefined : "Run a scan on Live Signals to fill this rail."}
+              tone={signalsError ? "error" : undefined}
+            />
           ) : (
-            signals
-              .filter((s) => s.action !== "HOLD")
-              .slice(0, 20)
-              .map((s) => (
-                <button
+            actionable.map((s) => {
+              const confPct = Math.round((s.confidence ?? 0) * 100);
+              const tone = railConfidenceTone(confPct);
+              const block = deriveSignalBlockReason(s, blockCtx);
+              return (
+                <MissionCard
                   key={s.id || `${s.ticker}-${s.generated_at}`}
-                  type="button"
+                  variant="compact"
+                  as="button"
                   onClick={() => onSelect(s.ticker)}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "8px 10px",
-                    marginBottom: 4,
-                    border: "1px solid var(--line-dim)",
-                    background: "var(--bg-3)",
-                    cursor: "pointer",
-                    fontFamily: "var(--mono)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>{s.ticker}</span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color: s.action === "BUY" ? "var(--green)" : "var(--red)",
-                      }}
-                    >
-                      {s.action} {typeof s.confidence === "number" ? `${Math.round(s.confidence * 100)}%` : ""}
+                  aria-label={`Select ${s.ticker} signal`}
+                  reward={{ prefix: "CONF", value: `${confPct}%`, tone }}
+                  title={(
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {s.ticker}
+                      <SignalDirectionBadge action={s.action} size="sm" />
                     </span>
-                  </div>
-                </button>
-              ))
+                  )}
+                  subtitle={block ? String(block) : "Above desk floor"}
+                  meta={{
+                    label: s.action === "HOLD" ? "HOLD" : confPct >= Math.round(minConfidence * 100) ? "LIVE" : "LOW",
+                    tone: confPct >= Math.round(minConfidence * 100) ? "var(--green)" : "var(--amber)",
+                  }}
+                  progress={{ value: confPct, tone, label: `${s.ticker} confidence` }}
+                />
+              );
+            })
           ))}
 
         {tab === "positions" &&
           (positions.length === 0 ? (
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)", padding: 8 }}>
-              No open positions.
-            </div>
+            <RailEmpty
+              title={positionsError ? "Failed to load positions" : "No open positions"}
+              hint={positionsError ? undefined : "Held equity will appear here."}
+              tone={positionsError ? "error" : undefined}
+            />
           ) : (
-            positions.map((p: any) => (
-              <button
-                key={`${p.symbol}-${p.entry_date || "x"}`}
-                type="button"
-                onClick={() => onSelect(p.symbol || p.underlying)}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "8px 10px",
-                  marginBottom: 4,
-                  border: "1px solid var(--line-dim)",
-                  background: "var(--bg-3)",
-                  cursor: "pointer",
-                  fontFamily: "var(--mono)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontWeight: 700, fontSize: 12, color: "var(--ink)" }}>
-                    {p.symbol || p.underlying}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      color: (p.unrealized_pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)",
-                    }}
-                  >
-                    {typeof p.unrealized_pnl === "number"
-                      ? `${p.unrealized_pnl >= 0 ? "+" : ""}$${p.unrealized_pnl.toFixed(0)}`
-                      : "—"}
-                  </span>
-                </div>
-              </button>
-            ))
+            positions.map((p: any) => {
+              const pnl = p.unrealized_pnl;
+              const pnlTone = (pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)";
+              return (
+                <MissionCard
+                  key={`${p.symbol}-${p.entry_date || "x"}`}
+                  variant="compact"
+                  as="button"
+                  onClick={() => onSelect(p.symbol || p.underlying)}
+                  aria-label={`Select ${p.symbol || p.underlying}`}
+                  reward={typeof pnl === "number" ? {
+                    prefix: "P&L",
+                    value: `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(0)}`,
+                    tone: pnlTone,
+                  } : undefined}
+                  title={p.symbol || p.underlying}
+                  subtitle={typeof p.quantity === "number" ? `${p.quantity} sh` : "Open position"}
+                  meta={{ label: "HELD", tone: "var(--accent)" }}
+                />
+              );
+            })
           ))}
       </div>
     </div>

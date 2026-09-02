@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.utils.market_hours import is_market_open, market_status
+from app.utils.market_hours import is_market_open, market_status, minutes_to_close
 
 ET = ZoneInfo("America/New_York")
 
@@ -31,6 +31,22 @@ ET = ZoneInfo("America/New_York")
 def test_is_market_open_boundaries(dt, expected, reason):
     assert is_market_open(dt) is expected
     assert market_status(dt)["reason"] == reason
+
+
+@pytest.mark.parametrize("dt,expected", [
+    (datetime(2026, 6, 24, 9, 30, tzinfo=ET),  390.0),  # exactly open
+    (datetime(2026, 6, 24, 15, 45, tzinfo=ET), 15.0),   # 15 min left
+    (datetime(2026, 6, 24, 15, 59, tzinfo=ET), 1.0),    # just before close
+    (datetime(2026, 6, 24, 16, 0, tzinfo=ET),  None),   # exactly close — market closed
+    (datetime(2026, 6, 24, 9, 0, tzinfo=ET),   None),   # pre-market
+    (datetime(2026, 6, 27, 11, 0, tzinfo=ET),  None),   # weekend
+])
+def test_minutes_to_close_boundaries(dt, expected):
+    result = minutes_to_close(dt)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)
 
 
 @pytest.mark.asyncio

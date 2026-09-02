@@ -104,6 +104,12 @@ class Position(BaseModel):
     current_price: Optional[Decimal] = None
     unrealized_pnl: Optional[Decimal] = None
     greeks: Optional[Greeks] = None
+    # Explicit, broker-reported asset class — do not infer this from
+    # strike==0 (the equity/ETF branch's placeholder value) downstream,
+    # that placeholder is indistinguishable from a genuine degenerate
+    # option and was the root cause of untracked equity positions
+    # displaying as "OPTIONS" in the Positions UI.
+    asset_type: Literal["equity", "option"] = "option"
 
 
 class EquityPosition(BaseModel):
@@ -129,6 +135,13 @@ class AccountSummary(BaseModel):
     maintenance_margin: Decimal | None = None
     excess_liquidity: Decimal | None = None
     init_margin: Decimal | None = None
+    # How long ago the broker last refreshed these figures, and whether that
+    # is long enough ago to stop trusting them. IBKR serves account data from
+    # a locally-cached push stream, so a read always succeeds and always looks
+    # authoritative — even when the stream died hours earlier. None means the
+    # broker doesn't report an age (non-IBKR brokers), not that it is fresh.
+    data_age_seconds: float | None = None
+    is_stale: bool = False
 
 
 class Bar(BaseModel):

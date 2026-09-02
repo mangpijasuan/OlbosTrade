@@ -1,10 +1,8 @@
 """
-Tests for IV Surface, Regime Classifier, and Strategy Optimizer.
+Tests for IV Surface and Regime Classifier.
 Run with: pytest tests/test_new_modules.py -v
 """
 
-import asyncio
-from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 import numpy as np
@@ -12,9 +10,6 @@ import pytest
 
 from app.services.iv_surface import IVSurfaceEngine, IVSurfaceSnapshot
 from app.services.regime_classifier import RegimeClassifier, RegimeType
-from app.services.strategy_optimizer import (
-    StrategyOptimizer, StrategyParams, TradeRecord,
-)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -23,34 +18,6 @@ def make_spy_returns(n: int = 60, trend: float = 0.0005) -> pd.Series:
     np.random.seed(42)
     returns = np.random.normal(trend, 0.01, n)
     return pd.Series(returns)
-
-
-def make_trade_records(
-    strategy: str,
-    n: int = 40,
-    win_rate: float = 0.60,
-    avg_win: float = 120.0,
-    avg_loss: float = -200.0,
-) -> list[TradeRecord]:
-    records = []
-    today = date.today()
-    for i in range(n):
-        is_win = (i % 10) < (win_rate * 10)
-        records.append(TradeRecord(
-            strategy=strategy,
-            entry_date=today - timedelta(days=n - i),
-            exit_date=today - timedelta(days=n - i - 20),
-            entry_credit=1.25,
-            exit_cost=0.60 if is_win else 2.50,
-            pnl=avg_win if is_win else avg_loss,
-            iv_rank_entry=35.0,
-            dte_at_entry=35,
-            spread_width=10.0,
-            credit_to_width=0.25,
-            hold_days=20,
-            exit_reason="profit_target" if is_win else "stop_loss",
-        ))
-    return records
 
 
 def make_fallback_surface(iv_rank: float = 45.0) -> IVSurfaceSnapshot:
@@ -194,58 +161,5 @@ class TestRegimeClassifier:
 
 # ── Strategy Optimizer ────────────────────────────────────────────────────────
 
-class TestStrategyOptimizer:
-    def test_default_params_loaded(self):
-        opt = StrategyOptimizer()
-        params = opt.get_params("bull_put_spread")
-        assert params.profit_target_pct == 0.50
-        assert params.stop_loss_multiplier == 2.0
-        assert params.dte_exit == 21
-
-    @pytest.mark.asyncio
-    async def test_optimize_skips_with_insufficient_trades(self):
-        opt = StrategyOptimizer()
-        trades = make_trade_records("bull_put_spread", n=10)  # < 30 minimum
-        result = await opt.optimize("bull_put_spread", trades)
-        assert not result.accepted
-        assert "minimum" in (result.rejection_reason or "").lower() or result.n_trades_train == 0
-
-    @pytest.mark.asyncio
-    async def test_optimize_runs_with_enough_trades(self):
-        opt = StrategyOptimizer()
-        trades = make_trade_records("bull_put_spread", n=60, win_rate=0.65)
-        result = await opt.optimize("bull_put_spread", trades, train_months=4, validate_months=1)
-        # May or may not accept — but should complete without error
-        assert result.grid_points_tested >= 0
-        assert result.n_trades_train >= 0
-
-    def test_kelly_returns_default_with_few_trades(self):
-        opt = StrategyOptimizer()
-        trades = make_trade_records("bull_put_spread", n=10)
-        size = opt.kelly_position_size("bull_put_spread", trades, 25000.0)
-        assert size == 0.02  # Default
-
-    def test_kelly_caps_at_3_pct(self):
-        opt = StrategyOptimizer()
-        # Very high win rate — Kelly could suggest oversizing
-        trades = make_trade_records(
-            "bull_put_spread", n=50, win_rate=0.90, avg_win=300.0, avg_loss=-50.0
-        )
-        size = opt.kelly_position_size("bull_put_spread", trades, 25000.0)
-        assert size <= 0.03  # Hard cap
-
-    def test_kelly_floors_above_zero(self):
-        opt = StrategyOptimizer()
-        # Losing strategy
-        trades = make_trade_records(
-            "bull_put_spread", n=40, win_rate=0.30, avg_win=50.0, avg_loss=-300.0
-        )
-        size = opt.kelly_position_size("bull_put_spread", trades, 25000.0)
-        assert size >= 0.005  # Floor
-
-    def test_params_update_after_accepted_optimization(self):
-        opt = StrategyOptimizer()
-        original = opt.get_params("bull_put_spread").profit_target_pct
-        # Manually inject a better param
-        opt.params["bull_put_spread"].profit_target_pct = 0.40
-        assert opt.get_params("bull_put_spread").profit_target_pct == 0.40
+# StrategyOptimizer tests moved to test_strategy_optimizer.py (real
+# Backtester.run()-driven rewrite — see Track 2D).

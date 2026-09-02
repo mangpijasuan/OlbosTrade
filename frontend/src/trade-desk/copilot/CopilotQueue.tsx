@@ -7,30 +7,15 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import SignalAttribution from "../../components/SignalAttribution";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
 import type { SignalAttributionData } from "../../types/signal";
-import MetricHint from "../../components/MetricHint";
+import MissionCard from "../../components/MissionCard";
+import { Badge } from "../../components/ui";
 import {
   lifecycleColor,
   lifecycleFromExecution,
   lifecycleLabel,
 } from "../executionStatus";
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
-}
 
 export default function CopilotQueue() {
   const [pending, setPending] = useState<any[]>([]);
@@ -40,8 +25,14 @@ export default function CopilotQueue() {
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    setLoading(true);
+  // `showSkeleton` is only ever true for the very first load. A background
+  // poll must not blank the list: setting loading on every 10s tick tore down
+  // all 174 rendered rows and replaced them with skeletons until the refetch
+  // landed, so the queue spent a visible slice of every cycle looking empty —
+  // and with this many cards the re-render made that window long enough to
+  // look permanent. Later fetches update in place instead.
+  const refresh = useCallback((showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     Promise.all([
       (api.getPendingApprovals() as any).catch(() => ({ pending: [], mode: "—" })),
       (api.getExecutionLog() as any).catch(() => ({ log: [] })),
@@ -58,8 +49,8 @@ export default function CopilotQueue() {
   }, []);
 
   useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 10000);
+    refresh(true);                                    // first paint: skeletons are honest
+    const id = setInterval(() => refresh(), 10000);   // polls: update in place
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -81,26 +72,22 @@ export default function CopilotQueue() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--line-dim)",
-          background: "var(--bg-3)",
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <span className="panel-title">COPILOT QUEUE</span>
-        <Badge text={`MODE ${mode}`} color="var(--amber)" />
+      <div className="desk-tool-rail" style={{ padding: "10px 16px", alignItems: "center", flexWrap: "wrap" }}>
+        <span className="panel-title">Copilot Queue</span>
+        <Badge kind="tag" tone="var(--amber)">{`MODE ${mode}`}</Badge>
         {pending.length > 0 && (
-          <Badge text={`${pending.length} PENDING`} color="var(--orange)" />
+          <Badge kind="tag" tone="var(--orange)">{`${pending.length} PENDING`}</Badge>
         )}
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
           Approve routes through existing OMS. Size edits require a new signal (no modify → re-eval yet).
         </span>
-        <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={refresh}>
+        {/* Manual refresh does show the skeleton: the operator asked for it
+            and wants to see that something happened. Only the silent 10s poll
+            leaves the rows alone. Passing `refresh` directly here would hand
+            the MouseEvent in as `showSkeleton` — truthy by accident rather
+            than by choice. */}
+        <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }}
+                onClick={() => refresh(true)}>
           Refresh
         </button>
       </div>
@@ -147,107 +134,90 @@ export default function CopilotQueue() {
           </div>
         </div>
       ) : (
-        <div style={{ overflowY: "auto", flex: "0 1 auto", maxHeight: "55%" }}>
-          {pending.map((s: any) => (
-            <div
-              key={s.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 16,
-                padding: "12px 16px",
-                borderBottom: "1px solid var(--line-dim)",
-                background: "var(--bg-2)",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                    {s.ticker}
+        <div className="mission-list" style={{ overflowY: "auto", flex: "0 1 auto", maxHeight: "55%", padding: "6px 8px" }}>
+          {pending.map((s: any) => {
+            const pop = s.intelligence?.pop;
+            const ev = s.intelligence?.expected_value;
+            const confidence = typeof s.confidence === "number" ? s.confidence : null;
+            const progressVal = pop != null ? pop * 100 : confidence != null ? confidence * 100 : null;
+            const progressTone = pop != null
+              ? (pop >= 0.7 ? "var(--green)" : "var(--amber)")
+              : confidence != null && confidence >= 0.7
+                ? "var(--green)"
+                : "var(--amber)";
+
+            const reward = s.spread?.net_credit != null
+              ? { prefix: "$", value: s.spread.net_credit.toFixed(2), tone: "var(--green)" }
+              : ev != null
+                ? { prefix: "EV", value: `$${ev.toFixed(0)}`, tone: ev >= 0 ? "var(--green)" : "var(--red)" }
+                : confidence != null
+                  ? { prefix: "CONF", value: `${Math.round(confidence * 100)}%`, tone: progressTone }
+                  : undefined;
+
+            const subtitle = s.spread
+              ? `${s.spread.option_type?.toUpperCase()} ${s.spread.short_strike}/${s.spread.long_strike} · exp ${s.spread.expiration} · max loss $${s.spread.max_loss?.toFixed(2) ?? "—"}`
+              : `Equity · queued ${s.queued_at ? new Date(s.queued_at).toLocaleString() : "—"}`;
+
+            return (
+              <MissionCard
+                key={s.id}
+                reward={reward}
+                title={(
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span className="mono" style={{ fontWeight: 700 }}>{s.ticker}</span>
+                    <Badge kind="tag" tone="var(--ink-dim)">{s.asset_type?.toUpperCase() || "EQUITY"}</Badge>
+                    <SignalDirectionBadge action={s.action || s.strategy?.toUpperCase()} size="sm" />
+                    <SignalAttribution
+                      data={
+                        {
+                          direction: s.action || s.strategy?.toUpperCase() || "BUY",
+                          source: s.source ?? "unknown",
+                          timeframe: null,
+                          confidence,
+                          updatedAt: s.queued_at ?? null,
+                          authority: "advisory",
+                        } as SignalAttributionData
+                      }
+                      size="sm"
+                    />
                   </span>
-                  <Badge text={s.asset_type?.toUpperCase() || "EQUITY"} color="var(--ink-dim)" />
-                  <SignalAttribution
-                    data={
-                      {
-                        direction: s.action || s.strategy?.toUpperCase() || "BUY",
-                        source: s.source ?? "unknown",
-                        timeframe: null,
-                        confidence: typeof s.confidence === "number" ? s.confidence : null,
-                        updatedAt: s.queued_at ?? null,
-                        authority: "advisory",
-                      } as SignalAttributionData
-                    }
-                    size="sm"
-                  />
-                  <Badge text={s.regime?.toUpperCase() || "—"} color="var(--amber)" />
-                </div>
-                {s.spread && (
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                    {s.spread.option_type?.toUpperCase()} spread{" "}
-                    {s.spread.short_strike}/{s.spread.long_strike} exp {s.spread.expiration} · credit:{" "}
-                    <span style={{ color: "var(--green)" }}>${s.spread.net_credit?.toFixed(2)}</span> · max loss:{" "}
-                    <span style={{ color: "var(--red)" }}>${s.spread.max_loss?.toFixed(2)}</span>
-                  </div>
                 )}
-                {s.intelligence && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 14,
-                      marginTop: 6,
-                      flexWrap: "wrap",
-                      fontFamily: "var(--mono)",
-                      fontSize: 10,
-                    }}
-                  >
-                    <span style={{ color: "var(--ink-dim)" }}>
-                      <MetricHint id="POP" />{" "}
-                      <b style={{ color: (s.intelligence.pop ?? 0) >= 0.7 ? "var(--green)" : "var(--amber)" }}>
-                        {((s.intelligence.pop ?? 0) * 100).toFixed(0)}%
-                      </b>
-                    </span>
-                    <span style={{ color: "var(--ink-dim)" }}>
-                      <MetricHint id="EV" />{" "}
-                      <b style={{ color: (s.intelligence.expected_value ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                        ${(s.intelligence.expected_value ?? 0).toFixed(0)}
-                      </b>
-                    </span>
-                    <span style={{ color: "var(--ink-dim)" }}>
-                      <MetricHint id="Kelly" />{" "}
-                      <b style={{ color: "var(--cyan)" }}>
-                        {((s.intelligence.kelly_fraction ?? 0) * 100).toFixed(1)}%
-                      </b>
-                    </span>
-                  </div>
+                subtitle={subtitle}
+                meta={{
+                  label: s.regime?.toUpperCase() || (pop != null ? `${Math.round(pop * 100)}% POP` : "PENDING"),
+                  tone: s.regime ? "var(--amber)" : pop != null && pop >= 0.7 ? "var(--green)" : "var(--ink-dim)",
+                  icon: "⏳",
+                }}
+                progress={progressVal != null ? {
+                  value: progressVal,
+                  tone: progressTone,
+                  label: `${s.ticker} approval readiness`,
+                } : undefined}
+                actions={(
+                  <>
+                    <button
+                      type="button"
+                      className="btn-t"
+                      disabled={acting === s.id}
+                      onClick={() => act(s.id, "approve")}
+                      style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
+                    >
+                      APPROVE
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-t danger"
+                      disabled={acting === s.id}
+                      onClick={() => act(s.id, "reject")}
+                      style={{ fontSize: 11 }}
+                    >
+                      REJECT
+                    </button>
+                  </>
                 )}
-                {!s.spread && (
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
-                    Equity · queued {s.queued_at ? new Date(s.queued_at).toLocaleString() : "—"}
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                <button
-                  type="button"
-                  className="btn-t"
-                  disabled={acting === s.id}
-                  onClick={() => act(s.id, "approve")}
-                  style={{ color: "var(--green)", borderColor: "rgba(34,197,94,0.5)", fontSize: 11 }}
-                >
-                  APPROVE
-                </button>
-                <button
-                  type="button"
-                  className="btn-t danger"
-                  disabled={acting === s.id}
-                  onClick={() => act(s.id, "reject")}
-                  style={{ fontSize: 11 }}
-                >
-                  REJECT
-                </button>
-              </div>
-            </div>
-          ))}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -296,7 +266,7 @@ export default function CopilotQueue() {
                       {e.ticker || "—"}
                     </td>
                     <td>
-                      <Badge text={e.asset_type?.toUpperCase() || "EQ"} color="var(--ink-dim)" />
+                      <Badge kind="tag" tone="var(--ink-dim)">{e.asset_type?.toUpperCase() || "EQ"}</Badge>
                     </td>
                     <td className="mono" style={{ fontSize: 10 }}>
                       {e.action || e.strategy || "—"}
@@ -305,7 +275,7 @@ export default function CopilotQueue() {
                       {e.executed_by || e.approved_by || e.rejected_by || "—"}
                     </td>
                     <td>
-                      <Badge text={lifecycleLabel(life)} color={lifecycleColor(life)} />
+                      <Badge kind="tag" tone={lifecycleColor(life)}>{lifecycleLabel(life)}</Badge>
                     </td>
                     <td className="mono" style={{ fontSize: 10, color: "var(--ink-dim)", maxWidth: 220 }}>
                       {e.reason || "—"}

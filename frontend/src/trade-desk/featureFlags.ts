@@ -19,19 +19,23 @@ export type TradeDeskFlag =
 
 const STORAGE_PREFIX = "olbos.flags.";
 
-/** Opt-in until operator walks V2 on paper — master switch off by default. */
+/**
+ * V2 desk suite default-on after paper gate.
+ * Rollback: Desk Settings off, or localStorage olbos.flags.trade_desk_v2=0.
+ * Experimental desks stay off.
+ */
 const DEFAULTS: Record<TradeDeskFlag, boolean> = {
-  trade_desk_v2: false,
-  equity_desk_v2: false,
-  options_desk_v2: false,
-  copilot_queue_v2: false,
-  execution_monitor_v2: false,
-  trade_replay_v2: false,
+  trade_desk_v2: true,
+  equity_desk_v2: true,
+  options_desk_v2: true,
+  copilot_queue_v2: true,
+  execution_monitor_v2: true,
+  trade_replay_v2: true,
   zero_dte_desk: false,
   options_flow: false,
   alpha_edge_integration: false,
   probabilistic_intelligence: false,
-  mobile_trade_desk: false,
+  mobile_trade_desk: true,
 };
 
 const ENV_MAP: Partial<Record<TradeDeskFlag, string | undefined>> = {

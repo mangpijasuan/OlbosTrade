@@ -14,40 +14,11 @@ function Chip({ label, value, tone = "muted" }: Snap) {
     tone === "ok" ? "var(--green)" :
     tone === "warn" ? "var(--amber)" :
     tone === "crit" ? "var(--red)" :
-    "var(--ink-dim)";
+    "var(--ink)";
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        padding: "4px 10px",
-        borderRight: "1px solid var(--line-dim)",
-        minWidth: 0,
-      }}
-    >
-      <span
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 9,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--ink-faint)",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          fontWeight: 600,
-          color,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {value}
-      </span>
+    <div className="instrument-chip">
+      <span className="instrument-chip-label">{label}</span>
+      <span className="instrument-chip-value" style={{ color }}>{value}</span>
     </div>
   );
 }
@@ -59,6 +30,7 @@ export default function TradeDeskHeader() {
   const [execMode, setExecMode] = useState("—");
   const [riskProfile, setRiskProfile] = useState("—");
   const [dayPnl, setDayPnl] = useState<string>("—");
+  const [dayPnlTone, setDayPnlTone] = useState<"ok" | "crit" | "muted">("muted");
   const [heat, setHeat] = useState("—");
   const [drawdown, setDrawdown] = useState("—");
   const [ks, setKs] = useState<"Engaged" | "Clear" | "Unknown">("Unknown");
@@ -94,27 +66,38 @@ export default function TradeDeskHeader() {
         .then((d: any) => {
           if (!alive) return;
           const s = d.state || d;
-          const pnl = s.daily_pnl ?? s.daily_loss_pct;
           if (typeof s.daily_pnl === "number") {
-            setDayPnl(`${s.daily_pnl >= 0 ? "+" : ""}$${s.daily_pnl.toFixed(0)}`);
+            // Format as +$120 / -$1615 so the sign is never hidden behind `$`.
+            const n = s.daily_pnl;
+            setDayPnl(`${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(0)}`);
+            setDayPnlTone(n >= 0 ? "ok" : "crit");
           } else if (typeof s.daily_loss_pct === "number") {
-            setDayPnl(`${(s.daily_loss_pct * 100).toFixed(2)}% loss`);
+            // daily_loss_pct is a signed P&L ratio — don't hardcode "loss"
+            // on what could be a gain.
+            const v = s.daily_loss_pct * 100;
+            setDayPnl(`${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
+            setDayPnlTone(v >= 0 ? "ok" : "crit");
           } else {
             setDayPnl("—");
+            setDayPnlTone("muted");
           }
           if (typeof s.daily_loss_pct === "number" && typeof s.max_daily_loss_pct === "number") {
-            const rem = Math.max(0, s.max_daily_loss_pct - s.daily_loss_pct);
+            // Clamp to the negative portion only — a gain uses 0% of the
+            // loss budget, not its magnitude (see GlobalRiskStatus.tsx for
+            // the same fix and the reasoning behind it).
+            const lossUsed = Math.max(0, -s.daily_loss_pct);
+            const rem = Math.max(0, s.max_daily_loss_pct - lossUsed);
             setHeat(`${(rem * 100).toFixed(1)}% budget`);
-            setDrawdown(`${(s.daily_loss_pct * 100).toFixed(2)}% day`);
+            setDrawdown(`${(lossUsed * 100).toFixed(2)}% day`);
           } else {
             setHeat("—");
             setDrawdown("—");
           }
-          void pnl;
         })
         .catch(() => {
           if (alive) {
             setDayPnl("Unavailable");
+            setDayPnlTone("muted");
             setHeat("Unavailable");
             setDrawdown("Unavailable");
           }
@@ -157,29 +140,41 @@ export default function TradeDeskHeader() {
     brokerStatus === "connected" || brokerStatus === "ok" ? "ok" :
     brokerStatus === "disconnected" ? "warn" : "muted";
 
+  // #7 — one instrument label: PAPER · AGGRESSIVE · AUTOPILOT (never color-only).
+  const stylePart =
+    riskProfile === "—" || riskProfile === "Unavailable" ? "—" : riskProfile;
+  const execPart =
+    execMode === "—" || execMode === "Unavailable" ? "—" : execMode;
+  const sessionLabel = `${env.toUpperCase()} · ${stylePart} · ${execPart}`;
+
   return (
     <header
+      className="instrument-rail"
       style={{
         display: "flex",
         alignItems: "stretch",
         flexWrap: "wrap",
-        background: "var(--bg-2)",
-        borderBottom: "1px solid var(--line-dim)",
         flexShrink: 0,
       }}
       aria-label="Trade Desk status"
     >
-      <Chip label="Environment" value={env} tone={envTone} />
-      <Chip label="Execution" value={execMode} tone={execMode === "AUTOPILOT" ? "warn" : "muted"} />
-      <Chip label="Risk profile" value={riskProfile} />
+      <Chip
+        label="Session"
+        value={sessionLabel}
+        tone={env === "Live" ? "crit" : envTone}
+      />
       <Chip label="Broker" value={`${broker} · ${brokerStatus}`} tone={brokerTone} />
       <Chip label="Regime" value={regime} />
-      <Chip label="Day P&L" value={dayPnl} tone={dayPnl.startsWith("-") || dayPnl.includes("loss") ? "crit" : "ok"} />
+      <Chip label="Day P&L" value={dayPnl} tone={dayPnlTone} />
       <Chip label="Risk budget" value={heat} />
       <Chip label="Drawdown" value={drawdown} />
       <Chip label="Kill switch" value={ks} tone={ksTone} />
       <div style={{ flex: 1, minWidth: 8 }} />
-      <div style={{ display: "flex", alignItems: "center", padding: "4px 8px" }}>
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "stretch",
+        justifyContent: "center", gap: 4, padding: "4px 8px",
+        minWidth: 168, maxWidth: 200, flex: "0 1 200px",
+      }}>
         <KillSwitchButton variant="panel" />
       </div>
     </header>

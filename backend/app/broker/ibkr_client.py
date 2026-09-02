@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math as _math
+import time
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from ib_insync import IB, Contract, Index, LimitOrder, Option, Stock
 
@@ -35,6 +37,87 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
+
+
+def _safe_int(value, default: int = 0) -> int:
+    """int(value or default), but NaN-safe — IBKR returns NaN (not None) for
+    volume/open-interest on untraded contracts, and int(nan) raises ValueError."""
+    if value is None or (isinstance(value, float) and _math.isnan(value)):
+        return default
+    return int(value)
+
+
+def _safe_decimal(value, default: float = 0) -> Decimal:
+    """Decimal(str(value or default)), but NaN-safe — IBKR returns NaN (not
+    None) for bid/ask/last on untraded contracts. Decimal('nan') doesn't
+    raise, but OptionContract (a Pydantic model) rejects non-finite Decimals."""
+    if value is None or (isinstance(value, float) and _math.isnan(value)):
+        return Decimal(str(default))
+    return Decimal(str(value))
+
+
+# IBKR caps concurrent market-data lines per connection tier — batch chain
+# qualify/ticker requests in conservative chunks rather than one giant call.
+_CHAIN_BATCH_SIZE = 50
+
+
+def _chunked(items: list, size: int) -> "list[list]":
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+# How long to wait for an IBKR historical-data response before giving up.
+# Neither qualifyContractsAsync nor reqHistoricalDataAsync has a timeout of
+# its own — either can hang the caller indefinitely on a slow/stuck TWS
+# response (confirmed live: a degraded connection hung qualifyContractsAsync
+# specifically, not just the reqHistoricalDataAsync call this was first
+# written to guard). get_bars()/get_index_bars() wrap their whole fetch body
+# (qualify + historical request) in one bounded wait_for so either step can
+# trip it. They're the only callers of this timeout; on timeout they raise,
+# and their one caller (DataFetcher.fetch_ohlcv) already falls back to
+# yfinance on any exception.
+HISTORICAL_DATA_TIMEOUT_SECONDS = 30.0
+
+# Overall bound on the ONE real, shared reqAccountUpdatesAsync attempt that
+# backs get_account_summary()'s subscribe (see that method's docstring for
+# the single-flight design this guards). ib_insync's reqAccountUpdatesAsync
+# is not idempotent — every call sends a fresh IBKR message and creates a
+# fresh Future under a shared fixed key, silently orphaning any earlier
+# still-outstanding attempt's Future (confirmed by reading ib_insync's own
+# Wrapper.startReq(), which does `self._futures[key] = future`, no reuse).
+# Retrying independently every few seconds (the previous design here)
+# compounded this: each retry sent another redundant request and abandoned
+# the previous one, so a real IBKR response arriving late would resolve
+# whichever attempt happened to currently hold the key — not the one that
+# sent it — observed live as wildly variable multi-second delays that had
+# nothing to do with any per-caller timeout. 30s matches this module's
+# existing convention for a generous real IBKR round-trip bound (see
+# HISTORICAL_DATA_TIMEOUT_SECONDS) — long enough that a genuinely slow but
+# live response still resolves normally instead of being needlessly
+# abandoned and retried, since retrying here is the expensive part.
+ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS = 30.0
+
+# How old the account-values cache may get before it stops counting as live.
+#
+# ib.accountValues() is a local dict TWS pushes into; nothing about reading it
+# can fail or time out, so a dead push stream is indistinguishable from a quiet
+# one by inspection alone — the last-known numbers are returned forever, with
+# full confidence, at any age. That is the failure this bound exists to make
+# visible: on 2026-08-27 the subscribe had been failing all day while the cache
+# still held 184 values, and once get_account_summary() started serving that
+# cache (correctly — the data was live, confirmed by watching NetLiquidation
+# move) the only thing left separating "live" from "frozen" was that nobody was
+# looking at the clock.
+#
+# reqAccountUpdates pushes on change and re-sends the full set about every 3
+# minutes, so 10 minutes is roughly three missed cycles — long enough that
+# ordinary jitter or a genuinely idle account never trips it, short enough that
+# a stream which has actually stopped is caught inside one scan interval.
+ACCOUNT_VALUES_STALE_AFTER_SECONDS = 600.0
+
+# reqAllOpenOrders is a read request and normally answers immediately; this is
+# only here so a wedged gateway degrades to the local cache instead of hanging
+# an operator-facing route.
+OPEN_ORDERS_TIMEOUT_SECONDS = 10.0
 
 # ── Fill timeout & retry settings (overridden by .env via settings) ────────────
 # How long to wait for a fill before cancelling and retrying at a better price.
@@ -96,9 +179,75 @@ class IBKRClient(BrokerInterface):
     def __init__(self) -> None:
         self.ib = IB()
         self._connected = False
+        # Tracks the one-shot account-updates subscription used by
+        # get_account_summary() — see that method's docstring. Reset here
+        # and on every fresh connect(): a new physical session invalidates
+        # whatever subscription existed on the old socket, even if this
+        # flag was never explicitly cleared by an intervening disconnect()
+        # (e.g. a silent connection drop caught by the reconnect watchdog).
+        self._account_subscribed = False
+        # Single-flight handle for the in-progress subscribe attempt, if
+        # any — see get_account_summary()'s docstring for why this exists
+        # instead of a lock around independent per-caller attempts.
+        self._account_subscribe_task = None
+        # When TWS last pushed an account value, as a monotonic timestamp.
+        # None means "nothing has ever arrived on this client" — distinct
+        # from an old timestamp, which means the stream ran and then stopped.
+        self._account_values_last_push: Optional[float] = None
+        # Registered on the IB object rather than per-connection: self.ib
+        # outlives every connect()/disconnect() cycle (they reuse the same
+        # instance), so hooking once here avoids stacking a duplicate handler
+        # on every reconnect — ib_insync's Event would call each copy.
+        self.ib.accountValueEvent += self._on_account_value
+
+    def _on_account_value(self, _value: Any = None) -> None:
+        """Stamp the arrival of a pushed account value.
+
+        Runs inside ib_insync's event dispatch, so it must never raise: an
+        exception here would propagate into the client's message loop, which
+        is a far worse failure than a missing timestamp.
+        """
+        try:
+            self._account_values_last_push = time.monotonic()
+        except Exception:  # pragma: no cover — defensive only
+            pass
+
+    def account_values_age_seconds(self) -> Optional[float]:
+        """Seconds since TWS last pushed an account value, or None if it never
+        has on this client. Local read of a monotonic clock — no I/O."""
+        if self._account_values_last_push is None:
+            return None
+        return max(0.0, time.monotonic() - self._account_values_last_push)
+
+    def account_values_are_stale(self) -> bool:
+        """True when the push stream has gone quiet past the point where the
+        cache can still be trusted as live.
+
+        A never-populated cache is NOT stale — it is empty, which callers
+        already handle as "no data". Staleness is specifically the dangerous
+        case: real-looking numbers that stopped being true.
+        """
+        age = self.account_values_age_seconds()
+        if age is None:
+            return False
+        return age > ACCOUNT_VALUES_STALE_AFTER_SECONDS
+
+    def _reset_account_subscription(self) -> None:
+        """Discard any in-flight subscribe attempt tied to the old socket —
+        its Future will never resolve on a fresh connection, so leaving it
+        referenced would just leak a permanently-pending task."""
+        self._account_subscribed = False
+        if self._account_subscribe_task is not None:
+            self._account_subscribe_task.cancel()
+            self._account_subscribe_task = None
+        # The push timestamp belongs to the old socket's stream. Carrying it
+        # across a reconnect would report the new, empty cache as freshly
+        # updated — the precise lie this tracking exists to prevent.
+        self._account_values_last_push = None
 
     async def connect(self) -> None:
         """Connect to TWS/Gateway with retry logic (max 3 attempts, 5s delay)."""
+        self._reset_account_subscription()
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 await self.ib.connectAsync(
@@ -143,6 +292,7 @@ class IBKRClient(BrokerInterface):
         if self._connected:
             self.ib.disconnect()
             self._connected = False
+            self._reset_account_subscription()
             logger.info("IBKR disconnected")
 
     def _require_connection(self) -> None:
@@ -153,8 +303,19 @@ class IBKRClient(BrokerInterface):
 
     async def get_options_chain(self, symbol: str, expiry: str) -> OptionsChain:
         """
-        Fetch options chain via IBKR's reqSecDefOptParams + reqTickers.
+        Fetch options chain via IBKR's reqSecDefOptParams + batched reqTickers.
         expiry: 'YYYY-MM-DD'
+
+        Previously fetched one strike at a time (qualify + reqTickers per
+        strike, per call/put) — dozens of sequential round-trips per chain,
+        which is what made a single interactive chain request queue for
+        minutes behind background scan traffic. Now qualifies every
+        call/put contract for the expiry in a few batched calls, then
+        fetches tickers for all qualified contracts the same way —
+        ib_insync's own multi-contract API, not ad-hoc parallelism, and
+        still fully subject to the client's built-in message-rate pacing.
+        Chunked (not one giant call) to stay under IBKR's per-connection
+        concurrent market-data-line limits.
         """
         self._require_connection()
 
@@ -172,47 +333,55 @@ class IBKRClient(BrokerInterface):
         if not target_chain:
             raise ValueError(f"No IBKR chain found for {symbol} on {expiry}")
 
+        candidates = [
+            Option(symbol, expiry_ib, strike, option_type, "SMART")
+            for strike in sorted(target_chain.strikes)
+            for option_type in ("C", "P")
+        ]
+
+        # qualifyContractsAsync silently drops any contract IBKR can't
+        # resolve (e.g. no security definition) rather than raising — the
+        # returned list may be shorter than `candidates`, which is fine,
+        # we only build OptionContracts for what actually qualified.
+        qualified: List[Option] = []
+        for chunk in _chunked(candidates, _CHAIN_BATCH_SIZE):
+            qualified.extend(await self.ib.qualifyContractsAsync(*chunk))
+
+        tickers = []
+        for chunk in _chunked(qualified, _CHAIN_BATCH_SIZE):
+            tickers.extend(await self.ib.reqTickersAsync(*chunk))
+
         calls: List[OptionContract] = []
         puts: List[OptionContract] = []
-
-        for option_type in ("C", "P"):
-            for strike in sorted(target_chain.strikes):
-                opt = Option(symbol, expiry_ib, strike, option_type, "SMART")
-                contracts = await self.ib.qualifyContractsAsync(opt)
-                if not contracts:
-                    continue
-
-                tickers = await self.ib.reqTickersAsync(*contracts)
-                for ticker in tickers:
-                    g = ticker.modelGreeks
-                    greeks = Greeks(
-                        delta=float(g.delta or 0) if g else 0.0,
-                        gamma=float(g.gamma or 0) if g else 0.0,
-                        theta=float(g.theta or 0) if g else 0.0,
-                        vega=float(g.vega or 0) if g else 0.0,
-                        implied_vol=float(g.impliedVol or 0) if g else 0.0,
-                    )
-                    contract = OptionContract(
-                        symbol=ticker.contract.localSymbol or ticker.contract.symbol,
-                        underlying=symbol,
-                        expiration=date.fromisoformat(expiry),
-                        strike=Decimal(str(strike)),
-                        option_type="call" if option_type == "C" else "put",
-                        bid=Decimal(str(ticker.bid or 0)),
-                        ask=Decimal(str(ticker.ask or 0)),
-                        last=Decimal(str(ticker.last or 0)),
-                        volume=int(ticker.volume or 0),
-                        open_interest=int(ticker.callOpenInterest or ticker.putOpenInterest or 0),
-                        greeks=greeks,
-                    )
-                    if option_type == "C":
-                        calls.append(contract)
-                    else:
-                        puts.append(contract)
+        for ticker in tickers:
+            c = ticker.contract
+            option_type = "call" if c.right == "C" else "put"
+            g = ticker.modelGreeks
+            greeks = Greeks(
+                delta=float(g.delta or 0) if g else 0.0,
+                gamma=float(g.gamma or 0) if g else 0.0,
+                theta=float(g.theta or 0) if g else 0.0,
+                vega=float(g.vega or 0) if g else 0.0,
+                implied_vol=float(g.impliedVol or 0) if g else 0.0,
+            )
+            contract = OptionContract(
+                symbol=c.localSymbol or c.symbol,
+                underlying=symbol,
+                expiration=date.fromisoformat(expiry),
+                strike=Decimal(str(c.strike)),
+                option_type=option_type,
+                bid=_safe_decimal(ticker.bid),
+                ask=_safe_decimal(ticker.ask),
+                last=_safe_decimal(ticker.last),
+                volume=_safe_int(ticker.volume),
+                open_interest=_safe_int(ticker.callOpenInterest) or _safe_int(ticker.putOpenInterest),
+                greeks=greeks,
+            )
+            (calls if option_type == "call" else puts).append(contract)
 
         # Underlying price
         under_ticker = await self.ib.reqTickersAsync(underlying)
-        underlying_price = Decimal(str(under_ticker[0].last or 0)) if under_ticker else Decimal("0")
+        underlying_price = _safe_decimal(under_ticker[0].last) if under_ticker else Decimal("0")
 
         return OptionsChain(
             underlying=symbol,
@@ -549,6 +718,43 @@ class IBKRClient(BrokerInterface):
             await asyncio.sleep(1)  # let cancellations register before the close order
         return cancelled
 
+    async def cancel_orders_by_id(self, order_ids: list[int]) -> list[dict]:
+        """Cancel specific orders by IBKR order id. Best-effort per order.
+
+        Distinct from cancel_open_orders(symbol), which is blunt by design for
+        the close path. This one takes explicit ids so an operator can retire
+        named orphans without touching a live position's protective legs, and
+        reports per-order what actually happened rather than a bare count —
+        an out-of-hours rejection and a successful cancel must not look alike.
+        """
+        self._require_connection()
+
+        wanted = {int(i) for i in order_ids}
+        by_id = {
+            int(getattr(t.order, "orderId", -1)): t
+            for t in self.ib.openTrades()
+        }
+        out: list[dict] = []
+        for oid in sorted(wanted):
+            trade = by_id.get(oid)
+            if trade is None:
+                out.append({"order_id": oid, "result": "not_found",
+                            "detail": "not in the broker's open-order book"})
+                continue
+            try:
+                self.ib.cancelOrder(trade.order)
+                out.append({"order_id": oid, "result": "cancel_sent",
+                            "symbol": trade.contract.symbol})
+            except Exception as exc:
+                out.append({"order_id": oid, "result": "error",
+                            "symbol": trade.contract.symbol,
+                            "detail": f"{type(exc).__name__}: {exc}"})
+        if any(o["result"] == "cancel_sent" for o in out):
+            # cancelOrder is fire-and-forget; give IBKR a moment so the
+            # verification re-read below reflects reality rather than racing it.
+            await asyncio.sleep(2)
+        return out
+
     async def get_positions(self) -> List[Position]:
         """Return all open positions from IBKR account.
 
@@ -590,6 +796,7 @@ class IBKRClient(BrokerInterface):
                         avg_cost=Decimal(str(item.averageCost)),
                         current_price=current_price,
                         unrealized_pnl=unrealized_pnl,
+                        asset_type="option",
                     )
                 )
             else:
@@ -605,6 +812,7 @@ class IBKRClient(BrokerInterface):
                         avg_cost=Decimal(str(item.averageCost)),
                         current_price=current_price,
                         unrealized_pnl=unrealized_pnl,
+                        asset_type="equity",
                     )
                 )
         return positions
@@ -867,21 +1075,30 @@ class IBKRClient(BrokerInterface):
         """
         self._require_connection()
         stock = Stock(ticker, "SMART", "USD")
-        await self.ib.qualifyContractsAsync(stock)
 
         # Format end date for IBKR: "YYYYMMDD 23:59:59" or "" for latest
         end_dt = ""
         if end_date:
             end_dt = end_date.replace("-", "") + " 23:59:59"
 
-        bars_data = await self.ib.reqHistoricalDataAsync(
-            stock,
-            endDateTime=end_dt,
-            durationStr=f"{limit} D",
-            barSizeSetting="1 day",
-            whatToShow="TRADES",
-            useRTH=True,
-        )
+        async def _fetch() -> list:
+            await self.ib.qualifyContractsAsync(stock)
+            return await self.ib.reqHistoricalDataAsync(
+                stock,
+                endDateTime=end_dt,
+                durationStr=f"{limit} D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=True,
+            )
+
+        try:
+            bars_data = await asyncio.wait_for(_fetch(), timeout=HISTORICAL_DATA_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            raise asyncio.TimeoutError(
+                f"IBKR historical data request timed out after "
+                f"{HISTORICAL_DATA_TIMEOUT_SECONDS:.0f}s (symbol={ticker})"
+            ) from None
         result = []
         for b in bars_data:
             result.append(Bar(
@@ -901,15 +1118,25 @@ class IBKRClient(BrokerInterface):
         """
         self._require_connection()
         contract = Index(symbol, exchange, "USD")
-        await self.ib.qualifyContractsAsync(contract)
-        bars_data = await self.ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime="",
-            durationStr=f"{limit} D",
-            barSizeSetting="1 day",
-            whatToShow="TRADES",
-            useRTH=True,
-        )
+
+        async def _fetch() -> list:
+            await self.ib.qualifyContractsAsync(contract)
+            return await self.ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime="",
+                durationStr=f"{limit} D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=True,
+            )
+
+        try:
+            bars_data = await asyncio.wait_for(_fetch(), timeout=HISTORICAL_DATA_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            raise asyncio.TimeoutError(
+                f"IBKR historical data request timed out after "
+                f"{HISTORICAL_DATA_TIMEOUT_SECONDS:.0f}s (symbol={symbol})"
+            ) from None
         result = []
         for b in bars_data:
             result.append(Bar(
@@ -960,23 +1187,271 @@ class IBKRClient(BrokerInterface):
             timestamp=datetime.now(timezone.utc),
         )
 
-    async def get_account_summary(self) -> AccountSummary:
+    @staticmethod
+    def _on_subscribe_task_done(task: "asyncio.Task") -> None:
+        """Retrieve the background subscribe's exception so asyncio stops
+        logging it as an unhandled error.
+
+        Against this gateway the subscribe reliably fails to return inside
+        ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS, and get_account_summary() handles
+        that by reading the already-populated cache instead. But an
+        un-awaited task's exception surfaces as an ERROR-level
+        "Task exception was never retrieved" traceback, so a condition the
+        code deliberately tolerates was filling the log with what looks like a
+        crash, roughly twice a minute.
+
+        That is not cosmetic. It buries real failures: while watching the first
+        autopilot scan these tracebacks flooded the alerting filter and had to
+        be excluded by hand before genuine errors could be seen.
+
+        Calling task.exception() marks it retrieved without swallowing it —
+        anything awaiting the task still sees the exception, so the
+        serve-the-cache fallback below is unaffected.
         """
-        Return account summary from IBKR.
-        Uses reqAccountValuesAsync (one-shot, no persistent subscription)
-        to avoid IBKR error 322 (subscription accumulation).
+        if task.cancelled():
+            return  # reset_account_subscription() cancels on reconnect
+        exc = task.exception()
+        if exc is None:
+            return
+        if isinstance(exc, asyncio.TimeoutError):
+            # Expected against this gateway. Visible at DEBUG for anyone
+            # actually investigating the subscription, silent otherwise.
+            logger.debug(
+                "Account-updates subscribe timed out in the background "
+                "(expected; cached values are served instead)",
+            )
+        else:
+            # Anything else is genuinely unexpected and must stay loud.
+            logger.warning(
+                "Account-updates subscribe failed in the background: %s: %s",
+                type(exc).__name__, exc,
+            )
+
+    async def _subscribe_account_updates(self) -> None:
+        """The ONE real reqAccountUpdatesAsync attempt backing
+        get_account_summary()'s subscribe — see that method's docstring
+        for why every caller must share this single attempt rather than
+        each firing an independent one. Bounded here (not per-caller) so
+        the shared task itself eventually gives up and lets a later caller
+        start a fresh attempt if IBKR genuinely never responds."""
+        account_id_temp = (self.ib.managedAccounts() or [""])[0]
+
+        # Cancel any subscription IBKR may still consider open before asking
+        # for a new one. reqAccountUpdates is a *subscription* and IBKR allows
+        # only one active account-updates subscription per connection: if it
+        # believes one is already open, a fresh request is silently ignored —
+        # accepted, never answered, so wait_for below cancels the inner future
+        # at the timeout and raises TimeoutError with no error from IBKR at
+        # all. Confirmed live 2026-08-27: every account read failed this way
+        # for a full day (net_liquidation None, equity unavailable) after ~90
+        # gateway restarts left the subscription state indeterminate.
+        #
+        # This is the plain sync call, not the *Async variant: the cancel is
+        # fire-and-forget (IBKR sends no acknowledgement for it, so there is
+        # nothing to await) and it must not be able to hang ahead of the real
+        # request. Wrapped because a cancel that fails is not a reason to skip
+        # the subscribe — it is a best-effort reset, not a precondition.
+        try:
+            self.ib.reqAccountUpdates(False, account_id_temp)
+        except Exception as exc:
+            logger.debug(
+                "Account-updates pre-cancel failed (continuing to subscribe): %s", exc,
+            )
+
+        await asyncio.wait_for(
+            self.ib.reqAccountUpdatesAsync(account_id_temp),
+            timeout=ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS,
+        )
+        self._account_subscribed = True
+
+    async def get_open_orders(self, refresh: bool = True) -> dict:
+        """Resting orders at IBKR, as plain dicts. Read-only — never places,
+        modifies or cancels anything.
+
+        This exists because the system had no way to see its own protective
+        orders. Equity entries are submitted as brackets (parent entry + GTC
+        stop/take-profit children, see place_equity_order), but nothing read
+        them back, `trades` has no stop column, and positions adopted from the
+        broker by the reconciler never had a bracket in the first place. So
+        "does this position have a stop?" was unanswerable from inside the app.
+
+        `refresh` issues reqAllOpenOrdersAsync — a *read* request, not an order
+        action. It defaults on because ib.openTrades() is a local cache, and an
+        empty cache is ambiguous in exactly the way the account-values cache
+        was: it means either "no resting orders" or "nobody ever asked". The
+        returned `source` says which answer the caller is holding, so an empty
+        list is never silently read as "confirmed no stops".
+
+        Returns {"source": str, "orders": [ ... ]}.
         """
         self._require_connection()
 
-        # accountValues() returns cached values from the TWS account subscription (no new request).
-        # reqAccountSummaryAsync opens a persistent subscription — avoid calling it repeatedly.
+        source = "cache"
+        if refresh:
+            try:
+                await asyncio.wait_for(
+                    self.ib.reqAllOpenOrdersAsync(), timeout=OPEN_ORDERS_TIMEOUT_SECONDS,
+                )
+                source = "refreshed"
+            except Exception as exc:
+                # Serve the cache rather than failing outright, but say so —
+                # a stale answer presented as current is the failure mode this
+                # whole area has been bitten by.
+                logger.warning(
+                    "reqAllOpenOrders failed (%s) — falling back to the local "
+                    "open-order cache, which may be incomplete",
+                    exc or type(exc).__name__,
+                )
+                source = "cache_after_refresh_failed"
+
+        out: list[dict] = []
+        for t in self.ib.openTrades():
+            o, c, st = t.order, t.contract, t.orderStatus
+            out.append({
+                "order_id": getattr(o, "orderId", None),
+                "parent_id": getattr(o, "parentId", 0) or None,
+                "symbol": getattr(c, "symbol", None),
+                "sec_type": getattr(c, "secType", None),
+                "action": getattr(o, "action", None),
+                "order_type": getattr(o, "orderType", None),
+                "quantity": float(getattr(o, "totalQuantity", 0) or 0),
+                # IBKR carries the stop trigger in auxPrice and the limit in
+                # lmtPrice; a STP LMT populates both.
+                "limit_price": float(getattr(o, "lmtPrice", 0) or 0) or None,
+                "stop_price": float(getattr(o, "auxPrice", 0) or 0) or None,
+                "tif": getattr(o, "tif", None),
+                "status": getattr(st, "status", None),
+                "filled": float(getattr(st, "filled", 0) or 0),
+                "remaining": float(getattr(st, "remaining", 0) or 0),
+                # A protective exit is a stop-flavoured order, however it was
+                # created — bracket child or placed by hand at the broker.
+                "is_protective": str(getattr(o, "orderType", "")).upper().startswith("STP"),
+            })
+
+        out.sort(key=lambda r: (r["symbol"] or "", r["order_id"] or 0))
+        return {"source": source, "orders": out}
+
+    async def get_account_summary(self) -> AccountSummary:
+        """
+        Return account summary from IBKR.
+
+        accountValues() reads ib_insync's local cache, kept fresh by TWS's
+        background account-update push — but only while subscribed via
+        reqAccountUpdatesAsync(account). ib_insync's reqAccountUpdatesAsync
+        takes a single account-id argument and always subscribes (it wraps
+        client.reqAccountUpdates(True, account) internally — there is no
+        unsubscribe via this method). Subscribe exactly once per connection
+        (tracked by self._account_subscribed, reset in connect()/
+        disconnect()) and never call it again: the previous
+        subscribe-then-immediately-unsubscribe-every-call pattern avoided
+        IBKR error 322 (subscription accumulation from repeated subscribe
+        calls) but meant the cache only ever reflected a single point-in-
+        time snapshot from the first call after each connect — every
+        subsequent call silently returned the same frozen numbers.
+        Subscribing once and holding it open avoids error 322 (which comes
+        from *repeated* subscribe calls, not from one that stays open) while
+        keeping the cache genuinely live for the life of the connection.
+
+        Single-flight, not a lock: reqAccountUpdatesAsync is not idempotent
+        — ib_insync's own implementation (Wrapper.startReq) creates a fresh
+        Future under a shared fixed key on every call, silently orphaning
+        any earlier still-outstanding attempt's Future. A per-caller retry
+        loop (even one serialized behind a lock) would have each attempt
+        send its own redundant IBKR message and abandon the previous one,
+        so a real-but-slow IBKR response ends up resolving whichever
+        attempt happens to currently hold the key — not the one that sent
+        it — producing wildly variable, effectively random per-caller
+        delays (confirmed live). Instead: at most one real subscribe
+        attempt is ever in flight (self._account_subscribe_task); every
+        caller that arrives while one is outstanding awaits that SAME
+        task via asyncio.shield() rather than starting its own — shield()
+        matters here specifically because callers race their own outer
+        timeout against this call (some via the coordinator's
+        wait_for(shield(job)), some via a bare wait_for with no shield of
+        their own, e.g. paper_trade.py/account_state.py) — without it, the
+        first caller to give up on ITS OWN timeout would cancel the shared
+        attempt for everyone else still waiting on it, forcing yet another
+        redundant resend — exactly the problem this design replaces.
+        """
+        self._require_connection()
+
+        if not self._account_subscribed:
+            if self._account_subscribe_task is None or self._account_subscribe_task.done():
+                task = asyncio.ensure_future(self._subscribe_account_updates())
+                # Once the cache is populated the branch below stops awaiting
+                # this task, so nothing retrieves its exception and asyncio
+                # logs "Task exception was never retrieved" with a full
+                # traceback at ERROR level — every ~30s, forever, for a
+                # timeout that is expected and already handled. See the
+                # callback for why that matters.
+                task.add_done_callback(self._on_subscribe_task_done)
+                self._account_subscribe_task = task
+            # Only block on the subscribe when there is nothing to serve
+            # without it. The subscribe takes up to
+            # ACCOUNT_SUBSCRIBE_TIMEOUT_SECONDS (30s) to fail, while callers
+            # bound this call far tighter — paper_trade.py and the dashboard
+            # route both use ~5s. Awaiting a doomed subscribe therefore
+            # produced the right answer ~25s after every caller had already
+            # given up: the fall-through below fired correctly and the data
+            # still never reached the UI (confirmed live 2026-08-27, the log
+            # line "serving 184 already-cached account values" appearing while
+            # every route still reported None). When accountValues() is
+            # already populated there is nothing to wait for — read it now and
+            # let the subscribe keep retrying in the background to refresh the
+            # stream.
+            _cached = self.ib.accountValues()
+            if _cached:
+                logger.debug(
+                    "Account-updates subscribe still in flight — serving %d "
+                    "already-cached values without waiting", len(_cached),
+                )
+            else:
+                try:
+                    await asyncio.shield(self._account_subscribe_task)
+                except Exception as exc:
+                    # A failed subscribe is not a reason to withhold data IBKR has
+                    # already streamed. The subscribe only needs to succeed *once*
+                    # per connection to populate accountValues(); if the cache is
+                    # already populated, a later failed re-subscribe tells us
+                    # nothing about whether the numbers are readable.
+                    #
+                    # This await used to propagate, so the read below was never
+                    # reached. Confirmed live 2026-08-27: the subscribe had been
+                    # failing for a full day while accountValues() held 184 entries
+                    # including NetLiquidation, TotalCashValue, BuyingPower,
+                    # MaintMarginReq and ExcessLiquidity. Every account read
+                    # returned nothing, margin guardrails ran blind with autopilot
+                    # on, and the dashboard fell back to a synthetic equity figure
+                    # ~$8.5k below the real account value — all because the code
+                    # refused to read data it already had.
+                    #
+                    # Fail only when there is genuinely nothing to return.
+                    if not self.ib.accountValues():
+                        raise
+                    logger.warning(
+                        "Account-updates subscribe failed (%s) — serving %d already-cached "
+                        "account values; the push stream may be stale",
+                        exc or type(exc).__name__, len(self.ib.accountValues()),
+                    )
+
         account_values = self.ib.accountValues()
-        if not account_values:
-            # First call: subscribe once, grab values, then cancel subscription
-            account_id_temp = (self.ib.managedAccounts() or [""])[0]
-            await self.ib.reqAccountUpdatesAsync(True, account_id_temp)
-            account_values = self.ib.accountValues()
-            await self.ib.reqAccountUpdatesAsync(False, account_id_temp)
+
+        # Age the numbers before returning them. Reading this cache cannot
+        # fail, so without an explicit clock a stopped push stream is
+        # indistinguishable from a calm market: the last-known figures keep
+        # being served, forever, with no signal that they stopped tracking
+        # reality. Callers get the age and a verdict; nothing is withheld
+        # here, because a stale figure is still the best available answer for
+        # display — it just must never be mistaken for a current one.
+        _age = self.account_values_age_seconds()
+        _stale = self.account_values_are_stale()
+        if _stale:
+            logger.warning(
+                "Account values are stale — last push %.0fs ago (limit %.0fs). "
+                "Serving them for display, but margin and risk checks must not "
+                "treat these figures as current.",
+                _age or 0.0, ACCOUNT_VALUES_STALE_AFTER_SECONDS,
+            )
 
         values: Dict[str, str] = {}
         account_id = (self.ib.managedAccounts() or ["unknown"])[0]
@@ -1000,4 +1475,6 @@ class IBKRClient(BrokerInterface):
             maintenance_margin=_dec("MaintMarginReq", "FullMaintMarginReq"),
             excess_liquidity=_dec("ExcessLiquidity", "FullExcessLiquidity"),
             init_margin=_dec("InitMarginReq", "FullInitMarginReq"),
+            data_age_seconds=_age,
+            is_stale=_stale,
         )

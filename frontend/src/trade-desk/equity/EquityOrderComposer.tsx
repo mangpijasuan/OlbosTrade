@@ -109,8 +109,11 @@ export default function EquityOrderComposer({
           entry_price: entryN,
           stop_price: stopN,
           target_price: Number.isFinite(targetN) ? targetN : entryN,
-          kelly_fraction: 0.1,
-          confidence: 0.5,
+          // No AI signal generated this order — a human chose every field.
+          // Omitting confidence/kelly_fraction (not defaulting to a fake
+          // number) is what lets the backend correctly exempt this order
+          // from the AI-signal confidence gate instead of being silently
+          // blocked by it (see trade_desk.py's equity_desk_composer check).
           source: "equity_desk_composer",
         }),
       });
@@ -128,26 +131,17 @@ export default function EquityOrderComposer({
   const canSubmit = !!evalResult && !blocked;
 
   const field = (label: string, children: React.ReactNode) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontFamily: "var(--mono)", fontSize: 10 }}>
-      <span style={{ color: "var(--ink-faint)", letterSpacing: "0.08em" }}>{label}</span>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span className="kicker">{label}</span>
       {children}
     </label>
   );
 
-  const inputStyle: React.CSSProperties = {
-    fontFamily: "var(--mono)",
-    fontSize: 12,
-    padding: "6px 8px",
-    background: "var(--bg-3)",
-    color: "var(--ink)",
-    border: "1px solid var(--line)",
-  };
-
   return (
     <div
+      className="instrument-card"
       style={{
         borderTop: "1px solid var(--line-dim)",
-        background: "var(--bg-2)",
         padding: "10px 12px",
         display: "flex",
         flexDirection: "column",
@@ -155,37 +149,33 @@ export default function EquityOrderComposer({
         flexShrink: 0,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, letterSpacing: "0.1em", color: "var(--ink-dim)" }}>
-          ORDER COMPOSER · {symbol}
-        </span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
-          Evaluate is authoritative · submit uses existing desk queue
-        </span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <span className="panel-title">Order composer · {symbol}</span>
+        <span className="kicker">Evaluate is authoritative · submit uses existing desk queue</span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
         {field(
           "SIDE",
-          <select value={action} onChange={(e) => setAction(e.target.value as "BUY" | "SELL")} style={inputStyle}>
+          <select className="control-input" value={action} onChange={(e) => setAction(e.target.value as "BUY" | "SELL")}>
             <option value="BUY">BUY</option>
             <option value="SELL">SELL</option>
           </select>,
         )}
         {field(
           "TYPE",
-          <select value={orderType} onChange={(e) => setOrderType(e.target.value as "market" | "limit")} style={inputStyle}>
+          <select className="control-input" value={orderType} onChange={(e) => setOrderType(e.target.value as "market" | "limit")}>
             <option value="limit">LIMIT</option>
             <option value="market">MARKET</option>
           </select>,
         )}
         {field(
           "SHARES",
-          <input type="number" min={1} value={shares} onChange={(e) => setShares(Math.max(1, Number(e.target.value) || 1))} style={inputStyle} />,
+          <input className="control-input" type="number" min={1} value={shares} onChange={(e) => setShares(Math.max(1, Number(e.target.value) || 1))} />,
         )}
-        {field("ENTRY", <input value={entry} onChange={(e) => setEntry(e.target.value)} style={inputStyle} />)}
-        {field("STOP", <input value={stop} onChange={(e) => setStop(e.target.value)} style={inputStyle} />)}
-        {field("TARGET", <input value={target} onChange={(e) => setTarget(e.target.value)} style={inputStyle} />)}
+        {field("ENTRY", <input className="control-input" value={entry} onChange={(e) => setEntry(e.target.value)} />)}
+        {field("STOP", <input className="control-input" value={stop} onChange={(e) => setStop(e.target.value)} />)}
+        {field("TARGET", <input className="control-input" value={target} onChange={(e) => setTarget(e.target.value)} />)}
       </div>
 
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
@@ -207,21 +197,20 @@ export default function EquityOrderComposer({
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button type="button" className="btn-t" disabled={busy || !Number.isFinite(entryN) || !Number.isFinite(stopN)} onClick={evaluate}>
-          {busy ? "…" : "EVALUATE"}
+        <button type="button" className="btn-ghost" disabled={busy || !Number.isFinite(entryN) || !Number.isFinite(stopN)} onClick={evaluate}>
+          {busy ? "…" : "Evaluate"}
         </button>
         <button
           type="button"
-          className="btn-t"
+          className="btn-primary"
           disabled={busy || !canSubmit}
           onClick={submit}
-          style={canSubmit ? { borderColor: "var(--cyan)", color: "var(--cyan)" } : undefined}
           title={blocked ? "Blocked by backend evaluation" : "Queue via /api/trade-desk/signal"}
         >
-          SUBMIT TO DESK
+          Submit to desk
         </button>
         {msg && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: blocked ? "var(--red)" : "var(--ink-dim)" }}>
+          <span style={{ fontFamily: "var(--sans)", fontSize: 11, color: blocked ? "var(--red)" : "var(--ink-dim)" }}>
             {msg}
           </span>
         )}

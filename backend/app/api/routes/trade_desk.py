@@ -16,6 +16,8 @@ from pydantic import BaseModel
 from decimal import Decimal
 
 from app.api.deps import require_api_key
+from app.api.rate_limit import rate_limit
+from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
 from app.services.execution_mode import ExecutionMode, execution_mode_manager
 from app.services.guardrails import GuardrailEngine, PortfolioState
 from app.services.kill_switch import kill_switch_service
@@ -173,6 +175,122 @@ async def _queue_pending_approval(signal: dict) -> None:
             ))
 
 
+def _challenger_liquidity_ok(signal: dict) -> Optional[bool]:
+    """Is the challenger liquid enough to enter? None when unknown.
+
+    volume_ratio lives at signal["indicators"]["volume_ratio"], not at the top
+    level — an earlier version of this read signal.get("volume_ratio") and so
+    was always None, which made every review fail the liquidity constraint and
+    return "hold". The review machinery was correct; the input was simply not
+    connected.
+
+    None is still returned when the indicator is genuinely absent (an options
+    signal, or a scan that produced no volume data), and the hard-constraint
+    check treats that as a veto rather than a pass.
+    """
+    from app.services.rotation_review import MIN_CHALLENGER_VOLUME_RATIO
+    ind = signal.get("indicators") or {}
+    vr = ind.get("volume_ratio")
+    if vr is None:
+        return None
+    try:
+        return float(vr) >= MIN_CHALLENGER_VOLUME_RATIO
+    except (TypeError, ValueError):
+        return None
+
+
+async def _portfolio_heat_fraction(account_value: float) -> Optional[float]:
+    """True risk-at-stake as a FRACTION of capital, or None if unavailable.
+
+    Deliberately NOT portfolio_engine.compute_portfolio_risk(). That function
+    defines equity "risk_dollars" as entry x shares — full notional, its own
+    comment calls it a worst-case proxy — so its portfolio_heat_pct measures
+    how invested the book is, not how much is at risk. On 2026-08-29 it read
+    94.06% against $220,715 of notional on $234,651 of capital, which is
+    accurate as deployment and meaningless as risk. Gating rotation on it with
+    a 35% ceiling made the constraint unsatisfiable.
+
+    Here risk is the real thing: |entry - stop| x shares, with the stop read
+    from the position's live protective order at the broker. A position whose
+    stop cannot be found contributes None, and any None makes the whole
+    measurement None — a partial sum would understate heat, and understating
+    the denominator of a safety check is the wrong direction to be wrong in.
+
+    The Risk Monitor still displays the notional-based number; correcting that
+    is a wider change touching eight call sites and the UI's own thresholds.
+    """
+    try:
+        from sqlalchemy import select
+        from app.broker.broker_factory import get_broker
+        from app.core.database import AsyncSessionLocal
+        from app.models.trade import Trade
+
+        if not account_value or account_value <= 0:
+            return None
+
+        async with AsyncSessionLocal() as session:
+            open_trades = (await session.execute(
+                select(Trade).where(Trade.status == "open")
+            )).scalars().all()
+        if not open_trades:
+            return 0.0
+
+        book = await get_broker().get_open_orders(refresh=True)
+        if book.get("source") != "refreshed":
+            # A cache fall-back cannot prove a stop is absent vs unseen.
+            return None
+        stops: dict[str, float] = {}
+        for o in book.get("orders", []):
+            if not o.get("is_protective") or (o.get("remaining") or 0) <= 0:
+                continue
+            px = o.get("stop_price")
+            sym = (o.get("symbol") or "").upper()
+            if sym and px:
+                # Widest stop per symbol = worst case across tranches.
+                stops[sym] = max(stops.get(sym, 0.0), float(px))
+
+        total = 0.0
+        for t in open_trades:
+            sym = (t.underlying or "").upper()
+            entry = float(getattr(t, "credit_received", 0) or 0)
+            qty = abs(int(getattr(t, "quantity", 0) or 0))
+            stop = stops.get(sym)
+            if stop is None or entry <= 0 or qty <= 0:
+                logger.info(
+                    "rotation heat: no protective stop for %s — heat unmeasurable", sym)
+                return None
+            total += abs(entry - stop) * qty
+
+        return round(total / account_value, 4)
+    except Exception as exc:
+        logger.warning("rotation review: portfolio heat unavailable: %s", exc)
+        return None
+
+
+async def _queue_rotation_review(entry: dict) -> str:
+    """Persist a ROTATION_REVIEW awaiting approval. Same table and same
+    pending→resolved lifecycle as _queue_pending_approval, under a distinct
+    kind so the two queues stay separately addressable."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+
+    review_id = str(uuid.uuid4())
+    entry["review_id"] = review_id
+    entry["queued_at"] = datetime.now(timezone.utc).isoformat()
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            session.add(ExecutionEvent(
+                kind="rotation_review",
+                signal_id=review_id,
+                ticker=entry.get("ticker"),
+                asset_type=entry.get("asset_type"),
+                status="pending",
+                payload=entry,
+            ))
+    return review_id
+
+
 async def _get_pending_approvals() -> list[dict]:
     from app.core.database import AsyncSessionLocal
     from app.models.execution_event import ExecutionEvent
@@ -298,7 +416,7 @@ async def get_execution_mode():
     return execution_mode_manager.summary()
 
 
-@router.post("/execution-mode", dependencies=[Depends(require_api_key)])
+@router.post("/execution-mode", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def set_execution_mode(body: SetExecutionModeRequest):
     try:
         mode = ExecutionMode(body.mode)
@@ -596,7 +714,7 @@ async def evaluate_options(req: OptionsEvaluateRequest):
     }
 
 
-@router.post("/approve/{signal_id}", dependencies=[Depends(require_api_key)])
+@router.post("/approve/{signal_id}", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def approve_signal(signal_id: str):
     """User approves a pending signal → executes order."""
     signal = await _resolve_pending_approval(signal_id, "approved")
@@ -608,7 +726,145 @@ async def approve_signal(signal_id: str):
     return result
 
 
-@router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key)])
+@router.get("/rotation-reviews")
+async def get_rotation_reviews():
+    """Pending ROTATION_REVIEW intents awaiting approval. Read-only."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(ExecutionEvent)
+                .where(ExecutionEvent.kind == "rotation_review",
+                       ExecutionEvent.status == "pending")
+                .order_by(ExecutionEvent.created_at.desc())
+                .limit(50)
+            )).scalars().all()
+    except Exception as exc:
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}", "reviews": []}
+    return {"status": "ok", "reviews": [r.payload for r in rows]}
+
+
+async def _resolve_rotation_review(review_id: str, resolution: str) -> Optional[dict]:
+    """Atomically flip a pending rotation review to approved/rejected.
+
+    Returns None if it does not exist or was already resolved — which is what
+    makes an approval single-use. Two concurrent approvals cannot both close
+    the same incumbent, because only the first transition finds status
+    'pending'.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            row = (await session.execute(
+                select(ExecutionEvent).where(
+                    ExecutionEvent.kind == "rotation_review",
+                    ExecutionEvent.signal_id == review_id,
+                    ExecutionEvent.status == "pending",
+                ).with_for_update()
+            )).scalars().first()
+            if row is None:
+                return None
+            row.status = resolution
+            return dict(row.payload or {})
+
+
+@router.post("/rotation-review/{review_id}/approve",
+             dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def approve_rotation_review(review_id: str):
+    """Approve a replacement: close the incumbent, then enter the challenger.
+
+    Everything here is deliberate rather than convenient:
+
+    * The review is re-validated, not trusted. It may be minutes old; prices
+      move, the kill switch may have been thrown, the incumbent may already
+      be gone. Approving a stale document must not send a stale order.
+    * The incumbent closes first. If that fails, the challenger is NOT
+      entered — the slot was never freed, so entering would breach
+      max_positions, which is the constraint that started all this.
+    * If the close succeeds but the entry fails, that is reported plainly.
+      The slot is free and unused, which is a safe state, not a silent one.
+    """
+    review = await _resolve_rotation_review(review_id, "approved")
+    if review is None:
+        raise HTTPException(404, "Rotation review not found, or already resolved")
+
+    if _is_kill_switch_active():
+        raise HTTPException(423, "Kill switch engaged — no orders may be sent")
+
+    incumbent_trade_id = review.get("incumbent_trade_id")
+    if not incumbent_trade_id:
+        raise HTTPException(
+            400, "Review has no incumbent to close (recommendation was not actionable)")
+
+    from sqlalchemy import select
+    from app.broker.broker_factory import get_broker
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from app.services.position_rotation import ROTATION_CLOSED_BY, close_equity_trade, close_options_trade
+
+    async with AsyncSessionLocal() as session:
+        trade = (await session.execute(
+            select(Trade).where(Trade.id == incumbent_trade_id,
+                                Trade.status == "open")
+        )).scalars().first()
+    if trade is None:
+        raise HTTPException(
+            409, "Incumbent is no longer open — it closed since this review was raised")
+
+    broker = get_broker()
+    spread_type = (trade.spread_type or "").lower()
+    close_fn = close_options_trade if spread_type in ("put", "call") else close_equity_trade
+    try:
+        # review_id is the approval token: it exists only after the atomic
+        # pending→approved transition above, so it cannot be replayed and
+        # cannot be forged by a caller who never went through this route.
+        close_receipt = await close_fn(
+            trade, broker=broker, closed_by=ROTATION_CLOSED_BY,
+            rotation_approval=review_id,
+        )
+    except Exception as exc:
+        await _log_execution({"kind": "ROTATION_REVIEW", "review_id": review_id,
+                              "result": "close_failed", "error": str(exc)})
+        raise HTTPException(502, f"Incumbent close failed, challenger not entered: {exc}")
+
+    challenger = review.get("challenger_signal") or {}
+    entry_result = await _execute_signal(challenger, approved_by=f"rotation_review:{review_id}")
+
+    out = {
+        "kind": "ROTATION_REVIEW",
+        "review_id": review_id,
+        "result": "approved",
+        "closed": close_receipt,
+        "entered": entry_result,
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _log_execution(out)
+    return out
+
+
+@router.post("/rotation-review/{review_id}/reject",
+             dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def reject_rotation_review(review_id: str):
+    """Decline a replacement. Nothing is closed and nothing is entered."""
+    review = await _resolve_rotation_review(review_id, "rejected")
+    if review is None:
+        raise HTTPException(404, "Rotation review not found, or already resolved")
+    out = {
+        "kind": "ROTATION_REVIEW", "review_id": review_id, "result": "rejected",
+        "ticker": review.get("ticker"),
+        "rejected_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _log_execution(out)
+    return out
+
+
+@router.post("/reject/{signal_id}", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def reject_signal(signal_id: str):
     """User rejects a pending signal — no order sent."""
     signal = await _resolve_pending_approval(signal_id, "rejected")
@@ -630,7 +886,7 @@ async def reject_signal(signal_id: str):
 
 # ── Manual trade ──────────────────────────────────────────────────────────────
 
-@router.post("/manual-trade", dependencies=[Depends(require_api_key)])
+@router.post("/manual-trade", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def manual_trade(req: ManualTradeRequest):
     """
     Force a manual equity order — bypasses signal scoring and IV filters
@@ -663,7 +919,7 @@ class ClosePositionRequest(BaseModel):
     limit_price: Optional[float] = None
 
 
-@router.post("/close-position", dependencies=[Depends(require_api_key)])
+@router.post("/close-position", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def close_position(req: ClosePositionRequest):
     """
     Manually close an open position — the operator's own "I want out now"
@@ -677,9 +933,9 @@ async def close_position(req: ClosePositionRequest):
     flattens positions on its own — blocking a manual close during a
     kill-switch event would be backwards.
 
-    Equity only for now. Options positions are 2-leg spreads; closing one
-    means submitting the mirrored spread order (buy back the short leg,
-    sell the long leg) — deliberately deferred rather than half-built.
+    Equity closes support order_type/limit_price; 2-leg options spreads
+    (put/call) close via a market-order mirrored combo — see
+    close_options_trade()'s docstring for why LMT isn't supported there yet.
     """
     from app.core.database import AsyncSessionLocal
     from app.models.trade import Trade
@@ -701,46 +957,111 @@ async def close_position(req: ClosePositionRequest):
         raise HTTPException(409, f"Trade is not open (status={trade.status})")
 
     spread_type = (trade.spread_type or "").lower()
-    if spread_type not in ("equity_long", "equity_short"):
+    if spread_type not in ("equity_long", "equity_short", "put", "call"):
         raise HTTPException(
             400,
-            "Manual close currently supports equity positions only — "
-            "close options spreads directly with the broker for now.",
+            f"Cannot close trade with spread_type={spread_type!r} — expected "
+            "an equity direction (equity_long/equity_short) or an options "
+            "type (put/call).",
         )
 
-    close_side = "SELL" if spread_type == "equity_long" else "BUY"
-    ticker = trade.underlying
-    qty = int(trade.quantity or 1)
+    from app.broker.broker_factory import get_broker
+    from app.services.position_rotation import close_equity_trade, close_options_trade
+
+    broker = get_broker()
+    try:
+        if spread_type in ("put", "call"):
+            # Options close is market-order only in this increment —
+            # req.order_type/req.limit_price are intentionally not threaded
+            # through; see close_options_trade()'s docstring.
+            entry = await close_options_trade(trade, broker=broker, closed_by="manual")
+        else:
+            entry = await close_equity_trade(
+                trade,
+                broker=broker,
+                closed_by="manual",
+                order_type=req.order_type,
+                limit_price=req.limit_price,
+            )
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    await _log_execution(entry)
+    return entry
+
+
+class CloseUntrackedPositionRequest(BaseModel):
+    symbol: str
+    order_type: str = "market"
+    limit_price: Optional[float] = None
+
+
+@router.post("/close-untracked-position", dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def close_untracked_position(req: CloseUntrackedPositionRequest):
+    """
+    Close a live broker equity position that has no matching DB Trade row —
+    e.g. a fill the app lost track of after an order-placement timeout (the
+    coordinator's wait_for gives up on a shielded request that keeps running
+    and can still fill after the caller already treated it as failed).
+
+    Sourced entirely from the broker's own live position, not a DB row —
+    that's the only trusted source of truth here. If a DB Trade IS open for
+    this symbol, this is the wrong endpoint: use /close-position with its
+    trade_id instead, so the DB row's exit gets recorded and doesn't desync.
+
+    Equity only, same deliberate scope limit as /close-position — closing a
+    real 2-leg options position needs mirrored-spread submission logic.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.trade import Trade
+    from sqlalchemy import select
+
+    ticker = req.symbol.upper()
+
+    async with AsyncSessionLocal() as session:
+        existing = (await session.execute(
+            select(Trade).where(Trade.underlying == ticker, Trade.status == "open")
+        )).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            409,
+            f"{ticker} has an open, tracked Trade ({existing.id}) — "
+            "use POST /close-position with that trade_id instead.",
+        )
 
     from app.broker.broker_factory import get_broker
     broker = get_broker()
+    broker_positions = await broker.get_positions()
+    pos = next((p for p in broker_positions if p.symbol == ticker or p.underlying == ticker), None)
+    if pos is None or pos.quantity == 0:
+        raise HTTPException(404, f"No open broker position found for {ticker}")
+    if pos.asset_type != "equity":
+        raise HTTPException(
+            400,
+            f"{ticker} is an options position — close it directly with the broker for now.",
+        )
 
-    # Cancel the bracket's still-working stop/take-profit legs first — leaving
-    # them live after this close would be a dangling order with no position
-    # behind it, able to fire unexpectedly against a later trade in the same ticker.
+    close_side = "SELL" if pos.quantity > 0 else "BUY"
+    qty = abs(int(pos.quantity))
+
     cancelled = await broker.cancel_open_orders(ticker)
 
-    result = await broker.place_equity_order(
-        ticker=ticker, qty=qty, side=close_side,
-        order_type=req.order_type, limit_price=req.limit_price,
+    result = await ibkr_coordinator.submit(
+        Priority.P0,
+        lambda: broker.place_equity_order(
+            ticker=ticker, qty=qty, side=close_side,
+            order_type=req.order_type, limit_price=req.limit_price,
+        ),
+        req_type="PLACE_ORDER", symbol=ticker,
     )
 
     if result.status in ("cancelled", "rejected"):
         raise HTTPException(502, f"Broker did not accept the close order: {result.status}")
 
-    if result.status == "filled" and result.fill_price is not None:
-        from app.services.trade_recorder import trade_recorder
-        await trade_recorder.record_exit(
-            trade_id=req.trade_id,
-            cost_to_close=float(result.fill_price),
-            exit_reason="manual",
-        )
-    # else: order is working/pending — the existing fill reconciler (_poll_fills)
-    # detects the position disappearing from the broker and closes it out,
-    # same as it already does for automated bracket exits.
-
     entry = {
-        "trade_id":  req.trade_id,
+        "trade_id":  None,
         "ticker":    ticker,
         "action":    close_side,
         "quantity":  qty,
@@ -748,7 +1069,7 @@ async def close_position(req: ClosePositionRequest):
         "status":    result.status,
         "cancelled_open_orders": cancelled,
         "closed_at": datetime.now(timezone.utc).isoformat(),
-        "closed_by": "manual",
+        "closed_by": "manual_untracked",
     }
     await _log_execution(entry)
     return entry
@@ -783,11 +1104,14 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     Stages (in order — no stage may be skipped):
       1. Kill switch
       1b. Market hours
+      1b2. 0DTE autopilot gate (options + approved_by=="autopilot" only)
+      1b3. Liquidity / gamma / close-proximity gates (options only, fail-open on missing data)
       1c. Frequency controller (non-manual)
       1d. Strategy health (non-manual; fail-open on error)
       2. Guardrail risk check (fail closed — DB error = refused)
       2b. Portfolio gate — concentration / max positions / heat (Step 8)
       3. Duplicate guard
+      3b. Cooldown after close (fail closed on DB error)
       4. Broker submission (+ account mode + margin)
       5. Fill-confirmed recording (CRITICAL alert on failure)
     """
@@ -843,6 +1167,63 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             )
             return _blocked(f"market_closed: {status['reason']}")
 
+    # ── Stage 1b2: 0DTE Autopilot Gate ──────────────────────────────────────────
+    # "0DTE Autopilot disabled" is documented UI-facing language (see
+    # evaluate_options()'s advisory warning) but was never enforced in this,
+    # the one authoritative order pipeline every signal source funnels
+    # through — a genuinely 0DTE/1DTE options signal approved by AUTOPILOT
+    # could previously reach the broker with no DTE-specific stop. COPILOT
+    # approval and manual entry are unaffected — 0DTE stays available with a
+    # human in the loop, matching the UI's own "Copilot or manual only" text.
+    if asset_type == "options" and approved_by == "autopilot":
+        _dte = (signal.get("spread") or {}).get("dte")
+        if _dte is not None and _dte <= 1:
+            logger.warning(
+                "Order blocked for %s — 0DTE/1DTE autopilot disabled (dte=%s)",
+                ticker, _dte,
+            )
+            return _blocked("0dte_autopilot_disabled")
+
+    # ── Stage 1b3: Liquidity / gamma / close-proximity gates ────────────────────
+    # Real per-leg bid/ask/OI/gamma only exists on the live IBKR chain path
+    # (main.py's _live_spread_quote()) — the yfinance/Black-Scholes fallback
+    # paths set these to None rather than fabricate a value. Every check here
+    # is fail-open on None: a signal is never blocked because live market
+    # data merely wasn't available, only because a real reading failed it.
+    if asset_type == "options":
+        spread = signal.get("spread") or {}
+
+        width_pct = spread.get("bid_ask_width_pct")
+        if width_pct is not None and width_pct > 0.15:
+            logger.warning(
+                "Order blocked for %s — spread too wide (%.1f%% of mid)",
+                ticker, width_pct * 100,
+            )
+            return _blocked(f"liquidity_gate: spread_too_wide ({width_pct:.1%})")
+
+        open_interest = spread.get("open_interest")
+        if open_interest is not None and open_interest < 50:
+            logger.warning(
+                "Order blocked for %s — open interest too low (%s)",
+                ticker, open_interest,
+            )
+            return _blocked(f"liquidity_gate: open_interest_too_low ({open_interest})")
+
+        # 0DTE-specific: no new same-day-expiry entries in the last 30
+        # minutes of RTH — a position opened that late has no time left to
+        # be managed. Additive to Stage 1b2 above: this one also covers
+        # Copilot/manual approval, which 1b2 intentionally doesn't touch.
+        dte = spread.get("dte")
+        if dte is not None and dte <= 1:
+            from app.utils.market_hours import minutes_to_close
+            mins_left = minutes_to_close()
+            if mins_left is not None and mins_left < 30:
+                logger.warning(
+                    "Order blocked for %s — 0DTE entry too close to the close (%.0f min left)",
+                    ticker, mins_left,
+                )
+                return _blocked(f"liquidity_gate: 0dte_near_close ({mins_left:.0f}min left)")
+
     # ── Stage 2: Guardrail risk check (fail closed) ────────────────────────────
     try:
         portfolio_state = await _fetch_portfolio_state()
@@ -853,10 +1234,16 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # ── Stage 1c: Trade Frequency Controller (before the risk engine) ───────────
     # Profitability before activity: per-mode daily cap, min confidence, max risk
     # score, and a positive-EV quality filter. Reuses the portfolio-state read.
-    # Manual trades bypass it — the user is overriding signal generation on purpose
-    # (they still face the kill switch, market hours, guardrails, and sizing).
+    # Manual trades bypass it — the user is overriding signal generation on
+    # purpose (they still face the kill switch, market hours, guardrails, and
+    # sizing). Equity Desk composer orders are the same category — a human
+    # chose ticker/side/entry/stop/target directly, there's no AI signal
+    # behind it for a confidence/EV/risk-score gate to meaningfully apply
+    # to — but unlike /manual-trade it still queues through Copilot approval,
+    # so it's exempted here by source rather than by skipping that queue.
     from app.core.config import settings as _tm_cfg
-    if approved_by != "manual" and not getattr(_tm_cfg, "execution_test_mode", False):
+    is_manual_source = approved_by == "manual" or signal.get("source") == "equity_desk_composer"
+    if not is_manual_source and not getattr(_tm_cfg, "execution_test_mode", False):
         from app.services.trade_frequency_controller import trade_frequency_controller
         freq = trade_frequency_controller.evaluate(
             signal, trades_today=portfolio_state.trades_today,
@@ -901,10 +1288,111 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
     # Step 8 — wires RiskManager + portfolio_engine into the live OMS path.
     # Greeks caps remain off unless execution_enforce_portfolio_greeks=true.
     # Rollback: execution_portfolio_gate=false.
+    # When max_positions blocks an incoming entry (equity or options) and
+    # position_rotation_on_max is enabled, Capital Rotation produces a
+    # ROTATION_REVIEW intent for human approval and the signal stops here.
+    #
+    # It does NOT close anything. Rotation used to call
+    # rotate_for_blocked_entry() from this spot, which closed N positions
+    # ranked worst-first and then re-checked the gate — so a blocked signal
+    # could liquidate held positions automatically, purely to free a slot.
+    # Ranking by "most underwater" made that the sunk-cost fallacy
+    # mechanised: an existing loss says nothing about a position's remaining
+    # prospects, and realising it is an accounting event, not an edge. On
+    # 2026-08-28 that path was one scan away from closing MRVL and MSTR for
+    # about -$11,384 combined.
+    #
+    # Replacement now requires explicit approval of a review that compares
+    # forward prospects only. This branch is read-only; the close functions
+    # additionally refuse any rotation-sourced close that carries no approval
+    # token (see position_rotation._assert_rotation_approved), so removing
+    # the call here is the first of two independent barriers, not the only one.
+    from app.core.config import settings as _rot_cfg
     from app.services.execution_portfolio_gate import check_execution_portfolio
     portfolio_gate = await check_execution_portfolio(
         signal, portfolio_value=float(portfolio_state.current_value or 0),
     )
+    if (
+        not portfolio_gate.allowed
+        and "max_positions" in (portfolio_gate.flags or [])
+        and asset_type in ("equity", "options")
+        and getattr(_rot_cfg, "position_rotation_on_max", False)
+    ):
+        try:
+            from app.broker.broker_factory import get_broker
+            from app.services.position_rotation import propose_rotation_incumbent
+            from app.services.rotation_review import PositionFacts, build_rotation_review
+
+            incumbent = await propose_rotation_incumbent(
+                incoming_ticker=ticker, broker=get_broker(),
+            )
+            _tp = signal.get("trade_plan") or {}
+            _entry, _stop, _target = (
+                _tp.get("entry_price"), _tp.get("stop_price"), _tp.get("target_price"),
+            )
+            review = build_rotation_review(
+                incumbent=(
+                    PositionFacts(
+                        ticker=incumbent.underlying, side="incumbent",
+                        direction=incumbent.spread_type,
+                        quality_score=incumbent.quality_score,
+                        confidence=incumbent.confidence,
+                        in_flagged_cluster=incumbent.in_flagged_cluster,
+                        unrealized_pnl_context_only=incumbent.unrealized_pnl,
+                    )
+                    if incumbent is not None
+                    # No eligible incumbent (Winner Protection, or unknown
+                    # P&L). An empty-facts incumbent yields
+                    # "insufficient_data", which is the honest answer — not a
+                    # comparison against a fabricated average position.
+                    else PositionFacts(ticker="(none eligible)", side="incumbent")
+                ),
+                challenger=PositionFacts(
+                    ticker=ticker,
+                    side="challenger",
+                    direction=signal.get("action"),
+                    alpha_edge=signal.get("alpha_edge_score"),
+                    confidence=signal.get("confidence"),
+                    stop_distance=(
+                        abs(float(_entry) - float(_stop))
+                        if _entry is not None and _stop is not None else None
+                    ),
+                    target_distance=(
+                        abs(float(_target) - float(_entry))
+                        if _entry is not None and _target is not None else None
+                    ),
+                    liquidity_ok=_challenger_liquidity_ok(signal),
+                ),
+                portfolio_heat_fraction=await _portfolio_heat_fraction(
+                    float(portfolio_state.current_value or 0)),
+                materiality_margin=float(getattr(
+                    _rot_cfg, "rotation_review_materiality_margin", 15.0)),
+            )
+            entry = {
+                "kind": "ROTATION_REVIEW",
+                "ticker": ticker,
+                "asset_type": asset_type,
+                "result": "pending_approval",
+                "blocked_by": "max_positions",
+                "incumbent_trade_id": incumbent.trade_id if incumbent else None,
+                "challenger_signal": signal,
+                "review": review,
+            }
+            await _log_execution(entry)
+            # Persisted to the same pending-approval queue the Copilot path
+            # uses, so there is one approval concept in this system rather
+            # than two. _resolve_pending_approval's atomic pending→resolved
+            # flip is what makes an approval single-use.
+            await _queue_rotation_review(entry)
+        except Exception as _rev_exc:
+            # A review is advisory. Failing to build one must not become a
+            # path to executing anything, so this only logs — the return
+            # below is unconditional.
+            logger.error("Rotation review failed for %s: %s", ticker, _rev_exc)
+        logger.info(
+            "Rotation review raised for %s — awaiting approval, nothing closed", ticker,
+        )
+        return _skipped("rotation_pending_approval")
     if not portfolio_gate.allowed:
         logger.warning(
             "Portfolio gate blocked %s: %s flags=%s",
@@ -924,22 +1412,79 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             return _skipped("zero_size")
 
     # ── Stage 3: Duplicate guard ───────────────────────────────────────────────
+    # Key on (underlying, asset class) so SPY equity and SPY options can coexist.
     try:
         from app.core.database import AsyncSessionLocal
         from app.models.trade import Trade
+        from app.services.trade_identity import asset_class_from_signal, asset_class_from_trade
         from sqlalchemy import select
+        wanted = asset_class_from_signal({**signal, "asset_type": asset_type})
         async with AsyncSessionLocal() as _db:
-            existing = (await _db.execute(
-                select(Trade.id).where(
+            rows = (await _db.execute(
+                select(Trade).where(
                     Trade.underlying == ticker,
                     Trade.status.in_(["open", "pending"]),
                 )
-            )).first()
-        if existing:
-            logger.info("Skipping %s — open/pending trade already exists in DB", ticker)
+            )).scalars().all()
+        existing = next(
+            (t for t in rows if asset_class_from_trade(t) == wanted),
+            None,
+        )
+        if existing is not None:
+            logger.info(
+                "Skipping %s %s — open/pending %s trade already exists in DB",
+                ticker, wanted, wanted,
+            )
             return _skipped("already_open")
     except Exception as _dup_exc:
-        logger.warning("Duplicate check failed for %s: %s", ticker, _dup_exc)
+        # Fail closed, matching Stage 2's guardrail gate (_fetch_portfolio_state)
+        # a few lines above — a DB blip here must not silently let a possible
+        # duplicate order through the one check meant to catch it.
+        logger.error("Duplicate check failed for %s (fail closed): %s", ticker, _dup_exc)
+        return _blocked(f"duplicate_check_error: {_dup_exc}")
+
+    # ── Stage 3b: Cooldown after close ──────────────────────────────────────────
+    # Any position close (stop, target, manual, rotation) sets a floor before the
+    # same (underlying, asset class) can be immediately re-entered — stops a name
+    # that just got stopped out from being whipsawed right back in. Keyed
+    # identically to Stage 3's duplicate guard via the same asset-class helpers.
+    from app.core.config import settings as _cd_cfg
+    _cooldown_hours = getattr(_cd_cfg, "position_cooldown_hours", 0)
+    if _cooldown_hours > 0:
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.trade import Trade
+            from app.services.trade_identity import asset_class_from_signal, asset_class_from_trade
+            from sqlalchemy import select
+            wanted = asset_class_from_signal({**signal, "asset_type": asset_type})
+            async with AsyncSessionLocal() as _db:
+                rows = (await _db.execute(
+                    select(Trade)
+                    .where(
+                        Trade.underlying == ticker,
+                        Trade.status == "closed",
+                        Trade.exit_date.isnot(None),
+                    )
+                    .order_by(Trade.exit_date.desc())
+                )).scalars().all()
+            recent_close = next(
+                (t for t in rows if asset_class_from_trade(t) == wanted),
+                None,
+            )
+            if recent_close is not None:
+                elapsed = datetime.now(timezone.utc) - recent_close.exit_date
+                if elapsed < timedelta(hours=_cooldown_hours):
+                    logger.info(
+                        "Skipping %s %s — closed %s ago, inside %sh cooldown",
+                        ticker, wanted, elapsed, _cooldown_hours,
+                    )
+                    return _skipped("cooldown_active")
+        except Exception as _cd_exc:
+            # Fail closed, matching Stage 3's own posture a few lines above — a
+            # DB blip here must not silently let a possible re-entry through the
+            # one check meant to catch it.
+            logger.error("Cooldown check failed for %s (fail closed): %s", ticker, _cd_exc)
+            return _blocked(f"cooldown_check_error: {_cd_exc}")
 
     # ── Stages 4+5: Broker submission + fill recording ─────────────────────────
     action = signal.get("action", "")
@@ -965,8 +1510,28 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
         try:
             from app.services.margin_monitor import evaluate_margin
             from app.core.config import settings as _mg_cfg
-            _acct = await broker.get_account_summary()
-            if _acct.maintenance_margin is not None:
+            _acct = await ibkr_coordinator.submit(
+                Priority.P0, broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
+                timeout=5.0,  # bounded well under the coordinator's 30s default — this
+                # runs on every execution attempt, and the surrounding try/except already
+                # fails open on any error (including a timeout) per this guard's own design
+            )
+            if _acct.is_stale:
+                # Stale figures cannot clear this guard. IBKR serves account
+                # data from a cached push stream, so a dead stream still
+                # returns a complete, confident-looking margin picture — the
+                # one from whenever it died. Evaluating it risks the guard's
+                # only dangerous error: reading "margin is fine" off numbers
+                # that predate the blow-up it exists to catch. Treated as
+                # absent rather than as a block, which keeps this guard's
+                # documented fail-open contract intact (it blocks only on a
+                # positively-detected critical state) while refusing to draw
+                # an all-clear from data that cannot support one.
+                logger.warning(
+                    "Margin guard skipped for %s — account values stale (%.0fs old)",
+                    ticker, _acct.data_age_seconds or 0.0,
+                )
+            elif _acct.maintenance_margin is not None:
                 _m = evaluate_margin(
                     net_liquidation=float(_acct.net_liquidation or 0),
                     maintenance_margin=float(_acct.maintenance_margin or 0),
@@ -1013,15 +1578,70 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                     ticker, _q_exc,
                 )
 
-            result = await broker.place_equity_order(
-                ticker=ticker,
-                qty=shares,
-                side=action,
-                order_type=signal.get("order_type", "limit"),
-                limit_price=entry_price,
-                stop=trade_plan.get("stop_price"),
-                take_profit=trade_plan.get("target_price"),
-            )
+            try:
+                result = await ibkr_coordinator.submit(
+                    Priority.P0,
+                    lambda: broker.place_equity_order(
+                        ticker=ticker,
+                        qty=shares,
+                        side=action,
+                        order_type=signal.get("order_type", "limit"),
+                        limit_price=entry_price,
+                        stop=trade_plan.get("stop_price"),
+                        take_profit=trade_plan.get("target_price"),
+                    ),
+                    req_type="PLACE_ORDER", symbol=ticker, timeout=150.0,
+                )
+            except asyncio.TimeoutError:
+                # The coordinator's wait_for gives up, but asyncio.shield()
+                # means the real IBKR call keeps running regardless — it can
+                # still fill seconds later with nothing here left to record
+                # it. Write the same pending row the normal path below would
+                # (dispatch_id falls back to signal["id"] exactly like the
+                # success path already does when result.order_id is
+                # unavailable) so the existing _poll_fills() reconciliation
+                # (main.py) promotes it to "open" once the position shows up
+                # live, or cancels it after the usual grace period if it
+                # never does — instead of the fill silently going untracked.
+                from app.services.trade_recorder import trade_recorder
+                equity_direction = "equity_short" if action.upper() == "SELL" else "equity_long"
+                recorded = await trade_recorder.record_fill(
+                    strategy="equity",
+                    underlying=ticker,
+                    option_type=equity_direction,
+                    short_strike=trade_plan.get("entry_price") or 0,
+                    long_strike=trade_plan.get("stop_price") or 0,
+                    target_price=trade_plan.get("target_price"),
+                    expiration=date.today(),
+                    quantity=shares,
+                    entry_credit=trade_plan.get("entry_price") or 0,
+                    signal_score=signal.get("signal_score", 0),
+                    iv_rank=signal.get("iv_rank", 0),
+                    regime=signal.get("regime", "unknown"),
+                    approved_by=approved_by,
+                    dispatch_id=signal.get("id", ""),
+                    status="pending",
+                )
+                if recorded is None:
+                    logger.critical(
+                        "CRITICAL: equity order for %s timed out waiting on the broker "
+                        "AND the fallback pending-row write failed — position may be "
+                        "untracked. Immediate review required.", ticker,
+                    )
+                observability.incr("execute.timeout")
+                observability.event("timeout", ticker=ticker, asset_type="equity")
+                return {
+                    "signal_id":  signal.get("id"),
+                    "ticker":     ticker,
+                    "asset_type": "equity",
+                    "result":     "pending_confirmation",
+                    "note": (
+                        "Broker did not acknowledge in time; a pending position was "
+                        "recorded and will be confirmed or cancelled automatically "
+                        "once the broker responds."
+                    ),
+                    "executed_at": executed_at,
+                }
 
             # A terminated-unfilled order is NOT recorded — recording it would
             # create a phantom position the broker never opened.
@@ -1045,13 +1665,14 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 option_type=equity_direction,
                 short_strike=trade_plan.get("entry_price") or 0,
                 long_strike=trade_plan.get("stop_price") or 0,
+                target_price=trade_plan.get("target_price"),
                 expiration=date.today(),
                 quantity=shares,
                 entry_credit=trade_plan.get("entry_price") or 0,
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),
                 regime=signal.get("regime", "unknown"),
-                trading_mode=approved_by,
+                approved_by=approved_by,
                 dispatch_id=result.order_id or signal.get("id", ""),
                 status=entry_status,
             )
@@ -1122,7 +1743,53 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 limit_price=limit_px,
                 time_in_force="DAY",
             )
-            result = await broker.place_order(order)
+            try:
+                result = await ibkr_coordinator.submit(
+                    Priority.P0, lambda: broker.place_order(order),
+                    req_type="PLACE_ORDER", symbol=ticker, timeout=150.0,
+                )
+            except asyncio.TimeoutError:
+                # Same lost-fill gap as the equity branch above — see that
+                # comment for the full asyncio.shield() explanation.
+                from app.services.trade_recorder import trade_recorder
+                recorded = await trade_recorder.record_fill(
+                    strategy=strategy,
+                    underlying=ticker,
+                    option_type=opt_type,
+                    short_strike=float(short_str),
+                    long_strike=float(long_str),
+                    expiration=expiry_date,
+                    quantity=quantity,
+                    entry_credit=credit_per_share,
+                    spread_width=abs(float(short_str) - float(long_str)),
+                    signal_score=signal.get("signal_score", 0),
+                    iv_rank=signal.get("iv_rank", 0),
+                    regime=signal.get("regime", "unknown"),
+                    approved_by=approved_by,
+                    dispatch_id=signal.get("id", ""),
+                    status="pending",
+                )
+                if recorded is None:
+                    logger.critical(
+                        "CRITICAL: options order for %s %s timed out waiting on the "
+                        "broker AND the fallback pending-row write failed — position "
+                        "may be untracked. Immediate review required.", strategy, ticker,
+                    )
+                observability.incr("execute.timeout")
+                observability.event("timeout", ticker=ticker, asset_type="options", strategy=strategy)
+                return {
+                    "signal_id":  signal.get("id"),
+                    "ticker":     ticker,
+                    "asset_type": "options",
+                    "strategy":   strategy,
+                    "result":     "pending_confirmation",
+                    "note": (
+                        "Broker did not acknowledge in time; a pending position was "
+                        "recorded and will be confirmed or cancelled automatically "
+                        "once the broker responds."
+                    ),
+                    "executed_at": executed_at,
+                }
 
             # A terminated-unfilled order is NOT recorded (no phantom position).
             if result.status in ("cancelled", "rejected"):
@@ -1151,7 +1818,7 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
                 signal_score=signal.get("signal_score", 0),
                 iv_rank=signal.get("iv_rank", 0),
                 regime=signal.get("regime", "unknown"),
-                trading_mode=approved_by,
+                approved_by=approved_by,
                 dispatch_id=result.order_id or signal.get("id", ""),
                 status=entry_status,
             )
@@ -1237,17 +1904,51 @@ class ScanSignalRequest(BaseModel):
     stop_price: float
     target_price: float
     entry_ladder: list = []
-    kelly_fraction: float = 0.1
+    # None (not 0.0/0.1) for a human-composed order with no AI signal behind
+    # it — see the equity_desk_composer carve-out in _execute_signal's
+    # Stage 1c gate below. Real scan-sourced signals always supply these.
+    kelly_fraction: Optional[float] = None
     expected_value: float = 0.0
     pop: float = 0.0
-    confidence: float = 0.0
+    confidence: Optional[float] = None
     source: str = "scan_engine"  # "options_scan_engine" or "equity_scan_engine"
     # Equity size — composer sends this; scan panel defaults to 1 if omitted.
     shares: int = 1
     asset_type: str = "equity"
+    # Options scan / composer — required when asset_type is options
+    strategy: Optional[str] = None
+    quantity: int = 1
+    spread: Optional[dict] = None
 
 
-@router.post("/signal", dependencies=[Depends(require_api_key)])
+def _require_options_spread(req: "ScanSignalRequest") -> dict:
+    """Validate options queue payload; return normalized spread dict."""
+    spread = dict(req.spread or {})
+    short_strike = spread.get("short_strike")
+    long_strike = spread.get("long_strike")
+    option_type = (spread.get("option_type") or "").lower()
+    if short_strike is None or long_strike is None or option_type not in ("put", "call"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "options signals require spread with short_strike, long_strike, "
+                "and option_type (put|call)"
+            ),
+        )
+    if not spread.get("expiration"):
+        raise HTTPException(
+            status_code=400,
+            detail="options signals require spread.expiration (YYYY-MM-DD)",
+        )
+    if spread.get("net_credit") is None and spread.get("max_loss") is None:
+        raise HTTPException(
+            status_code=400,
+            detail="options signals require spread.net_credit or spread.max_loss",
+        )
+    return spread
+
+
+@router.post("/signal", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 async def submit_scan_signal(req: ScanSignalRequest):
     """
     Submit a signal from scan panel / Equity Desk for execution routing.
@@ -1258,38 +1959,71 @@ async def submit_scan_signal(req: ScanSignalRequest):
 
     Equity payloads include trade_plan.shares so approve → _execute_signal
     does not silently default to 1 share when the composer sent a larger size.
+
+    Options payloads must set asset_type=options and include a defined-risk
+    spread; equity-shaped options_scan_engine bodies are rejected.
     """
     signal_id = str(uuid.uuid4())
-    shares = max(int(req.shares or 1), 1)
+    source = (req.source or "scan_engine").strip()
+    asset_type = (req.asset_type or "equity").lower().strip()
+    if source == "options_scan_engine" or asset_type in ("options", "option"):
+        asset_type = "options"
 
-    # Build signal compatible with _execute_signal()
-    signal = {
-        "id": signal_id,
-        "ticker": req.ticker.upper(),
-        "action": req.action,
-        "asset_type": (req.asset_type or "equity").lower(),
-        "entry_price": req.entry_price,
-        "stop_price": req.stop_price,
-        "target_price": req.target_price,
-        "trade_plan": {
-            "shares": shares,
+    if asset_type == "options":
+        spread = _require_options_spread(req)
+        strategy = (req.strategy or "bull_put_spread").strip()
+        quantity = max(int(req.quantity or 1), 1)
+        signal = {
+            "id": signal_id,
+            "ticker": req.ticker.upper(),
+            "action": req.action,
+            "asset_type": "options",
+            "strategy": strategy,
+            "quantity": quantity,
+            "spread": spread,
             "entry_price": req.entry_price,
             "stop_price": req.stop_price,
             "target_price": req.target_price,
-            "risk_reward": (
-                abs(req.target_price - req.entry_price) / abs(req.entry_price - req.stop_price)
-                if abs(req.entry_price - req.stop_price) > 1e-9 else 0.0
-            ),
-        },
-        "confidence": req.confidence,
-        "kelly_fraction": req.kelly_fraction,
-        "expected_value": req.expected_value,
-        "pop": req.pop,
-        "entry_ladder": req.entry_ladder,
-        "source": req.source,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "approved_by": "scan_panel",
-    }
+            "confidence": req.confidence,
+            "kelly_fraction": req.kelly_fraction,
+            "expected_value": req.expected_value,
+            "pop": req.pop,
+            "entry_ladder": req.entry_ladder,
+            "source": source,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": "scan_panel",
+        }
+        shares = quantity
+    else:
+        shares = max(int(req.shares or 1), 1)
+        # Build signal compatible with _execute_signal()
+        signal = {
+            "id": signal_id,
+            "ticker": req.ticker.upper(),
+            "action": req.action,
+            "asset_type": "equity",
+            "entry_price": req.entry_price,
+            "stop_price": req.stop_price,
+            "target_price": req.target_price,
+            "trade_plan": {
+                "shares": shares,
+                "entry_price": req.entry_price,
+                "stop_price": req.stop_price,
+                "target_price": req.target_price,
+                "risk_reward": (
+                    abs(req.target_price - req.entry_price) / abs(req.entry_price - req.stop_price)
+                    if abs(req.entry_price - req.stop_price) > 1e-9 else 0.0
+                ),
+            },
+            "confidence": req.confidence,
+            "kelly_fraction": req.kelly_fraction,
+            "expected_value": req.expected_value,
+            "pop": req.pop,
+            "entry_ladder": req.entry_ladder,
+            "source": source,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": "scan_panel",
+        }
 
     mode = execution_mode_manager.mode
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# OlbosQuant — DigitalOcean Droplet Provisioning Script
+# OlbosTrade — DigitalOcean Droplet Provisioning Script
 #
 # Run this ONCE on a fresh Ubuntu 22.04 Droplet after SSH'ing in as root.
 #
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 echo "═══════════════════════════════════════"
-echo "  OlbosQuant — Droplet Provisioning"
+echo "  OlbosTrade — Droplet Provisioning"
 echo "═══════════════════════════════════════"
 
 # ── 1. System update ──────────────────────────────────────────────────────────
@@ -149,9 +149,9 @@ echo "  → Docker log rotation configured"
 
 # ── 10. App directory ─────────────────────────────────────────────────────────
 echo "[10/10] Creating app directory..."
-mkdir -p /opt/olbosquant
-chown deploy:deploy /opt/olbosquant
-echo "  → /opt/olbosquant created"
+mkdir -p /opt/olbostrade
+chown deploy:deploy /opt/olbostrade
+echo "  → /opt/olbostrade created"
 
 echo ""
 echo "═══════════════════════════════════════════════════════"
@@ -165,9 +165,9 @@ echo "  2. Log into DO Container Registry:"
 echo "     doctl registry login"
 echo ""
 echo "  3. Copy your .env.prod to the server:"
-echo "     scp .env.prod deploy@YOUR_DROPLET_IP:/opt/olbosquant/"
+echo "     scp .env.prod deploy@YOUR_DROPLET_IP:/opt/olbostrade/"
 echo ""
 echo "  4. Run the deploy script:"
 echo "     ssh deploy@YOUR_DROPLET_IP"
-echo "     cd /opt/olbosquant && bash deploy.sh"
+echo "     cd /opt/olbostrade && bash deploy.sh"
 echo "═══════════════════════════════════════════════════════"

@@ -139,11 +139,18 @@ class SignalScorer:
         # _load_model() from the pickle's metadata, not guessed via getattr.
         self.last_trained: Optional[str] = None
         self.validation_metrics: dict = {}
+        # Set by _load_model(); pre-seeded so status() is safe even if loading
+        # bails before it runs.
+        self._model_path: Path = Path(settings.model_path)
         self._load_model()
 
     def _load_model(self) -> None:
         """Load model and build SHAP explainer once."""
         model_path = Path(settings.model_path)
+        # Remembered so status() reports the path this instance actually used,
+        # rather than re-reading the setting later and possibly describing a
+        # different file than the one that is loaded.
+        self._model_path = model_path
         if not model_path.exists():
             logger.warning(
                 "No trained model at %s — using heuristic scoring. "
@@ -152,8 +159,32 @@ class SignalScorer:
             )
             return
 
-        with open(model_path, "rb") as f:
-            saved = pickle.load(f)
+        # Unpickling is the one step here that can fail on things outside this
+        # repo's control — a truncated file, a model saved under an
+        # incompatible xgboost/sklearn, a half-written artifact copied onto the
+        # server. Unguarded, that raises inside __init__ and takes down every
+        # caller that constructs a SignalScorer. The heuristic fallback below
+        # already exists and is correct, so a bad artifact should land there
+        # rather than break scoring outright.
+        try:
+            with open(model_path, "rb") as f:
+                saved = pickle.load(f)
+        except Exception as exc:
+            logger.error(
+                "Failed to load model at %s (%s: %s) — falling back to heuristic "
+                "scoring. The file is present but unusable; check that it was "
+                "written completely and with compatible library versions.",
+                model_path, type(exc).__name__, exc,
+            )
+            return
+
+        if not isinstance(saved, dict) or saved.get("model") is None:
+            logger.error(
+                "Model at %s loaded but has no 'model' key (got %s) — falling "
+                "back to heuristic scoring.",
+                model_path, type(saved).__name__,
+            )
+            return
 
         self.model = saved.get("model")
         self.model_version = saved.get("version", "v1")
@@ -205,6 +236,49 @@ class SignalScorer:
         except Exception as exc:
             logger.warning("SHAP explainer build failed: %s — scores will lack explanations", exc)
 
+    def status(self) -> dict:
+        """Report what is actually scoring signals right now.
+
+        This exists because the alternative — a single startup log line — hid a
+        real failure for months: a trained model sat outside the Docker build
+        context, never reached the container, and production silently ran
+        heuristic scoring while every dashboard implied otherwise.
+
+        The validation metrics are reported verbatim, including bad ones. A
+        model with a negative r2 predicts worse than the mean, and that has to
+        be visible here rather than inferable only by unpickling the artifact
+        by hand. `usable` is a judgement on those metrics, not a claim that the
+        file loaded — a model can load perfectly and still have no skill.
+        """
+        metrics = self.validation_metrics or {}
+        r2 = metrics.get("r2")
+        directional = metrics.get("directional_accuracy")
+
+        if self.model is None:
+            usable, why = False, "no model loaded — heuristic scoring active"
+        elif isinstance(r2, (int, float)) and r2 < 0:
+            usable, why = False, f"r2={r2:.3f} is negative — predicts worse than the mean"
+        elif isinstance(directional, (int, float)) and directional < 0.55:
+            usable, why = False, (
+                f"directional_accuracy={directional:.3f} is not distinguishable "
+                "from a coin flip"
+            )
+        else:
+            usable, why = True, "validation metrics within acceptable bounds"
+
+        return {
+            "loaded": self.model is not None,
+            "scoring_mode": "model" if self.model is not None else "heuristic",
+            "version": self.model_version,
+            "model_type": self.model_type,
+            "path": str(self._model_path),
+            "path_exists": self._model_path.exists(),
+            "last_trained": self.last_trained,
+            "validation_metrics": metrics,
+            "usable": usable,
+            "usable_reason": why,
+        }
+
     def score(
         self,
         features: SignalFeatures,
@@ -232,7 +306,14 @@ class SignalScorer:
 
         # FIX #6: Uncertainty band check
         distance_from_threshold = raw_score - effective_threshold
-        uncertain = abs(distance_from_threshold) < UNCERTAINTY_BAND
+        # bool(...) — effective_threshold can come from a numpy-typed model
+        # metadata value; `float >= numpy.float64` yields numpy.bool_, which
+        # (unlike numpy.float64) is NOT a subclass of Python's bool and
+        # crashes FastAPI's jsonable_encoder wherever this ends up in a
+        # response (confirmed in production: every GET /api/options/signals
+        # 500'd once a numpy.bool_ landed in ScoreResult.approved/.uncertain
+        # via explain()'s evidence dict).
+        uncertain = bool(abs(distance_from_threshold) < UNCERTAINTY_BAND)
 
         # FIX #6: Reject if score is within the uncertainty band
         # A score of 0.67 (just above 0.65 threshold) is not a confident approval
@@ -245,7 +326,7 @@ class SignalScorer:
                 f"for confident approval."
             )
         else:
-            approved = raw_score >= effective_threshold
+            approved = bool(raw_score >= effective_threshold)
             rejection_reason = (
                 f"Score {raw_score:.3f} below threshold {effective_threshold:.2f}"
                 if not approved else None

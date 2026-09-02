@@ -40,7 +40,9 @@ const Icon = ({ name, size = 14, color = "currentColor" }: { name: string; size?
 // ── Types ───────────────────────────────────────────────────────────────────
 type Health = { name: string; status: "ok" | "warn" | "error"; detail: string };
 interface Summary {
-  total_equity: number; total_pnl: number; total_pnl_pct: number;
+  // null when the broker read failed — never substitute a computed value.
+  total_equity: number | null; total_equity_source?: "broker" | "unavailable";
+  total_pnl: number; total_pnl_pct: number;
   day_pnl: number; day_pnl_pct: number; health: Health[]; issues: number;
 }
 interface Performance {
@@ -70,8 +72,15 @@ interface MetaDecision {
 interface MetaResp { regime: string | null; decisions: MetaDecision[]; active_strategies: string[]; }
 interface AllocResp { method: string; weights: Record<string, number>; cash_weight: number; regime?: string; }
 interface ScenarioRow { scenario: string; portfolio_pnl: number; portfolio_pnl_pct: number | null; }
-interface ScenariosResp { scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number; }
-interface VarResp { var: number; expected_shortfall: number; var_pct: number | null; es_pct: number | null; confidence: number; }
+interface ScenariosResp {
+  scenarios: ScenarioRow[]; worst_scenario: string | null; worst_pnl: number;
+  excluded_symbols?: { ticker: string; reason: string }[];
+}
+interface VarResp {
+  available?: boolean; reason?: string;
+  var: number | null; expected_shortfall: number | null; var_pct: number | null; es_pct: number | null;
+  confidence: number; spot_price?: number; spot_source?: string; spot_data_status?: string;
+}
 interface HealthDetail {
   scanner: { alive: boolean; last_tick_age_seconds: number | null };
   observability: { counters: Record<string, number>; uptime_seconds: number };
@@ -93,13 +102,32 @@ const STRAT_STATUS: Record<string, { color: string; tint: string; icon: string; 
 };
 
 // ── KPI card ────────────────────────────────────────────────────────────────
+// Existing rgba tint literals already used elsewhere in this app for the
+// same 3 colors (.mode-badge.conservative / .signal-badge.bullish / .mode-badge.balanced)
+// — reused here rather than introducing color-mix() or new tokens.
+const BADGE_TINT: Record<string, string> = {
+  "var(--green)":  "rgba(34,197,94,0.15)",
+  "var(--red)":    "rgba(239,68,68,0.15)",
+  "var(--accent)": "var(--cyan-dim)",
+};
+
 function Kpi({ label, value, sub, color, icon }:
   { label: string; value: string; sub?: string; color?: string; icon: string }) {
+  const badgeColor = color || "var(--accent)";
   return (
-    <div className="exec-card" style={{ flex: 1, minWidth: 210, padding: "16px 18px" }}>
+    <div
+      className="instrument-card exec-card"
+      style={{ flex: 1, minWidth: 210, padding: "16px 18px", ["--tab-color" as any]: badgeColor }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <span className="kicker">{label}</span>
-        <span style={{ color: "var(--cyan)", opacity: 0.7 }}><Icon name={icon} size={15} /></span>
+        <span style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+          background: BADGE_TINT[badgeColor] ?? BADGE_TINT["var(--accent)"],
+        }}>
+          <Icon name={icon} size={15} color={badgeColor} />
+        </span>
       </div>
       <div className="mono" style={{ fontSize: 27, fontWeight: 700, color: color || "var(--ink)", lineHeight: 1, letterSpacing: "-0.02em" }}>
         {value}
@@ -113,7 +141,7 @@ function Kpi({ label, value, sub, color, icon }:
 function Tile({ label, value, color }: { label: string; value: string; color?: string }) {
   const hinted = !!resolveMetricHint(label);
   return (
-    <div style={{ background: "var(--bg-2)", padding: "11px 13px" }}>
+    <div className="instrument-card--flat" style={{ padding: "11px 13px" }}>
       <div className="kicker" style={{ fontSize: 8.5, marginBottom: 5 }}>
         {hinted ? <MetricHint id={label} /> : label}
       </div>
@@ -231,7 +259,7 @@ export default function ExecutiveSummary() {
   const pct = (n: number) => `${n >= 0 ? "+" : ""}${n}%`;
 
   return (
-    <div style={{ padding: "18px 16px 10px" }}>
+    <div className="instrument-card" style={{ padding: "18px 16px 14px", margin: "10px 12px 12px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <span style={{ width: 3, height: 17, background: "var(--cyan)", boxShadow: "0 0 10px var(--cyan-glow)" }} />
         <span className="mono" style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.16em", color: "var(--ink)" }}>
@@ -250,7 +278,12 @@ export default function ExecutiveSummary() {
 
       {/* KPI cards */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-        <Kpi label="Total Equity" icon="dollar" value={s ? plain(s.total_equity) : "—"} />
+        <Kpi
+          label="Total Equity"
+          icon="dollar"
+          value={s && s.total_equity != null ? plain(s.total_equity) : "—"}
+          sub={s && s.total_equity == null ? "Broker unavailable" : undefined}
+        />
         <Kpi label="Total P&L" icon="pnl"
           value={s ? money(s.total_pnl) : "—"} color={s ? pnlColor(s.total_pnl) : undefined}
           sub={s ? `${pct(s.total_pnl_pct)} since open` : undefined} />
@@ -262,14 +295,14 @@ export default function ExecutiveSummary() {
       {/* Performance + Portfolio Heat */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12, marginBottom: 14 }}>
         {/* Performance — short strip by default */}
-        <div className="exec-card">
+        <div className="instrument-card exec-card">
           <PanelHead icon="perf" title="Performance"
             right={perf && perf.sample_size_warning
               ? <span className="mono" style={{ fontSize: 9.5, color: "var(--amber)" }}>
                   {perf.total_trades} trades · low sample
                 </span>
               : perf && <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-dim)" }}>{perf.total_trades} trades</span>} />
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 1, background: "var(--line-dim)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 8, padding: 10 }}>
             <Tile label="Win Rate" value={perf ? `${(perf.win_rate * 100).toFixed(0)}%` : "—"}
               color={perf && perf.win_rate >= 0.5 ? "var(--green)" : "var(--ink)"} />
             <Tile label="Profit Factor" value={perf ? perf.profit_factor.toFixed(2) : "—"}
@@ -296,7 +329,7 @@ export default function ExecutiveSummary() {
         </div>
 
         {/* Portfolio Heat */}
-        <div className="exec-card">
+        <div className="instrument-card exec-card">
           <PanelHead icon="gauge" title="Portfolio Heat"
             right={heat && <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-dim)" }}>{heat.position_count} open</span>} />
           <div style={{ padding: "14px" }}>
@@ -307,8 +340,8 @@ export default function ExecutiveSummary() {
               </span>
               <span className="kicker">{heat ? `${plain(heat.total_risk_dollars)} at risk` : ""}</span>
             </div>
-            <div style={{ height: 8, background: "var(--bg-4)", borderRadius: 4, overflow: "hidden", marginBottom: 12 }}>
-              <div style={{ height: "100%", borderRadius: 4, transition: "width .5s ease",
+            <div className="instrument-card--flat" style={{ height: 8, overflow: "hidden", marginBottom: 12, padding: 0 }}>
+              <div style={{ height: "100%", transition: "width .5s ease",
                 width: `${heat ? Math.min(100, heat.portfolio_heat_pct) : 0}%`,
                 background: heat ? HEAT[heat.heat_status] : "var(--ink-faint)" }} />
             </div>
@@ -319,7 +352,7 @@ export default function ExecutiveSummary() {
             {heat && (heat.concentration_flags?.length ?? 0) > 0 && (
               <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {heat.concentration_flags.map((f, i) => (
-                  <span key={i} className="mono" style={{ fontSize: 9, padding: "2px 8px", borderRadius: 10,
+                  <span key={i} className="mono" style={{ fontSize: 9, padding: "2px 8px", borderRadius: 2,
                     background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "var(--red)" }}>
                     {f.split(" ")[0]}
                   </span>
@@ -335,7 +368,7 @@ export default function ExecutiveSummary() {
       {/* Strategy · Meta · Allocation · Stress — 2-column grid to use the width */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14, alignItems: "start" }}>
       {/* Strategy health */}
-      <div className="exec-card">
+      <div className="instrument-card exec-card">
         <PanelHead icon="check" title="Strategy Health"
           right={strat && <span className="mono" style={{ fontSize: 10.5,
             color: (strat.suspended?.length ?? 0) === 0 ? "var(--green)" : "var(--red)" }}>
@@ -351,7 +384,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Meta-strategy — which strategies are active given regime + health */}
-      <div className="exec-card">
+      <div className="instrument-card exec-card">
         <PanelHead icon="strategy" title="Meta-Strategy"
           right={meta && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             regime: <b style={{ color: "var(--cyan)" }}>{meta.regime || "—"}</b> · {meta.active_strategies?.length ?? 0} active
@@ -376,7 +409,7 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Capital allocation — target weights per strategy */}
-      <div className="exec-card">
+      <div className="instrument-card exec-card">
         <PanelHead icon="gauge" title="Capital Allocation"
           right={alloc && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             {alloc.method} · cash <b style={{ color: "var(--ink)" }}>{((alloc.cash_weight ?? 0) * 100).toFixed(0)}%</b>
@@ -401,12 +434,17 @@ export default function ExecutiveSummary() {
       </div>
 
       {/* Stress scenarios + parametric VaR */}
-      <div className="exec-card">
+      <div className="instrument-card exec-card">
         <PanelHead icon="risk" title="Stress & VaR"
-          right={varRep && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
+          right={varRep && varRep.available !== false && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-dim)" }}>
             VaR {Math.round((varRep.confidence ?? 0) * 100)}%: <b style={{ color: "var(--red)" }}>${Math.round(varRep.var ?? 0).toLocaleString()}</b>
             {varRep.var_pct != null ? ` (${varRep.var_pct}%)` : ""} · ES ${Math.round(varRep.expected_shortfall ?? 0).toLocaleString()}
           </span>} />
+        {varRep && varRep.available === false && (
+          <div style={{ padding: "8px 14px", fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--amber)", borderBottom: "1px solid var(--line-dim)" }}>
+            VaR unavailable{varRep.reason ? ` — ${varRep.reason}` : ""}.
+          </div>
+        )}
         {scen && (scen.scenarios?.length ?? 0) > 0
           ? scen.scenarios.map(r => (
             <div key={r.scenario} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 14px",
@@ -426,7 +464,7 @@ export default function ExecutiveSummary() {
       </div>{/* end 2-col grid */}
 
       {/* System health — full width (dense checklist) */}
-      <div className="exec-card">
+      <div className="instrument-card exec-card">
         <PanelHead icon="activity" title="System Health"
           right={s && <span className="mono" style={{ fontSize: 10.5,
             color: s.issues === 0 ? "var(--green)" : "var(--amber)" }}>

@@ -177,8 +177,9 @@ class RiskManager:
         sector_exposure = portfolio.positions_by_sector.get(trade.sector, 0.0)
         new_sector_exposure = sector_exposure + trade.max_loss_dollars
         if portfolio.portfolio_value > 0:
+            from app.services.portfolio_engine import is_cappable_sector
             sector_pct = new_sector_exposure / portfolio.portfolio_value
-            if sector_pct > self.MAX_SECTOR_CONCENTRATION:
+            if is_cappable_sector(trade.sector) and sector_pct > self.MAX_SECTOR_CONCENTRATION:
                 flags.append("sector_concentration_warning")
                 logger.warning(
                     "Sector concentration elevated: %s at %.1f%%",

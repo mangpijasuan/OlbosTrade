@@ -5,6 +5,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
+import SignalDirectionBadge from "../../components/SignalDirectionBadge";
+import { Badge } from "../../components/ui";
 import {
   type DeskLifecycle,
   lifecycleColor,
@@ -24,23 +26,6 @@ interface OrderRow {
   by: string;
   reason: string;
   source: "queue" | "execution";
-}
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: "var(--mono)",
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        padding: "1px 6px",
-        border: `1px solid ${color}`,
-        color,
-      }}
-    >
-      {text}
-    </span>
-  );
 }
 
 export default function OrdersWorkspace() {
@@ -116,32 +101,23 @@ export default function OrdersWorkspace() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--line-dim)",
-          background: "var(--bg-3)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
+      <div className="desk-tool-rail" style={{ padding: "10px 16px", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span className="panel-title">ORDERS</span>
+          <span className="panel-title">Orders</span>
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", flex: 1 }}>
             Derived from Copilot queue + execution log. Broker ack / partial / cancel not modeled yet.
           </span>
-          <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={refresh}>
+          <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={refresh}>
             Refresh
           </button>
         </div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <div className="asset-toggle" style={{ flexWrap: "wrap" }}>
           {filters.map((f) => (
             <button
               key={f.key}
               type="button"
-              className={`btn-t ${filter === f.key ? "active" : ""}`}
-              style={{ fontSize: 10 }}
+              className={`asset-toggle__btn${filter === f.key ? " asset-toggle__btn--active" : ""}`}
+              style={{ fontSize: 10, padding: "5px 10px" }}
               onClick={() => setFilter(f.key)}
             >
               {f.label}
@@ -151,30 +127,15 @@ export default function OrdersWorkspace() {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
         {loading ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-              fontFamily: "var(--mono)",
-              color: "var(--ink-faint)",
-              fontSize: 11,
-            }}
-          >
-            Loading…
+          <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+            <p className="empty-chassis__title">Loading…</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-              fontFamily: "var(--mono)",
-              color: "var(--ink-faint)",
-              fontSize: 11,
-            }}
-          >
-            No orders in this filter
+          <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+            <p className="empty-chassis__title">No orders in this filter</p>
+            <p className="empty-chassis__hint">Approve a Copilot signal or wait for an execution event.</p>
           </div>
         ) : (
           <table className="t-table">
@@ -195,13 +156,17 @@ export default function OrdersWorkspace() {
                     {r.ticker}
                   </td>
                   <td>
-                    <Badge text={r.asset} color="var(--ink-dim)" />
-                  </td>
-                  <td className="mono" style={{ fontSize: 10 }}>
-                    {r.action}
+                    <Badge kind="tag" tone="var(--ink-dim)">{r.asset}</Badge>
                   </td>
                   <td>
-                    <Badge text={lifecycleLabel(r.lifecycle)} color={lifecycleColor(r.lifecycle)} />
+                    {r.action && r.action !== "—" ? (
+                      <SignalDirectionBadge action={r.action} size="sm" />
+                    ) : (
+                      <span className="mono" style={{ fontSize: 10, color: "var(--ink-faint)" }}>—</span>
+                    )}
+                  </td>
+                  <td>
+                    <Badge kind="tag" tone={lifecycleColor(r.lifecycle)}>{lifecycleLabel(r.lifecycle)}</Badge>
                   </td>
                   <td className="mono" style={{ fontSize: 10, color: "var(--amber)" }}>
                     {r.by}

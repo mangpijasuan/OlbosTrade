@@ -61,6 +61,21 @@ class ExitDecision:
     urgency: str = "normal"   # "normal" | "immediate"
 
 
+@dataclass
+class StrategyExitParams:
+    """
+    Optional override for a strategy's exit-rule literals. All fields
+    default to each strategy's own current hardcoded value — passing None
+    (the default, everywhere in live/production code) reproduces today's
+    exact behavior. Only strategy_optimizer.py's grid search ever passes
+    non-default values.
+    """
+    profit_target_pct:    float = 0.50
+    stop_loss_multiplier: float = 2.0
+    dte_exit:              int  = 21
+    min_iv_rank:           float = 30.0  # not yet wired into any generate_signal() — see strategy_optimizer.py
+
+
 # ── Base Strategy ──────────────────────────────────────────────────────────────
 
 class BaseStrategy(ABC):
@@ -69,9 +84,16 @@ class BaseStrategy(ABC):
     Subclasses implement generate_signal(), size_position(), check_exit().
     """
 
-    def __init__(self) -> None:
+    # Each subclass's own original hardcoded exit-rule values, as a class
+    # attribute — passing params=None must reproduce that exact strategy's
+    # existing behavior, not some other strategy's defaults. Only override
+    # in a subclass when its own hardcoded values differ from these.
+    DEFAULT_PARAMS: StrategyExitParams = StrategyExitParams()
+
+    def __init__(self, params: Optional[StrategyExitParams] = None) -> None:
         self.guardrails = GuardrailEngine()
         self.risk_manager = RiskManager()
+        self.params = params or self.DEFAULT_PARAMS
 
     @property
     @abstractmethod
@@ -201,12 +223,12 @@ class BullPutSpread(BaseStrategy):
 
     def check_exit(self, entry_credit, current_value, dte_remaining, short_strike_breached) -> ExitDecision:
         profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
-        if profit_pct >= 0.50:
-            return ExitDecision(should_exit=True, reason="50% profit target reached")
-        if dte_remaining <= 21:
-            return ExitDecision(should_exit=True, reason="21 DTE time stop")
-        if current_value >= entry_credit * 2:
-            return ExitDecision(should_exit=True, reason="2x credit stop loss hit", urgency="immediate")
+        if profit_pct >= self.params.profit_target_pct:
+            return ExitDecision(should_exit=True, reason=f"{self.params.profit_target_pct:.0%} profit target reached")
+        if dte_remaining <= self.params.dte_exit:
+            return ExitDecision(should_exit=True, reason=f"{self.params.dte_exit} DTE time stop")
+        if current_value >= entry_credit * self.params.stop_loss_multiplier:
+            return ExitDecision(should_exit=True, reason=f"{self.params.stop_loss_multiplier}x credit stop loss hit", urgency="immediate")
         return ExitDecision(should_exit=False, reason=None)
 
 
@@ -231,10 +253,10 @@ class BearCallSpread(BaseStrategy):
                          direction="bearish", entry_allowed=False,
                          reason=guardrail_status.reason or "Not allowed", iv_rank=iv_rank, rsi=rsi)
 
-        if iv_rank < 5:
+        if iv_rank < 30:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bearish", entry_allowed=False,
-                         reason=f"IV rank too low: {iv_rank:.1f}", iv_rank=iv_rank, rsi=rsi)
+                         reason=f"IV rank too low: {iv_rank:.1f} (need >30)", iv_rank=iv_rank, rsi=rsi)
         if above_sma20:
             return Signal(strategy=self.name, underlying=chain.underlying,
                          direction="bearish", entry_allowed=False,
@@ -269,12 +291,12 @@ class BearCallSpread(BaseStrategy):
 
     def check_exit(self, entry_credit, current_value, dte_remaining, short_strike_breached) -> ExitDecision:
         profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
-        if profit_pct >= 0.50:
-            return ExitDecision(should_exit=True, reason="50% profit target reached")
-        if dte_remaining <= 21:
-            return ExitDecision(should_exit=True, reason="21 DTE time stop")
-        if current_value >= entry_credit * 2:
-            return ExitDecision(should_exit=True, reason="2x credit stop loss", urgency="immediate")
+        if profit_pct >= self.params.profit_target_pct:
+            return ExitDecision(should_exit=True, reason=f"{self.params.profit_target_pct:.0%} profit target reached")
+        if dte_remaining <= self.params.dte_exit:
+            return ExitDecision(should_exit=True, reason=f"{self.params.dte_exit} DTE time stop")
+        if current_value >= entry_credit * self.params.stop_loss_multiplier:
+            return ExitDecision(should_exit=True, reason=f"{self.params.stop_loss_multiplier}x credit stop loss", urgency="immediate")
         return ExitDecision(should_exit=False, reason=None)
 
 
@@ -288,6 +310,11 @@ class IronCondor(BaseStrategy):
     DTE: 30–45 days
     SUSPENDED in capital preservation mode.
     """
+
+    # 25% profit target, not BaseStrategy's 50% — this strategy's own
+    # original hardcoded value. stop_loss_multiplier is unused (this
+    # strategy exits on strike breach, not a credit multiple).
+    DEFAULT_PARAMS = StrategyExitParams(profit_target_pct=0.25)
 
     @property
     def name(self) -> str:
@@ -344,10 +371,10 @@ class IronCondor(BaseStrategy):
         short_call_strike_breached=False,  # call side breach (price above short call)
     ) -> ExitDecision:
         profit_pct = (entry_credit - current_value) / entry_credit if entry_credit else 0
-        if profit_pct >= 0.25:
-            return ExitDecision(should_exit=True, reason="25% profit target reached")
-        if dte_remaining <= 21:
-            return ExitDecision(should_exit=True, reason="21 DTE time stop")
+        if profit_pct >= self.params.profit_target_pct:
+            return ExitDecision(should_exit=True, reason=f"{self.params.profit_target_pct:.0%} profit target reached")
+        if dte_remaining <= self.params.dte_exit:
+            return ExitDecision(should_exit=True, reason=f"{self.params.dte_exit} DTE time stop")
         if short_strike_breached:
             return ExitDecision(should_exit=True, reason="Short put strike breached", urgency="immediate")
         if short_call_strike_breached:
@@ -365,6 +392,12 @@ class BullCallDebitSpread(BaseStrategy):
     DTE: 21–30 days
     SUSPENDED in capital preservation mode.
     """
+
+    # 75% profit target / 10 DTE exit — this strategy's own original
+    # hardcoded values, not BaseStrategy's 50%/21. stop_loss_multiplier is
+    # unused (this strategy's stop is a fraction of net debit paid, not a
+    # multiple of credit received — semantically different, left hardcoded).
+    DEFAULT_PARAMS = StrategyExitParams(profit_target_pct=0.75, dte_exit=10)
 
     @property
     def name(self) -> str:
@@ -422,10 +455,10 @@ class BullCallDebitSpread(BaseStrategy):
         # For debit spreads, entry_credit is actually net_debit paid
         net_debit = abs(entry_credit)
         current_profit_pct = (current_value - net_debit) / net_debit if net_debit else 0
-        if current_profit_pct >= 0.75:
-            return ExitDecision(should_exit=True, reason="75% max profit target reached")
-        if dte_remaining <= 10:
-            return ExitDecision(should_exit=True, reason="10 DTE time stop")
+        if current_profit_pct >= self.params.profit_target_pct:
+            return ExitDecision(should_exit=True, reason=f"{self.params.profit_target_pct:.0%} max profit target reached")
+        if dte_remaining <= self.params.dte_exit:
+            return ExitDecision(should_exit=True, reason=f"{self.params.dte_exit} DTE time stop")
         if current_value <= net_debit * 0.50:
             return ExitDecision(should_exit=True, reason="50% loss stop hit", urgency="immediate")
         return ExitDecision(should_exit=False, reason=None)

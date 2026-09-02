@@ -42,14 +42,7 @@ export default function EquityScan() {
         }}
       >
         {/* What is EV? */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Expected Value (EV)</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             <span style={{ fontFamily: "var(--mono)" }}>EV = POP × Max Profit − (1−POP) × Max Loss</span>
@@ -60,14 +53,7 @@ export default function EquityScan() {
         </div>
 
         {/* POP Estimation */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Probability of Profit (POP)</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             Estimated from technical distance: <span style={{ fontFamily: "var(--mono)" }}>POP = Stop Distance / (Target Distance + Stop Distance)</span>
@@ -78,14 +64,7 @@ export default function EquityScan() {
         </div>
 
         {/* Entry Ladder */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Entry Ladder</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             Kelly &lt; 15% → 1 tranche (full entry)
@@ -100,14 +79,7 @@ export default function EquityScan() {
         </div>
 
         {/* Technical Indicators */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Technical Scoring</h3>
           <div style={{ fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.8 }}>
             <div>
@@ -126,14 +98,7 @@ export default function EquityScan() {
         </div>
 
         {/* Kelly Fraction */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Kelly Fraction</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             <span style={{ fontFamily: "var(--mono)" }}>f* = (b·p − q) / b</span>
@@ -144,14 +109,7 @@ export default function EquityScan() {
         </div>
 
         {/* Earnings + IV Awareness */}
-        <div
-          style={{
-            border: "1px solid var(--line-dim)",
-            borderRadius: 6,
-            padding: 12,
-            background: "var(--bg-2)",
-          }}
-        >
+        <div className="instrument-card" style={{ padding: 12 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Risk Gates</h3>
           <p style={{ margin: 0, fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.5 }}>
             • Earnings gate: Blocks signals within 3 days of earnings

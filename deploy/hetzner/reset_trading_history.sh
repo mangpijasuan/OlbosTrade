@@ -15,10 +15,11 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-# DB_USER/DB_NAME deliberately unchanged — see docker-compose.hetzner.yml note.
+# DB_NAME was renamed to `olbostrade`. DB_USER stays `olbosquant`
+# deliberately — see the NOTE in docker-compose.hetzner.yml.
 DB_CONTAINER="olbostrade-db"
 DB_USER="olbosquant"
-DB_NAME="olbosquantdb"
+DB_NAME="olbostrade"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQL_FILE="${SCRIPT_DIR}/reset_trading_history.sql"
 

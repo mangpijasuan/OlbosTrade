@@ -31,6 +31,15 @@ from app.services.iv_overlay import get_iv_signal_boost
 
 logger = logging.getLogger(__name__)
 
+# Bounded fan-out for the watchlist sweep. 8 matches the throughput yfinance
+# and the IBKR coordinator actually sustain; more just queues behind their
+# rate limits while adding coordinator pressure.
+SCAN_CONCURRENCY = 8
+# Per-ticker deadline. One symbol that never answers must not hold the scan
+# open — the caller gets the other results and a log line naming the one that
+# did not answer.
+SCAN_TICKER_TIMEOUT_S = 20.0
+
 
 @dataclass
 class EquityScanCandidate:
@@ -434,11 +443,40 @@ async def scan_options(
 
     result = EquityScanResult(tickers_scanned=tickers)
 
-    # Scan all tickers concurrently
-    tasks = [scan_options_for_ticker(ticker, broker) for ticker in tickers]
-    candidates_raw = await asyncio.gather(*tasks)
+    # Bounded concurrency, and a deadline per ticker.
+    #
+    # This fired all ~100 tickers at once with no cap and no timeout. Each one
+    # does a yfinance fetch plus a broker quote, so an unbounded fan-out just
+    # queues behind provider rate limits and floods the IBKR coordinator —
+    # against a throttled API that is usually slower than a bounded sweep, not
+    # faster. Worse, nothing bounded a single hung symbol, so one stalled fetch
+    # held the whole scan open: on 2026-08-30 a manual scan ran past 130s and
+    # nginx returned 504 while the work carried on invisibly behind it.
+    #
+    # A ticker that exceeds its deadline is dropped and counted, never waited
+    # on. A partial scan that reports what it missed is worth more than a
+    # complete one nobody receives.
+    sem = asyncio.Semaphore(SCAN_CONCURRENCY)
 
-    # Filter out None (non-actionable)
+    async def _one(ticker: str):
+        async with sem:
+            try:
+                return await asyncio.wait_for(
+                    scan_options_for_ticker(ticker, broker),
+                    timeout=SCAN_TICKER_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("equity scan: %s exceeded %.0fs — skipped",
+                               ticker, SCAN_TICKER_TIMEOUT_S)
+                return None
+            except Exception as exc:
+                # One bad symbol must not void the other ninety-nine.
+                logger.warning("equity scan: %s failed: %s", ticker, exc)
+                return None
+
+    candidates_raw = await asyncio.gather(*(_one(t) for t in tickers))
+
+    # Filter out None (non-actionable, timed out, or errored)
     candidates = [c for c in candidates_raw if c is not None]
 
     # Sort by EV (highest first)

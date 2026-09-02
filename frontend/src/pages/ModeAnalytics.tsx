@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Panel, Sparkline } from "../components/ui";
 
 interface ModeStats {
   display_name: string; trade_count: number; win_rate: number;
@@ -23,22 +24,6 @@ const MODE_COLOR: Record<string, string> = {
 };
 const fmt = (n: number) => (n >= 0 ? "+$" : "-$") + Math.abs(n).toFixed(0);
 const pct = (n: number) => (n * 100).toFixed(1) + "%";
-
-function SparkBars({ pnls }: { pnls: number[] }) {
-  if (!pnls?.length) return null;
-  const max = Math.max(...pnls.map(Math.abs), 1);
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 20 }}>
-      {pnls.map((p, i) => (
-        <div key={i} style={{
-          width: 6, minHeight: 3, borderRadius: 1,
-          background: p >= 0 ? "var(--green)" : "var(--red)",
-          height: `${Math.max((Math.abs(p) / max) * 100, 15)}%`,
-        }} title={fmt(p)} />
-      ))}
-    </div>
-  );
-}
 
 function ModeCard({ modeKey, s, isBest }: { modeKey: string; s: ModeStats; isBest: boolean }) {
   const color = MODE_COLOR[modeKey] || "var(--cyan)";
@@ -69,7 +54,7 @@ function ModeCard({ modeKey, s, isBest }: { modeKey: string; s: ModeStats; isBes
             <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--green)" }}>↑</span>
           )}
         </div>
-        <SparkBars pnls={s.last_5_pnl} />
+        <Sparkline values={s.last_5_pnl} formatTitle={fmt} />
       </div>
 
       {/* Stats grid */}
@@ -141,18 +126,31 @@ export default function ModeAnalytics() {
   const [data, setData]     = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [scoreData, setScore] = useState<any>(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     Promise.all([
       (api as any).getModeAnalytics(),
       (api as any).getSignalScoreImpact(),
-    ]).then(([a, s]: any) => { setData(a); setScore(s); }).finally(() => setLoading(false));
+    ]).then(([a, s]: any) => { setData(a); setScore(s); })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
       fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
       LOADING ANALYTICS...
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
+      flexDirection: "column", gap: 12 }}>
+      <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)" }}>FAILED TO LOAD ANALYTICS</span>
+      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>
+        Could not reach the analytics API. Try reloading.
+      </span>
     </div>
   );
 
@@ -187,10 +185,7 @@ export default function ModeAnalytics() {
       </div>
 
       {/* Comparison table */}
-      <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-        <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-          <span className="panel-title">Head-to-Head Comparison</span>
-        </div>
+      <Panel padding={0} title="Head-to-Head Comparison">
         <table className="t-table">
           <thead><tr>
             {["Risk Profile","Trades","Win %","Avg/Trade","Total P&L","Sharpe","Expectancy","Hold"].map(h => <th key={h}>{h}</th>)}
@@ -222,21 +217,23 @@ export default function ModeAnalytics() {
             })}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Signal score impact */}
       {scoreData?.by_score_bucket && (
-        <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-          <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span className="panel-title">Signal Score → Outcome</span>
+        <Panel
+          padding={16}
+          title="Signal Score → Outcome"
+          action={
             <span style={{
               fontFamily: "var(--mono)", fontSize: 10, padding: "2px 8px",
               background: scoreData.overall_correlation > 0.2 ? "rgba(34,197,94,0.1)" : "rgba(245,158,11,0.1)",
               color: scoreData.overall_correlation > 0.2 ? "var(--green)" : "var(--amber)",
               border: `1px solid ${scoreData.overall_correlation > 0.2 ? "rgba(34,197,94,0.3)" : "rgba(245,158,11,0.3)"}`,
             }}>{scoreData.verdict}</span>
-          </div>
-          <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          }
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {Object.entries(scoreData.by_score_bucket).map(([label, stats]: any) => (
               <div key={label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)", width: 180, flexShrink: 0 }}>{label}</span>
@@ -254,7 +251,7 @@ export default function ModeAnalytics() {
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
     </div>
   );

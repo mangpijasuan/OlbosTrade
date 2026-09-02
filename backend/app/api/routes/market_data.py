@@ -5,7 +5,9 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.broker.broker_factory import get_broker
+from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
 from app.core.config import settings
+from app.services import options_chain_cache
 
 # yfinance is used for all price display (ticker strip, snapshots).
 # IBKR market data requires a paid subscription — we use IBKR only for
@@ -87,9 +89,31 @@ async def get_snapshot(symbol: str):
         return {"symbol": symbol, "error": str(exc)}
 
 
+@router.get("/sector-rotation")
+async def get_sector_rotation():
+    """11 GICS sector ETFs ranked by trailing return (1D/1W/1M/3M), with a
+    rank-change indicator derived from the same bars fetch — see
+    sector_rotation_engine.py for the ranking design."""
+    from app.services import sector_rotation_engine
+    try:
+        return await sector_rotation_engine.get_sector_rotation()
+    except Exception as exc:
+        return {"error": str(exc), "sectors": [], "excluded": []}
+
+
 @router.get("/options-chain/{symbol}")
 async def get_options_chain(symbol: str, expiry: str = ""):
-    """Fetch live options chain from IBKR for the given symbol and expiry."""
+    """Fetch live options chain from IBKR for the given symbol and expiry.
+
+    Routed through the IBKR request coordinator at interactive (P1)
+    priority — this used to queue for minutes behind background scan
+    traffic on the shared IBKR connection since nothing prioritized it.
+    Also routed through a short-lived cache (options_chain_cache.py) so
+    duplicate/rapid requests for the same chain don't each cost a fresh
+    IBKR round-trip. The response's data_status (LIVE/DEGRADED/STALE)
+    tells the caller exactly how fresh what they got is — never silently
+    presented as live when it isn't.
+    """
     if not expiry:
         # Default to nearest monthly expiry (~30 DTE)
         from datetime import date, timedelta
@@ -99,7 +123,8 @@ async def get_options_chain(symbol: str, expiry: str = ""):
         while d.weekday() != 4:  # Friday
             d += timedelta(days=1)
         expiry = d.strftime("%Y-%m-%d")
-    try:
+
+    async def _serialize() -> dict:
         broker = get_broker()
         chain  = await broker.get_options_chain(symbol, expiry)
         return {
@@ -116,6 +141,9 @@ async def get_options_chain(symbol: str, expiry: str = ""):
                     "volume":        c.volume,
                     "open_interest": c.open_interest,
                     "delta":         c.greeks.delta if c.greeks else None,
+                    "gamma":         c.greeks.gamma if c.greeks else None,
+                    "theta":         c.greeks.theta if c.greeks else None,
+                    "vega":          c.greeks.vega if c.greeks else None,
                     "iv":            c.greeks.implied_vol if c.greeks else None,
                 }
                 for c in chain.calls
@@ -129,11 +157,25 @@ async def get_options_chain(symbol: str, expiry: str = ""):
                     "volume":        p.volume,
                     "open_interest": p.open_interest,
                     "delta":         p.greeks.delta if p.greeks else None,
+                    "gamma":         p.greeks.gamma if p.greeks else None,
+                    "theta":         p.greeks.theta if p.greeks else None,
+                    "vega":          p.greeks.vega if p.greeks else None,
                     "iv":            p.greeks.implied_vol if p.greeks else None,
                 }
                 for p in chain.puts
             ],
         }
+
+    async def _fetch() -> dict:
+        return await ibkr_coordinator.submit(
+            Priority.P1, _serialize,
+            key=f"chain:{symbol.upper()}:{expiry}",
+            timeout=120.0, req_type="OPTION_CHAIN", symbol=symbol,
+        )
+
+    try:
+        chain_dict, data_status = await options_chain_cache.get_chain(symbol, expiry, _fetch)
+        return {**chain_dict, "data_status": data_status}
     except Exception as exc:
         return {"symbol": symbol, "expiry": expiry, "error": str(exc)}
 

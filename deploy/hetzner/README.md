@@ -20,10 +20,9 @@ Internet
 OlbosTrade joins the `olbos_default` Docker network so Caddy can reach it.
 Its database and Redis are isolated on `olbostrade_internal` — separate from olbos.
 
-NOTE: the Postgres database itself keeps its original name/user/data volume
-(`olbosquantdb` / `olbosquant` / `olbosquant_pgdata`) — only the Docker
-container, network, and directory names were rebranded. See the comment at
-the top of `docker-compose.hetzner.yml` for why.
+NOTE: the Postgres database is `olbostrade`; the role stays `olbosquant`
+deliberately (see the Migration section below for why). Docker container,
+network, and directory names are fully rebranded.
 
 ---
 
@@ -50,11 +49,13 @@ nano backend/.env.prod
 Fill in these required values:
 | Variable | How to get it |
 |----------|--------------|
-| `OLBOSQUANT_DB_PASSWORD` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `OLBOSTRADE_DB_PASSWORD` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `OLBOS_API_KEY` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 
-`OLBOSQUANT_DB_PASSWORD` keeps its original name (matches the unchanged
-Postgres user/db — see the note above); it is NOT `OLBOSTRADE_DB_PASSWORD`.
+`OLBOSTRADE_DB_PASSWORD` is the database password variable referenced by
+`docker-compose.hetzner.yml` — it authenticates as the `olbosquant` role
+(kept deliberately; see "Migration" below) against the `olbostrade`
+database. The password value itself is unchanged from before the rename.
 
 Leave `DATABASE_URL` and `REDIS_URL` blank — docker-compose fills them in.
 
@@ -107,6 +108,17 @@ curl -s https://trading.yourdomain.com/api/guardrails/status
 
 Open **https://trading.yourdomain.com** in your browser.
 
+### 8. Set up automated backups
+
+`backup_db.sh` dumps the database daily but does nothing until its cron
+entry is actually installed — run this once:
+```bash
+bash deploy/hetzner/install_backup_cron.sh
+```
+Configure an off-site target too (`BACKUP_RCLONE_REMOTE` or
+`BACKUP_SCP_TARGET` in `backend/.env.prod`) — local-only backups don't
+survive a disk failure.
+
 ---
 
 ## Updating after a code change
@@ -139,8 +151,8 @@ docker exec -it olbostrade-backend bash
 # Run a migration manually
 docker exec olbostrade-backend python3 -m alembic upgrade head
 
-# Check database (user/db name unchanged — see note above)
-docker exec -it olbostrade-db psql -U olbosquant -d olbosquantdb
+# Check database (role stays olbosquant deliberately — see Migration section)
+docker exec -it olbostrade-db psql -U olbosquant -d olbostrade
 ```
 
 ---
@@ -197,6 +209,35 @@ async def t():
 asyncio.run(t())
 "
 ```
+
+## Migration
+
+The production database was renamed live via `ALTER DATABASE olbosquantdb
+RENAME TO olbostrade` (instant — no dump/restore needed, no data touched).
+
+The Postgres **role** deliberately stays `olbosquant`. Renaming a role
+requires connecting as a *different* superuser (Postgres refuses to let a
+session rename its own login role), which means creating a temporary
+superuser on production — real privilege escalation for a value that's
+never visible outside this repo's own config (not in the UI, not in any
+API response). Not worth it for a cosmetic-only rename. `docker-compose.hetzner.yml`
+reflects this: `POSTGRES_USER`/`DATABASE_URL` use `olbosquant`, `POSTGRES_DB`
+uses `olbostrade`.
+
+If a fresh deployment ever needs the role renamed too (no existing data at
+risk), it's the same trick as the database — just needs a second superuser
+to issue the command:
+
+```bash
+docker exec -it olbostrade-db psql -U olbosquant -d postgres \
+  -c "CREATE ROLE rename_helper WITH LOGIN SUPERUSER PASSWORD 'temp';"
+docker exec -it olbostrade-db psql -U olbosquant -d postgres \
+  -c "ALTER ROLE olbosquant RENAME TO olbostrade;"
+docker exec -it olbostrade-db psql -U olbostrade -d postgres \
+  -c "DROP ROLE rename_helper;"
+```
+Then update `DATABASE_URL`/`POSTGRES_USER`/the healthcheck in
+`docker-compose.hetzner.yml` to `olbostrade` and redeploy.
 
 ---
 

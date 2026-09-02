@@ -51,10 +51,11 @@ class TradeRecorder:
         signal_score:          float,
         iv_rank:               float,
         regime:                str,
-        trading_mode:          str,
+        approved_by:           str,
         dispatch_id:           str,
         net_fill_price:        Optional[float] = None,
         spread_width:          Optional[float] = None,
+        target_price:          Optional[float] = None,
         status:                str = "open",
     ) -> Optional[str]:
         """
@@ -84,6 +85,16 @@ class TradeRecorder:
             from app.models.trade import Trade
             from app.models.journal_entry import JournalEntry
             from app.services.strategy_config_service import strategy_config_service
+            from app.services.trading_mode import trading_mode_manager
+
+            # Read the live risk-style mode directly rather than threading it
+            # through every caller — trading_mode_manager is already treated
+            # as ambient global state elsewhere (main.py reads
+            # trading_mode_manager.config.risk_per_trade_pct the same way).
+            # This is what trading_mode_at_entry was always meant to hold
+            # (conservative|balanced|aggressive|scalper); approved_by is the
+            # separate concept of who/what triggered this specific fill.
+            risk_mode = trading_mode_manager.current.active_mode.value
 
             # ── Idempotency check ───────────────────────────────────────────
             async with AsyncSessionLocal() as session:
@@ -118,6 +129,10 @@ class TradeRecorder:
                         long_strike=Decimal(str(long_strike or 0)),
                         expiration=expiration,
                         credit_received=Decimal(str(round(entry_credit, 4))),
+                        target_price=(
+                            Decimal(str(round(target_price, 4)))
+                            if target_price else None
+                        ),
                         cost_to_close=None,
                         pnl=None,
                         pnl_pct=None,
@@ -127,7 +142,9 @@ class TradeRecorder:
                         exit_reason=None,
                         signal_score=Decimal(str(round(signal_score, 4))),
                         quantity=int(quantity or 1),
-                        trading_mode_at_entry=trading_mode or "balanced",
+                        trading_mode_at_entry=risk_mode,
+                        approved_by=approved_by or "unknown",
+                        regime=regime or None,
                         dispatch_id=dispatch_id,
                         strategy_snapshot_id=snapshot_id,
                         mfe_pnl=Decimal("0"),
@@ -151,10 +168,10 @@ class TradeRecorder:
 
             logger.info(
                 "Trade recorded (%s): %s %s %s strike=%.0f/%.0f "
-                "credit=%.2f mode=%s score=%.3f dispatch_id=%s trade_id=%s",
+                "credit=%.2f mode=%s approved_by=%s score=%.3f dispatch_id=%s trade_id=%s",
                 status, strategy, underlying, option_type,
                 short_strike, long_strike,
-                entry_credit, trading_mode, signal_score, dispatch_id, trade_id,
+                entry_credit, risk_mode, approved_by, signal_score, dispatch_id, trade_id,
             )
             return str(trade_id)
 
@@ -169,13 +186,20 @@ class TradeRecorder:
             return None
 
     async def confirm_fill(self, *, trade_id: str,
-                           net_fill_price: Optional[float] = None) -> bool:
+                           net_fill_price: Optional[float] = None,
+                           quantity: Optional[float] = None) -> bool:
         """
         Promote a ``pending`` trade to ``open`` once the broker confirms a fill.
 
         Called by the fill reconciler when a pending order's position appears at
         the broker (or an execution fill is found). Optionally corrects the
-        recorded entry credit to the real net fill price. Returns True on
+        recorded entry credit to the real net fill price, and — just as
+        important — the recorded quantity to what the broker actually holds.
+        Without this, a trade promoted from `pending` keeps whatever quantity
+        was planned at signal time forever, even when the real fill (or
+        residual shares from prior activity on the same ticker) came in
+        different — confirmed in production via a real MU/SNDK/MRVL quantity
+        drift (DB under-reporting broker holdings by 2-7x). Returns True on
         success, False if the trade is missing or not pending.
         """
         try:
@@ -193,8 +217,10 @@ class TradeRecorder:
                     trade.status = "open"
                     if net_fill_price is not None:
                         trade.credit_received = Decimal(str(round(net_fill_price, 4)))
-            logger.info("Pending trade %s confirmed filled → open (fill=%s)",
-                        trade_id, net_fill_price)
+                    if quantity is not None and quantity > 0:
+                        trade.quantity = int(round(quantity))
+            logger.info("Pending trade %s confirmed filled → open (fill=%s, qty=%s)",
+                        trade_id, net_fill_price, quantity)
             return True
         except Exception as exc:
             logger.warning("confirm_fill failed for %s: %s", trade_id, exc)

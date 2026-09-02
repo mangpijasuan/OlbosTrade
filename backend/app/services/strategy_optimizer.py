@@ -1,38 +1,36 @@
 """
 Walk-Forward Strategy Optimizer.
 
-Monthly re-optimization of strategy parameters using actual trade data
-from the journal and backtest history.
+Grid-searches exit-rule parameters (profit target %, stop-loss multiplier,
+DTE exit, min IV rank) for one of the 4 options strategies, scoring each
+candidate against a REAL walk-forward backtest (via Backtester.run()) over
+a training window, then validating the winner out-of-sample on a following
+window. Only accepted if validation confirms the improvement.
 
-Optimizes:
-  - Profit target % (when to close winners: 25%–75%)
-  - Stop loss multiplier (2x–4x credit)
-  - DTE exit threshold (14–25 days)
-  - Min IV rank for entry (25–50)
-  - Position size scaling
-
-Uses walk-forward validation — optimizes on rolling 6-month window,
-validates on following 1-month window. Never overfits to current conditions.
-
-Integration:
-    # Run monthly (wired into APScheduler in paper_trader)
-    result = await optimizer.optimize("bull_put_spread")
-    # Parameters auto-applied to strategy_engine if improvement is validated
+No production caller yet (backend-only for now — see the Track 2D plan).
+No regime-stratified scoring in this version: Backtester/BacktestTrade
+carry no regime label, so this uses the same pooled-Sharpe path
+calculate_all_metrics() already computes — a deliberate v1 simplification,
+not a silent regression. Regime-aware backtesting is separate, future scope.
 """
 
 from __future__ import annotations
 
-import logging
+import asyncio
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from itertools import product
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
+from app.services.strategy_engine import StrategyExitParams
 from app.utils.logger import get_logger
 from app.utils.metrics import calculate_all_metrics
+
+if TYPE_CHECKING:
+    from app.services.backtester import Backtester, BacktestResult
 
 logger = get_logger(__name__)
 
@@ -79,46 +77,32 @@ class OptimizationResult:
         return self.accepted and self.improvement_pct > 10.0
 
 
-@dataclass
-class TradeRecord:
-    """Minimal trade record for optimizer input."""
-    strategy:     str
-    entry_date:   date
-    exit_date:    Optional[date]
-    entry_credit: float
-    exit_cost:    float
-    pnl:          float
-    iv_rank_entry: float
-    dte_at_entry:  int
-    spread_width:  float
-    credit_to_width: float
-    hold_days:    int
-    exit_reason:  str
-    # W4 FIX: regime label for stratified Sharpe optimization.
-    # Populated from RegimeClassifier at trade entry time.
-    # Valid values: "LOW_VOL_TRENDING" | "NORMAL_MEAN_REVERT" |
-    #               "HIGH_VOL_TRENDING" | "CRISIS" | "unknown"
-    regime: str = "unknown"
-
-
 class StrategyOptimizer:
     """
     Walk-forward parameter optimizer.
 
-    Grid searches over tunable parameters using historical trade data.
-    Validates on out-of-sample period before accepting new parameters.
-
-    The optimizer does NOT search over IV rank thresholds aggressively
-    (to avoid regime-specific overfitting) — it focuses on exit rules
-    which are more stable across regimes.
+    Grid searches over tunable exit-rule parameters, scoring each candidate
+    against a real Backtester.run() over a training window, then validating
+    the winner out-of-sample. Validates on out-of-sample period before
+    accepting new parameters.
     """
 
     # ── Parameter search grid ─────────────────────────────────────────────────
+    # Full grid (opt-in via optimize(full_grid=True) — 320 combinations,
+    # each a real backtest; wall-clock cost not yet measured, see plan).
     PARAM_GRID = {
         "profit_target_pct":    [0.35, 0.40, 0.50, 0.60, 0.65],
         "stop_loss_multiplier": [1.5, 2.0, 2.5, 3.0],
         "dte_exit":             [14, 18, 21, 25],
         "min_iv_rank":          [25.0, 30.0, 35.0, 40.0],
+    }
+    # Default grid — 18 combinations. min_iv_rank dropped: not yet wired
+    # into any strategy's generate_signal(), so varying it never changes
+    # an entry decision (a dead axis) — see strategy_engine.StrategyExitParams.
+    REDUCED_PARAM_GRID = {
+        "profit_target_pct":    [0.40, 0.50, 0.60],
+        "stop_loss_multiplier": [1.5, 2.0, 3.0],
+        "dte_exit":             [14, 21],
     }
 
     # ── Validation gates ──────────────────────────────────────────────────────
@@ -127,7 +111,12 @@ class StrategyOptimizer:
     IMPROVEMENT_THRESHOLD  = 0.10    # Must improve by >10% to accept
     MAX_SHARPE_DEGRADATION = 0.15    # Allow at most 15% worse on validation
 
-    def __init__(self, current_params: Optional[dict[str, StrategyParams]] = None) -> None:
+    def __init__(
+        self,
+        backtester: "Backtester",
+        current_params: Optional[dict[str, StrategyParams]] = None,
+    ) -> None:
+        self.backtester = backtester
         self.params: dict[str, StrategyParams] = current_params or {}
         self._ensure_defaults()
 
@@ -141,105 +130,148 @@ class StrategyOptimizer:
         """Get current parameters for a strategy."""
         return self.params.get(strategy_name, StrategyParams(strategy_name=strategy_name))
 
+    async def _fetch_window(self, window_start: str, window_end: str) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """
+        Fetch SPY OHLCV (with 60-day warmup buffer, matching
+        Backtester.run()'s own warmup convention) and VIX once for a date
+        window, for reuse across every grid-point backtest over that same
+        window — avoids N redundant fetches for what is otherwise the
+        identical network call repeated per candidate.
+        """
+        warmup_start = (pd.Timestamp(window_start) - pd.Timedelta(days=60)).strftime("%Y-%m-%d")
+        spy_df = await self.backtester.fetcher.fetch_ohlcv("SPY", warmup_start, window_end)
+
+        vix_df: Optional[pd.DataFrame] = None
+        try:
+            import yfinance as _yf
+            loop = asyncio.get_running_loop()
+            _vix_raw = await loop.run_in_executor(
+                None,
+                lambda: _yf.Ticker("^VIX").history(start=warmup_start, end=window_end, auto_adjust=True),
+            )
+            if not _vix_raw.empty:
+                _vix_raw.index = pd.to_datetime(_vix_raw.index).tz_localize(None)
+                vix_df = _vix_raw
+        except Exception as exc:
+            logger.warning("Optimizer: failed to pre-fetch VIX (%s) — falling back to RV proxy", exc)
+
+        return spy_df, vix_df
+
+    async def _run_and_score(
+        self,
+        strategy_name: str,
+        params: StrategyParams,
+        start: str,
+        end: str,
+        spy_df: pd.DataFrame,
+        vix_df: Optional[pd.DataFrame],
+    ) -> tuple["BacktestResult", float]:
+        exit_params = StrategyExitParams(
+            profit_target_pct=params.profit_target_pct,
+            stop_loss_multiplier=params.stop_loss_multiplier,
+            dte_exit=params.dte_exit,
+            min_iv_rank=params.min_iv_rank,
+        )
+        result = await self.backtester.run(
+            strategy_name, start, end,
+            strategy_params=exit_params, spy_df=spy_df, vix_df=vix_df,
+        )
+        return result, self._score_params(result)
+
     async def optimize(
         self,
         strategy_name: str,
-        trades: list[TradeRecord],
+        end_date: Optional[str] = None,
         train_months: int = 6,
         validate_months: int = 1,
+        full_grid: bool = False,
     ) -> OptimizationResult:
         """
-        Walk-forward optimization for a single strategy.
+        Walk-forward optimization for a single strategy, scored against
+        real Backtester.run() calls (not a post-hoc heuristic).
 
         Algorithm:
-          1. Split trades: train on last train_months, validate on last validate_months
-          2. Grid search over parameter combinations on training set
-          3. Select parameters with best Sharpe on training set
-          4. Validate on out-of-sample validation set
-          5. Accept only if validation confirms improvement
+          1. Compute train/validate date windows (calendar-cutoff, same
+             arithmetic as before)
+          2. Grid search: real backtest per candidate over the train window
+          3. Select the candidate with the best Sharpe on the train window
+          4. Validate the winner (and the current baseline) on the
+             out-of-sample validate window
+          5. Accept only if validation confirms the improvement
 
         Args:
             strategy_name:    Strategy to optimize
-            trades:           Historical trade records (from DB or backtest)
-            train_months:     Months of history for optimization
-            validate_months:  Out-of-sample validation window
+            end_date:         "YYYY-MM-DD", defaults to today
+            train_months:     Months of history for the training window
+            validate_months:  Out-of-sample validation window, in months
+            full_grid:        Use the full 320-combo PARAM_GRID instead of
+                              the smaller REDUCED_PARAM_GRID default — real
+                              backtests, real wall-clock cost, not yet
+                              measured for the full grid.
 
         Returns:
             OptimizationResult — check .accepted and .is_meaningful_improvement
         """
         current_params = self.get_params(strategy_name)
-        strat_trades = [t for t in trades if t.strategy == strategy_name]
+
+        today = pd.Timestamp(end_date) if end_date else pd.Timestamp(date.today())
+        validate_end   = today
+        validate_start = validate_end - pd.Timedelta(days=validate_months * 30)
+        train_end      = validate_start
+        train_start    = train_end - pd.Timedelta(days=train_months * 30)
+
+        train_start_s, train_end_s = train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")
+        validate_start_s, validate_end_s = validate_start.strftime("%Y-%m-%d"), validate_end.strftime("%Y-%m-%d")
 
         logger.info(
-            "Optimizer starting: %s | %d trades total",
-            strategy_name, len(strat_trades),
+            "Optimizer starting: %s | train %s→%s | validate %s→%s",
+            strategy_name, train_start_s, train_end_s, validate_start_s, validate_end_s,
         )
 
-        # ── Gate: minimum trade count ─────────────────────────────────────────
-        if len(strat_trades) < self.MIN_TRADES_TO_OPTIMIZE:
+        train_spy_df, train_vix_df = await self._fetch_window(train_start_s, train_end_s)
+
+        # ── Baseline: score current params on the training window ─────────────
+        baseline_result, baseline_sharpe = await self._run_and_score(
+            strategy_name, current_params, train_start_s, train_end_s, train_spy_df, train_vix_df,
+        )
+        n_trades_train = len(baseline_result.trades)
+        logger.info(
+            "Baseline Sharpe on training window: %.3f (%d trades)",
+            baseline_sharpe, n_trades_train,
+        )
+
+        if n_trades_train < self.MIN_TRADES_TO_OPTIMIZE:
             reason = (
-                f"Only {len(strat_trades)} trades — need {self.MIN_TRADES_TO_OPTIMIZE} minimum. "
-                f"Continue trading to build history."
+                f"Only {n_trades_train} trades in training window "
+                f"(need {self.MIN_TRADES_TO_OPTIMIZE}) — check empirically whether "
+                f"this threshold suits a single-strategy backtest window"
             )
-            logger.info("Optimizer skipped: %s", reason)
             return OptimizationResult(
                 strategy_name=strategy_name,
                 original_params=current_params,
                 optimized_params=current_params,
-                optimization_sharpe=0.0,
+                optimization_sharpe=baseline_sharpe,
                 validation_sharpe=0.0,
                 improvement_pct=0.0,
                 accepted=False,
-                n_trades_train=0,
+                n_trades_train=n_trades_train,
                 n_trades_validate=0,
                 grid_points_tested=0,
                 rejection_reason=reason,
             )
 
-        # ── Split into train / validate ───────────────────────────────────────
-        today = date.today()
-        validate_cutoff = today - timedelta(days=validate_months * 30)
-        train_cutoff    = validate_cutoff - timedelta(days=train_months * 30)
-
-        train_trades    = [t for t in strat_trades if train_cutoff <= t.entry_date < validate_cutoff]
-        validate_trades = [t for t in strat_trades if t.entry_date >= validate_cutoff]
-
-        if len(train_trades) < self.MIN_TRADES_TO_OPTIMIZE:
-            reason = (
-                f"Only {len(train_trades)} trades in training window "
-                f"(need {self.MIN_TRADES_TO_OPTIMIZE})"
-            )
-            return OptimizationResult(
-                strategy_name=strategy_name,
-                original_params=current_params,
-                optimized_params=current_params,
-                optimization_sharpe=0.0,
-                validation_sharpe=0.0,
-                improvement_pct=0.0,
-                accepted=False,
-                n_trades_train=len(train_trades),
-                n_trades_validate=len(validate_trades),
-                grid_points_tested=0,
-                rejection_reason=reason,
-            )
-
-        # ── Baseline: score current params on training set ────────────────────
-        baseline_sharpe = self._score_params(current_params, train_trades)
-        logger.info(
-            "Baseline Sharpe on training set: %.3f (%d trades)",
-            baseline_sharpe, len(train_trades),
-        )
-
-        # ── Grid search ───────────────────────────────────────────────────────
+        # ── Grid search — real backtest per candidate, train window ────────────
         best_params   = current_params
         best_sharpe   = baseline_sharpe
         grid_points   = 0
 
+        grid = self.PARAM_GRID if full_grid else self.REDUCED_PARAM_GRID
+        iv_rank_values = grid.get("min_iv_rank", [current_params.min_iv_rank])
         param_combinations = list(product(
-            self.PARAM_GRID["profit_target_pct"],
-            self.PARAM_GRID["stop_loss_multiplier"],
-            self.PARAM_GRID["dte_exit"],
-            self.PARAM_GRID["min_iv_rank"],
+            grid["profit_target_pct"],
+            grid["stop_loss_multiplier"],
+            grid["dte_exit"],
+            iv_rank_values,
         ))
 
         for pt, sl, dte, iv_r in param_combinations:
@@ -252,7 +284,9 @@ class StrategyOptimizer:
                 min_credit_to_width=current_params.min_credit_to_width,
                 size_pct_of_portfolio=current_params.size_pct_of_portfolio,
             )
-            sharpe = self._score_params(candidate, train_trades)
+            _, sharpe = await self._run_and_score(
+                strategy_name, candidate, train_start_s, train_end_s, train_spy_df, train_vix_df,
+            )
             grid_points += 1
 
             if sharpe > best_sharpe:
@@ -270,12 +304,22 @@ class StrategyOptimizer:
             grid_points, best_sharpe, baseline_sharpe, improvement_pct,
         )
 
-        # ── Validate on out-of-sample ─────────────────────────────────────────
-        if len(validate_trades) < self.MIN_VALIDATION_TRADES:
+        # ── Validate on out-of-sample window ────────────────────────────────────
+        validate_spy_df, validate_vix_df = await self._fetch_window(validate_start_s, validate_end_s)
+
+        validate_new_result, validation_sharpe_new = await self._run_and_score(
+            strategy_name, best_params, validate_start_s, validate_end_s, validate_spy_df, validate_vix_df,
+        )
+        _, validation_sharpe_baseline = await self._run_and_score(
+            strategy_name, current_params, validate_start_s, validate_end_s, validate_spy_df, validate_vix_df,
+        )
+        n_trades_validate = len(validate_new_result.trades)
+
+        if n_trades_validate < self.MIN_VALIDATION_TRADES:
             reason = (
-                f"Only {len(validate_trades)} validation trades "
+                f"Only {n_trades_validate} validation trades "
                 f"(need {self.MIN_VALIDATION_TRADES}) — "
-                f"cannot validate out-of-sample. Waiting for more trades."
+                f"cannot validate out-of-sample. Waiting for more history."
             )
             return OptimizationResult(
                 strategy_name=strategy_name,
@@ -285,14 +329,11 @@ class StrategyOptimizer:
                 validation_sharpe=0.0,
                 improvement_pct=improvement_pct,
                 accepted=False,
-                n_trades_train=len(train_trades),
-                n_trades_validate=len(validate_trades),
+                n_trades_train=n_trades_train,
+                n_trades_validate=n_trades_validate,
                 grid_points_tested=grid_points,
                 rejection_reason=reason,
             )
-
-        validation_sharpe_new      = self._score_params(best_params, validate_trades)
-        validation_sharpe_baseline = self._score_params(current_params, validate_trades)
 
         # Accept if: validation improves OR doesn't degrade by more than threshold
         sharpe_change = validation_sharpe_new - validation_sharpe_baseline
@@ -345,146 +386,37 @@ class StrategyOptimizer:
             validation_sharpe=validation_sharpe_new,
             improvement_pct=improvement_pct,
             accepted=accepted,
-            n_trades_train=len(train_trades),
-            n_trades_validate=len(validate_trades),
+            n_trades_train=n_trades_train,
+            n_trades_validate=n_trades_validate,
             grid_points_tested=grid_points,
             rejection_reason=rejection_reason,
         )
 
-    def _score_params(
-        self,
-        params: StrategyParams,
-        trades: list[TradeRecord],
-    ) -> float:
+    def _score_params(self, backtest_result: "BacktestResult") -> float:
         """
-        Simulate P&L for a set of parameters on a set of historical trades.
-        Returns Sharpe ratio. Used for both training and validation scoring.
-
-        This is not a full backtest — it's a parameter sensitivity test
-        on already-entered trades. We ask: given these trades were entered,
-        what would the P&L be if we had used these exit rules?
+        Sharpe ratio of a real backtest's trades. No regime stratification
+        (BacktestTrade carries no regime label) — pooled Sharpe only, same
+        formula this file's old fallback path already used when regime data
+        was unavailable.
         """
-        simulated_pnls: list[float] = []
-        hold_days_list: list[int] = []
+        pnl_series = [t.pnl for t in backtest_result.trades]
+        hold_days  = [t.hold_days for t in backtest_result.trades]
 
-        for trade in trades:
-            # Skip trades that didn't meet the IV rank filter for this param set
-            if trade.iv_rank_entry < params.min_iv_rank:
-                continue
-            if trade.credit_to_width < params.min_credit_to_width:
-                continue
+        if len(pnl_series) < 3:
+            return -999.0  # Penalize parameter sets that produce too few trades to score
 
-            # Simulate exit under these parameters
-            pnl, hold_days = self._simulate_exit(trade, params)
-            simulated_pnls.append(pnl)
-            hold_days_list.append(hold_days)
-
-        if len(simulated_pnls) < 3:
-            return -999.0  # Penalize parameter sets that filter out all trades
-
-        # W4 FIX: Regime-stratified Sharpe.
-        #
-        # The old approach pooled all trades across all regimes.  A parameter
-        # set that happens to overfit to a CRISIS regime (lots of big losers
-        # that trigger stops) looks great pooled but collapses in NORMAL regime.
-        #
-        # New approach:
-        #   1. Compute Sharpe separately for each regime present in the data.
-        #   2. Return the equally-weighted average across regimes.
-        #   3. If no regime data, fall back to the pooled Sharpe (backwards compat).
-        #
-        # Equal-weighting means parameters MUST work across all regime types,
-        # not just the one most represented in the recent window.
-        regime_pnls: dict[str, list[float]] = {}
-        regime_hold: dict[str, list[int]] = {}
-        for trade, pnl, hold in zip(trades, simulated_pnls, hold_days_list):
-            r = getattr(trade, "regime", "unknown")
-            regime_pnls.setdefault(r, []).append(pnl)
-            regime_hold.setdefault(r, []).append(hold)
-
-        known_regimes = [r for r in regime_pnls if r != "unknown"]
-        if len(known_regimes) >= 2:
-            # Enough labelled regimes — use stratified Sharpe
-            sharpes: list[float] = []
-            for r in known_regimes:
-                if len(regime_pnls[r]) < 3:
-                    continue   # too few trades in this regime to be meaningful
-                m = calculate_all_metrics(
-                    pnl_series=regime_pnls[r],
-                    hold_days=regime_hold[r],
-                    starting_capital=25000.0,
-                    total_commissions=len(regime_pnls[r]) * 0.65 * 4,
-                )
-                sharpes.append(m.sharpe_ratio)
-            if sharpes:
-                return float(np.mean(sharpes))   # equal-weight across regimes
-
-        # Fallback: pooled Sharpe (backwards compatible, or when regime unknown)
         metrics = calculate_all_metrics(
-            pnl_series=simulated_pnls,
-            hold_days=hold_days_list,
+            pnl_series=pnl_series,
+            hold_days=hold_days,
             starting_capital=25000.0,
-            total_commissions=len(simulated_pnls) * 0.65 * 4,  # 4 legs avg
+            total_commissions=len(pnl_series) * 0.65 * 4,  # 4 legs avg
         )
         return metrics.sharpe_ratio
-
-    def _simulate_exit(
-        self, trade: TradeRecord, params: StrategyParams
-    ) -> tuple[float, int]:
-        """
-        Given a historical trade and a parameter set, simulate what the
-        P&L would have been under these exit rules.
-
-        Returns (simulated_pnl, hold_days).
-        """
-        max_profit = trade.entry_credit * 100  # per contract
-        max_loss   = trade.spread_width * 100 - max_profit
-
-        # Profit target exit
-        profit_target_pnl = max_profit * params.profit_target_pct
-        # Stop loss exit
-        stop_loss_pnl     = -(trade.entry_credit * params.stop_loss_multiplier * 100)
-
-        # Actual exit P&L
-        actual_pnl = trade.pnl
-
-        # Apply profit target if original trade hit profit target earlier
-        if actual_pnl >= profit_target_pnl:
-            # Original trade was profitable — simulated target might be different
-            if actual_pnl > max_profit * params.profit_target_pct:
-                # We would have closed earlier at our target
-                pnl = profit_target_pnl
-                hold_frac = params.profit_target_pct / max(actual_pnl / max_profit, 0.01)
-                hold_days = max(int(trade.hold_days * hold_frac), 1)
-            else:
-                pnl = actual_pnl
-                hold_days = trade.hold_days
-        elif actual_pnl < stop_loss_pnl:
-            # Would have been stopped out
-            pnl = stop_loss_pnl
-            # Approximate earlier stop vs actual
-            hold_days = max(int(trade.hold_days * 0.5), 1)
-        else:
-            pnl = actual_pnl
-            hold_days = trade.hold_days
-
-        # DTE exit — if we would have exited earlier at DTE threshold
-        if trade.dte_at_entry > params.dte_exit:
-            days_to_dte_exit = trade.dte_at_entry - params.dte_exit
-            if trade.hold_days >= days_to_dte_exit:
-                # Original trade was still open at our DTE exit
-                # Approximate value at DTE exit (partial decay)
-                decay_pct = days_to_dte_exit / max(trade.hold_days, 1)
-                pnl = actual_pnl * decay_pct if actual_pnl > 0 else actual_pnl
-                hold_days = days_to_dte_exit
-
-        return pnl, max(hold_days, 1)
 
     def kelly_position_size(
         self,
         strategy_name: str,
-        trades: list[TradeRecord],
-        portfolio_value: float,
+        pnls: list[float],
         fractional: float = 0.25,
     ) -> float:
         """
@@ -497,23 +429,22 @@ class StrategyOptimizer:
         Capped at 3% regardless of Kelly output (hard safety limit).
 
         Args:
-            strategy_name:  Strategy to size
-            trades:         Recent trade history (last 30–50 trades)
-            portfolio_value: Current account value
+            strategy_name:  Strategy being sized (logging only — pnls is
+                            already the caller's own filtered trade history)
+            pnls:           Recent per-trade P&L, e.g. from closed Trade
+                            rows or a BacktestResult (last 30-50 trades)
             fractional:     Kelly fraction (0.25 = quarter Kelly)
         """
-        strat_trades = [t for t in trades if t.strategy == strategy_name]
-
-        if len(strat_trades) < 20:
+        if len(pnls) < 20:
             logger.info(
                 "Kelly: not enough trades for %s (%d < 20) — using default 2%%",
-                strategy_name, len(strat_trades),
+                strategy_name, len(pnls),
             )
             return 0.02  # Default from Master_Project_File
 
-        pnls    = np.array([t.pnl for t in strat_trades])
-        wins    = pnls[pnls > 0]
-        losses  = pnls[pnls <= 0]
+        pnl_arr = np.array(pnls)
+        wins    = pnl_arr[pnl_arr > 0]
+        losses  = pnl_arr[pnl_arr <= 0]
 
         if len(wins) == 0 or len(losses) == 0:
             return 0.02

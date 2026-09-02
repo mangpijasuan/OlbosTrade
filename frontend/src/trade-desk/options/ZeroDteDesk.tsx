@@ -4,6 +4,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import { StatTile } from "../../components/ui";
 
 export default function ZeroDteDesk({ symbol }: { symbol: string }) {
   const [rows, setRows] = useState<any[]>([]);
@@ -30,45 +31,23 @@ export default function ZeroDteDesk({ symbol }: { symbol: string }) {
 
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, overflow: "auto", height: "100%" }}>
-      <div>
-        <h2 style={{ margin: 0, fontFamily: "var(--mono)", fontSize: 14, letterSpacing: "0.08em", color: "var(--ink)" }}>
-          0DTE DECISION DESK
-        </h2>
-        <p style={{ margin: "6px 0 0", fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)", lineHeight: 1.5 }}>
-          Read-only evidence for {symbol}. Autopilot for 0DTE remains disabled.
-          No order submission from this panel.
-        </p>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-          gap: 8,
-        }}
-      >
-        {[
-          { label: "Autopilot", value: "DISABLED", tone: "var(--red)" },
-          { label: "Mode", value: "Read-only / Copilot", tone: "var(--cyan)" },
-          { label: "Underlying", value: symbol, tone: "var(--ink)" },
-          { label: "Data", value: "Options flow tape", tone: "var(--ink-dim)" },
-        ].map((c) => (
-          <div key={c.label} style={{ border: "1px solid var(--line-dim)", padding: "10px 12px", background: "var(--bg-3)" }}>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
-              {c.label.toUpperCase()}
-            </div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: c.tone, marginTop: 4 }}>{c.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
-          Recent flow (not institutional intent)
-        </span>
-        <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={load} disabled={loading}>
+      <div className="instrument-card page-header">
+        <div>
+          <div className="page-header__title">0DTE Decision Desk</div>
+          <p className="page-header__sub" style={{ color: "var(--amber)" }}>
+            Read-only evidence for {symbol}. Autopilot for 0DTE remains disabled — no order submission from this panel.
+          </p>
+        </div>
+        <button type="button" className="btn-ghost" onClick={load} disabled={loading}>
           {loading ? "…" : "Refresh"}
         </button>
+      </div>
+
+      <div className="instrument-stat-strip" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <StatTile variant="divider" size="sm" label="Autopilot" value="Disabled" tone="var(--red)" />
+        <StatTile variant="divider" size="sm" label="Mode" value="Read-only" tone="var(--accent)" />
+        <StatTile variant="divider" size="sm" label="Underlying" value={symbol} />
+        <StatTile variant="divider" size="sm" label="Data" value="Flow tape" />
       </div>
 
       {error && (
@@ -76,36 +55,35 @@ export default function ZeroDteDesk({ symbol }: { symbol: string }) {
       )}
 
       {rows.length === 0 && !loading ? (
-        <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
-          No flow rows for {symbol}. Enable options flow data or pick another underlying.
+        <div className="instrument-card instrument-card--flat empty-chassis empty-chassis--compact">
+          <p className="empty-chassis__title">No flow rows for {symbol}</p>
+          <p className="empty-chassis__hint">Enable options flow data or pick another underlying.</p>
         </div>
       ) : (
-        <div style={{ border: "1px solid var(--line-dim)", overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--mono)", fontSize: 11 }}>
+        <div className="instrument-card" style={{ overflow: "auto" }}>
+          <table className="t-table">
             <thead>
-              <tr style={{ background: "var(--bg-3)", color: "var(--ink-dim)", textAlign: "left" }}>
+              <tr>
                 {["Contract", "Side", "Premium", "Vol", "OI", "DTE"].map((h) => (
-                  <th key={h} style={{ padding: "8px 10px", borderBottom: "1px solid var(--line-dim)", fontWeight: 500 }}>
-                    {h}
-                  </th>
+                  <th key={h}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.slice(0, 25).map((r, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid var(--line-dim)" }}>
-                  <td style={{ padding: "6px 10px", color: "var(--ink)" }}>
+                <tr key={i}>
+                  <td className="mono" style={{ color: "var(--ink)" }}>
                     {r.contract || r.symbol || r.ticker || "—"}
                   </td>
-                  <td style={{ padding: "6px 10px", color: "var(--ink-dim)" }}>
+                  <td className="mono" style={{ color: "var(--ink-dim)" }}>
                     {r.side || r.option_type || r.call_put || "—"}
                   </td>
-                  <td style={{ padding: "6px 10px", color: "var(--ink)" }}>
+                  <td className="tnum" style={{ color: "var(--ink)" }}>
                     {r.premium != null ? `$${Number(r.premium).toFixed(0)}` : "—"}
                   </td>
-                  <td style={{ padding: "6px 10px", color: "var(--ink-dim)" }}>{r.volume ?? "—"}</td>
-                  <td style={{ padding: "6px 10px", color: "var(--ink-dim)" }}>{r.open_interest ?? r.oi ?? "—"}</td>
-                  <td style={{ padding: "6px 10px", color: "var(--cyan)" }}>{r.dte ?? "—"}</td>
+                  <td className="tnum" style={{ color: "var(--ink-dim)" }}>{r.volume ?? "—"}</td>
+                  <td className="tnum" style={{ color: "var(--ink-dim)" }}>{r.open_interest ?? r.oi ?? "—"}</td>
+                  <td className="tnum" style={{ color: "var(--accent)" }}>{r.dte ?? "—"}</td>
                 </tr>
               ))}
             </tbody>

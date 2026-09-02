@@ -6,6 +6,8 @@ from types import SimpleNamespace as NS
 
 from app.services.portfolio_engine import (
     compute_portfolio_risk,
+    equity_stop_distance,
+    position_risk_basis,
     position_risk_dollars,
     sector_for,
 )
@@ -82,3 +84,99 @@ def test_position_risk_dollars_equity():
     t = NS(quantity=10, spread_type="equity_long", credit_received=150.0,
            short_strike=0, long_strike=0, strategy="equity")
     assert position_risk_dollars(t) == 1500.0
+
+
+# ── Equity risk-at-stake ────────────────────────────────────────────────
+# Until 2026-08-29 every equity position reported full notional as its risk,
+# and heat plus both concentration checks consumed that as if it were
+# risk-at-stake. These pin the corrected read AND the placeholder detection
+# that keeps the correction from swinging the error the other way.
+
+def _eq(entry, stop, qty=10, direction="equity_long"):
+    """Equity Trade row as the entry path writes it: credit_received and
+    short_strike both carry entry_price, long_strike carries stop_price."""
+    return NS(quantity=qty, spread_type=direction, credit_received=entry,
+              short_strike=entry, long_strike=stop, strategy="equity")
+
+
+def test_equity_risk_uses_stop_distance_not_notional():
+    # entry 100, stop 92, 10 shares -> 8 x 10 = 80 at risk, not 1000 notional.
+    t = _eq(entry=100.0, stop=92.0, qty=10)
+    assert equity_stop_distance(t) == 8.0
+    assert position_risk_dollars(t) == 80.0
+    assert position_risk_basis(t) == "stop_distance"
+
+
+def test_equity_short_stop_sits_above_entry():
+    t = _eq(entry=100.0, stop=108.0, qty=5, direction="equity_short")
+    assert position_risk_dollars(t) == 40.0
+    assert position_risk_basis(t) == "stop_distance"
+
+
+def test_placeholder_stop_equal_to_entry_falls_back_to_notional():
+    """The dangerous case. Rows adopted by the reconciler write the live
+    avg_cost into all three price fields, so entry == stop. Read literally
+    that reports a position risking nothing. Confirmed on production:
+    LITE entry == stop == 887.22 across 68 shares, which would have measured
+    as $0.20 of risk against $60,331 of notional."""
+    t = _eq(entry=887.22, stop=887.22, qty=68)
+    assert equity_stop_distance(t) is None
+    assert position_risk_dollars(t) == round(887.22 * 68, 2)
+    assert position_risk_basis(t) == "notional_no_stop"
+
+
+def test_stop_within_a_tenth_of_a_percent_is_not_a_stop():
+    # Decimal/float noise around a placeholder must not read as a real stop.
+    t = _eq(entry=126.95, stop=126.9999, qty=156)
+    assert equity_stop_distance(t) is None
+    assert position_risk_basis(t) == "notional_no_stop"
+
+
+def test_stop_on_the_wrong_side_is_rejected():
+    # A "long" whose stop sits above entry means the row is not shaped the way
+    # this read assumes — fall back rather than guess at it.
+    assert equity_stop_distance(_eq(entry=100.0, stop=115.0)) is None
+    assert equity_stop_distance(
+        _eq(entry=100.0, stop=85.0, direction="equity_short")) is None
+
+
+def test_missing_or_zero_stop_falls_back_to_notional():
+    assert equity_stop_distance(_eq(entry=100.0, stop=0)) is None
+    assert equity_stop_distance(_eq(entry=100.0, stop=None)) is None
+    assert position_risk_dollars(_eq(entry=100.0, stop=0, qty=3)) == 300.0
+
+
+def test_options_risk_is_unchanged_and_reports_defined_max_loss():
+    t = NS(quantity=2, spread_type="put", credit_received=1.50,
+           short_strike=450, long_strike=445, strategy="bull_put_spread")
+    assert position_risk_dollars(t) == 700.0          # regression pin
+    assert position_risk_basis(t) == "defined_max_loss"
+    assert equity_stop_distance(t) is None            # not an equity row
+
+
+def test_heat_flags_when_any_position_lacks_a_stop():
+    r = compute_portfolio_risk(
+        [{"underlying": "AAA", "risk_dollars": 80, "risk_basis": "stop_distance"},
+         {"underlying": "BBB", "risk_dollars": 900, "risk_basis": "notional_no_stop"}],
+        10_000.0,
+    )
+    assert r["heat_overstated"] is True
+    assert r["unstopped_position_count"] == 1
+    assert r["risk_basis_counts"] == {"stop_distance": 1, "notional_no_stop": 1}
+
+
+def test_heat_not_flagged_when_every_basis_is_trustworthy():
+    r = compute_portfolio_risk(
+        [{"underlying": "AAA", "risk_dollars": 80, "risk_basis": "stop_distance"},
+         {"underlying": "BBB", "risk_dollars": 700, "risk_basis": "defined_max_loss"}],
+        10_000.0,
+    )
+    assert r["heat_overstated"] is False
+    assert r["unstopped_position_count"] == 0
+
+
+def test_risk_basis_absent_is_not_reported_as_unstopped():
+    # Callers predating risk_basis must not start flagging overstatement.
+    r = compute_portfolio_risk([{"underlying": "AAA", "risk_dollars": 80}], 10_000.0)
+    assert r["heat_overstated"] is False
+    assert r["risk_basis_counts"] == {}

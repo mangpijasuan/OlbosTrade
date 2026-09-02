@@ -7,6 +7,13 @@ import TerminalLayout from "../TerminalLayout";
 vi.mock("../../api/client", () => ({
   api: {
     getExecutionMode: vi.fn().mockResolvedValue({ mode: "manual" }),
+    setExecutionMode: vi.fn().mockResolvedValue({ mode: "manual" }),
+    getCurrentMode: vi.fn().mockResolvedValue({ mode: "balanced" }),
+    getGuardrailStatus: vi.fn().mockResolvedValue({
+      trading_allowed: true,
+      paper_mode: true,
+      position_rotation_on_max: false,
+    }),
     getTradeDeskKillSwitch: vi.fn().mockResolvedValue({ engaged: false }),
     getKillSwitchStatus: vi.fn().mockResolvedValue({ engaged: false }),
     setTradeDeskKillSwitch: vi.fn().mockResolvedValue({ engaged: true }),
@@ -133,5 +140,103 @@ describe("TerminalLayout ticker strip", () => {
     expect(onNav).not.toHaveBeenCalledWith("risk");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText(/engage kill switch\?/i)).toBeInTheDocument();
+  });
+
+  // ── Execution-mode toggle: a safety control must never show an unconfirmed
+  // state ────────────────────────────────────────────────────────────────────
+  // Found in production 2026-08-27: the route is api-key gated and the browser
+  // holds no key, so every mode change returned 403. The control updated
+  // optimistically and then silently reverted, so clicking MANUAL made the
+  // toggle visibly flip to MANUAL and snap back to AUTOPILOT — an operator
+  // could reasonably read that as "trading is paused" while autopilot kept
+  // running. The error text existed but was a 9px right-aligned span.
+
+  const renderShell = async () => {
+    render(
+      <TerminalLayout activePage="dashboard" onNav={() => {}}>
+        <div>page content</div>
+      </TerminalLayout>
+    );
+    await waitFor(() => expect(screen.getByText("page content")).toBeInTheDocument());
+  };
+
+  const pressed = (name: RegExp) =>
+    screen.getByRole("button", { name }).getAttribute("aria-pressed");
+
+  it("does NOT move the toggle when the server refuses the change (403)", async () => {
+    const { api } = await import("../../api/client");
+    (api.setExecutionMode as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("403 Forbidden"));
+
+    await renderShell();
+    expect(pressed(/^manual$/i)).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: /^autopilot$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("exec-mode-error")).toBeInTheDocument()
+    );
+    // The whole point: the displayed mode never moved.
+    expect(pressed(/^manual$/i)).toBe("true");
+    expect(pressed(/^autopilot$/i)).toBe("false");
+  });
+
+  it("names the mode still in force when a change is refused", async () => {
+    const { api } = await import("../../api/client");
+    (api.setExecutionMode as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("403 Forbidden"));
+
+    await renderShell();
+    fireEvent.click(screen.getByRole("button", { name: /^autopilot$/i }));
+
+    const alert = await screen.findByRole("alert");
+    // "Change failed" alone leaves the operator to infer the current state —
+    // the one thing they most need to be certain about.
+    expect(alert).toHaveTextContent(/REFUSED/i);
+    expect(alert).toHaveTextContent(/still MANUAL/i);
+    expect(alert).toHaveTextContent(/Operator API Key/i);
+  });
+
+  it("applies the mode the SERVER returns, not the one requested", async () => {
+    const { api } = await import("../../api/client");
+    (api.setExecutionMode as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ mode: "copilot" });
+
+    await renderShell();
+    fireEvent.click(screen.getByRole("button", { name: /^autopilot$/i }));
+
+    // Guards against re-introducing optimism: autopilot was requested, the
+    // server said copilot, and copilot is what must show.
+    await waitFor(() => expect(pressed(/^copilot$/i)).toBe("true"));
+    expect(pressed(/^autopilot$/i)).toBe("false");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("reports an unconfirmed state when a 2xx carries no mode", async () => {
+    const { api } = await import("../../api/client");
+    (api.setExecutionMode as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({});
+
+    await renderShell();
+    fireEvent.click(screen.getByRole("button", { name: /^copilot$/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/unconfirmed/i);
+    // Neither applied nor reverted — it says so rather than guessing.
+    expect(pressed(/^manual$/i)).toBe("true");
+  });
+
+  it("surfaces a non-403 failure with the mode still in force", async () => {
+    const { api } = await import("../../api/client");
+    (api.setExecutionMode as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("500 Internal Server Error"));
+
+    await renderShell();
+    fireEvent.click(screen.getByRole("button", { name: /^copilot$/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/FAILED/i);
+    expect(alert).toHaveTextContent(/still MANUAL/i);
+    expect(pressed(/^manual$/i)).toBe("true");
   });
 });

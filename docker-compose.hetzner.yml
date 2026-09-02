@@ -8,15 +8,24 @@
 # Usage — on the server inside /opt/olbostrade:
 #   bash deploy/hetzner/up.sh
 #
-# NOTE on the DB service: container/network names below were renamed from the
-# old "olbosquant" branding, but POSTGRES_USER/POSTGRES_DB/the data volume
-# name were deliberately LEFT UNCHANGED (still olbosquant/olbosquantdb/
-# olbosquant_pgdata). Renaming those would need a live ALTER DATABASE/ALTER
-# USER or a dump+restore.
+# NOTE on the DB service: the database itself was renamed live to
+# `olbostrade` (ALTER DATABASE — instant, no data copy needed). The Postgres
+# ROLE deliberately stays `olbosquant`: renaming a role requires connecting
+# as a DIFFERENT superuser (Postgres refuses to let a session rename its own
+# login role), which means creating a temporary superuser on production —
+# a real privilege-escalation step for a value that is never visible outside
+# this file (not in the UI, not in any API response, just an internal
+# Postgres credential). Not worth the risk for a cosmetic-only rename. If a
+# future deploy legitimately needs the role renamed too, see the Migration
+# section in deploy/hetzner/README.md.
+# The actual on-disk data volume was created previously and is pinned by
+# name to the existing volume. To avoid accidental data loss the Compose
+# volume is still mapped to the original external volume name (see
+# `volumes:` below).
 #
 # IMPORTANT — the pgdata volume is pinned with `external: true` + an explicit
 # `name:` below, pointing at the volume Compose actually created back when
-# this directory was named /opt/olbosquant (Compose prefixes unpinned volume
+# this directory was named /opt/olbostrade (Compose prefixes unpinned volume
 # names with a project name derived from the directory, so renaming the
 # directory silently produces a DIFFERENT, empty volume unless pinned like
 # this). `external: true` also makes `docker compose up` fail loudly if that
@@ -34,7 +43,14 @@ services:
     env_file:
       - backend/.env.prod
     environment:
-      DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSQUANT_DB_PASSWORD}@olbostrade-db:5432/olbosquantdb
+      DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSTRADE_DB_PASSWORD}@olbostrade-db:5432/olbostrade
+    volumes:
+      # Trained models are not committed (see .gitignore) and the build context
+      # is ./backend, so nothing puts a .pkl inside the image. Mounting the
+      # directory makes the deployment path explicit and survives rebuilds:
+      # place a model here on the host, restart, done. Read-only — the app only
+      # ever loads from it; training writes here directly on the host.
+      - ./backend/ml/model_registry:/app/ml/model_registry:ro
     depends_on:
       olbostrade-db:
         condition: service_healthy
@@ -101,15 +117,19 @@ services:
     container_name: olbostrade-db
     restart: unless-stopped
     environment:
+      # POSTGRES_USER only takes effect on a brand-new empty data dir — the
+      # real role on the existing volume is `olbosquant` (kept deliberately,
+      # see the NOTE at the top of this file). Set to match so a fresh init
+      # (e.g. a new environment) and pg_isready below both agree with reality.
       POSTGRES_USER:     olbosquant
-      POSTGRES_PASSWORD: ${OLBOSQUANT_DB_PASSWORD:?set OLBOSQUANT_DB_PASSWORD in backend/.env.prod}
-      POSTGRES_DB:       olbosquantdb
+      POSTGRES_PASSWORD: ${OLBOSTRADE_DB_PASSWORD:?set OLBOSTRADE_DB_PASSWORD in backend/.env.prod}
+      POSTGRES_DB:       olbostrade
     volumes:
-      - olbosquant_pgdata:/var/lib/postgresql/data
+      - olbostrade_pgdata:/var/lib/postgresql/data
     networks:
       - olbostrade_internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U olbosquant -d olbosquantdb"]
+      test: ["CMD-SHELL", "pg_isready -U olbosquant -d olbostrade"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -124,10 +144,10 @@ services:
         max-file: "3"
 
 volumes:
-  olbosquant_pgdata:
+  olbostrade_pgdata:
     external: true
-    name: olbosquant_olbosquant_pgdata   # the real volume — see NOTE above
-  olbosquant_archive:
+    name: olbosquant_olbosquant_pgdata   # pinned to the original external volume (see NOTE above)
+  olbostrade_archive:
 
 networks:
   olbostrade_internal:

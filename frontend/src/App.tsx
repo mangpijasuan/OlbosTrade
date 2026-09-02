@@ -10,6 +10,7 @@ import ModeAnalytics   from "./pages/ModeAnalytics";
 import RiskCenter      from "./pages/RiskCenter";          // Risk Monitor + Guardrails
 import SignalsCenter   from "./pages/SignalsCenter";       // Equity Signals + Strategy
 import OptionsSignals  from "./pages/OptionsSignals";       // Live options spread signal feed
+import SignalResearch  from "./pages/SignalResearch";       // Forward-return study over tracked signals
 import ResearchCenter  from "./pages/ResearchCenter";      // Research Lab: Strategy Lab + Market/Regime + Chart + Intel
 import BacktestCenter  from "./pages/BacktestCenter";      // Backtest + Symphony
 import ScanCenter      from "./pages/ScanCenter";           // Options + Equity EV scan engines
@@ -22,9 +23,11 @@ import Alerts          from "./pages/strategies/Alerts";     // Smart Alert rule
 // Markets module
 import Heatmap         from "./pages/markets/Heatmap";
 import Watchlists      from "./pages/markets/Watchlists";
+import SectorRotation  from "./pages/markets/SectorRotation";
 import ChartWorkstation from "./pages/ChartWorkstation";     // Price-action / market-structure chart
 import NewsEventsCenter from "./pages/markets/NewsEventsCenter";
 import { isTradeDeskV2Enabled } from "./trade-desk/featureFlags";
+import SignalCalendar from "./components/SignalCalendar";
 
 function UnknownPage() {
   return (
@@ -79,9 +82,14 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
   settings:  SystemCenter,
 
   "strat:cards":     () => <SignalsCenter initialTab="strategies" />,
+  "strat:health":    () => <SignalsCenter initialTab="health" />,
+  "strat:calendar":  SignalCalendar,
+  "strat:alpha-edge": () => <SignalsCenter initialTab="alpha-edge" />,
+  "strat:signal-history": () => <SignalsCenter initialTab="history" />,
   "strat:builder":   StrategyBuilder,
   "strat:alerts":    Alerts,
   "options:signals": OptionsSignals,
+  "strat:research":  SignalResearch,
   "options:chain":   OptionsChain,
   "options:income":  IncomeStrategiesCenter,
   "options:flow":    OptionsFlow,
@@ -97,6 +105,7 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
   "markets:watchlists": Watchlists,
   "markets:chart":      ChartWorkstation,
   "markets:news":       NewsEventsCenter,
+  "markets:sector-rotation": SectorRotation,
 
   "system:broker":  () => <SystemCenter initialTab="broker" />,
   "system:market":  () => <SystemCenter initialTab="market" />,

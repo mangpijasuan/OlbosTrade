@@ -47,4 +47,14 @@ export interface SignalAttributionData {
   stale?: boolean;
   /** Freshness threshold in ms; default 15 minutes. */
   staleAfterMs?: number;
+  /**
+   * SHAP feature attribution from the AI scorer, when the source signal was
+   * scored by one (options signals only — equity's rule-based scorer has no
+   * model to explain). Absent/undefined means "not applicable for this
+   * signal type," not "unknown" — the component renders nothing for it
+   * rather than an explicit unavailable row, matching how stale/staleAfterMs
+   * are treated as optional enrichment rather than core attribution.
+   */
+  topPositiveFactors?: { feature: string; value?: number; impact: number }[] | null;
+  topNegativeFactors?: { feature: string; value?: number; impact: number }[] | null;
 }

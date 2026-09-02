@@ -25,32 +25,15 @@ export default function EquityDesk() {
         background: "var(--bg)",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "6px 10px",
-          borderBottom: "1px solid var(--line-dim)",
-          flexShrink: 0,
-          background: "var(--bg-2)",
-        }}
-      >
-        <span
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            letterSpacing: "0.1em",
-            color: "var(--ink-dim)",
-          }}
-        >
-          EQUITY DESK
+      <div className="desk-tool-rail" style={{ justifyContent: "flex-start", alignItems: "center" }}>
+        <span className="kicker" style={{ letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>
+          Equity desk
         </span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700, color: "var(--cyan)" }}>
+        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)" }}>
           {symbol}
         </span>
         <div style={{ flex: 1 }} />
-        <button type="button" className="btn-t" style={{ fontSize: 10 }} onClick={reset}>
+        <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 10 }} onClick={reset}>
           Reset panels
         </button>
       </div>
@@ -85,17 +68,12 @@ export default function EquityDesk() {
           <button
             type="button"
             onClick={() => toggle("activity")}
+            className="desk-tool-rail__btn"
             style={{
-              border: "none",
+              width: "100%",
+              borderRadius: 0,
               borderTop: "1px solid var(--line-dim)",
-              background: "var(--bg-3)",
-              color: "var(--ink-faint)",
-              fontFamily: "var(--mono)",
-              fontSize: 9,
-              letterSpacing: "0.1em",
-              padding: 4,
-              cursor: "pointer",
-              flexShrink: 0,
+              padding: 6,
             }}
           >
             {layout.activityCollapsed ? "SHOW COMPOSER" : "HIDE COMPOSER"}

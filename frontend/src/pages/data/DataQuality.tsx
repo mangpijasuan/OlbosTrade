@@ -3,6 +3,7 @@
  * kill-switch state, regime classification, and observability counters/events.
  */
 import React, { useEffect, useState } from "react";
+import { Panel } from "../../components/ui";
 
 interface ObsEvent {
   ts: number;
@@ -22,6 +23,18 @@ interface Observability {
   event_count?: number;
 }
 
+interface IbkrHealth {
+  connected: boolean;
+  coordinator: {
+    workers: number;
+    reserved_workers: number;
+    active_requests: number;
+    queue_depth: Record<string, number>;
+    in_flight_dedup_keys: number;
+  };
+  options_chain_cache: { hits: number; misses: number; hit_rate: number | null; entries: number };
+}
+
 interface Health {
   status?: string;
   broker?: string;
@@ -29,6 +42,7 @@ interface Health {
   kill_switch?: { engaged: boolean; reason: string | null };
   regime?: string | null;
   observability?: Observability;
+  ibkr?: IbkrHealth;
 }
 
 function Check({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
@@ -153,7 +167,7 @@ export default function DataQuality() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 640 }}>
-          <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "6px 16px 4px" }}>
+          <div className="instrument-card" style={{ padding: "6px 16px 4px" }}>
             <Check ok={h?.status === "ok"} label="Service"
               detail={h?.status === "ok" ? "ok" : (h?.status ?? "…")} />
             <Check ok={scannerOk} label="Scanner heartbeat"
@@ -166,13 +180,28 @@ export default function DataQuality() {
             {obs.counters && <CounterStrip counters={obs.counters} />}
           </div>
 
-          <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-            <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-              <span className="panel-title">Recent Events</span>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginLeft: 12 }}>
-                {obs.event_count ?? events.length} newest first
-              </span>
+          {h?.ibkr && (
+            <div className="instrument-card" style={{ padding: "6px 16px 4px" }}>
+              <div className="panel-title" style={{ padding: "8px 0 4px" }}>IBKR Connection</div>
+              <Check ok={h.ibkr.connected} label="Broker connection"
+                detail={h.ibkr.connected ? "connected" : "disconnected"} />
+              <Check ok={true} label="Active requests"
+                detail={`${h.ibkr.coordinator.active_requests} in flight · ${h.ibkr.coordinator.workers} workers (${h.ibkr.coordinator.reserved_workers} reserved for P0/P1)`} />
+              <Check ok={true} label="Options chain cache"
+                detail={h.ibkr.options_chain_cache.hit_rate != null
+                  ? `${Math.round(h.ibkr.options_chain_cache.hit_rate * 100)}% hit rate · ${h.ibkr.options_chain_cache.entries} cached`
+                  : "no requests yet"} />
+              <CounterStrip counters={Object.fromEntries(
+                Object.entries(h.ibkr.coordinator.queue_depth).map(([k, v]) => [`queue depth ${k.toLowerCase()}`, v])
+              )} />
             </div>
+          )}
+
+          <Panel
+            padding={0}
+            title="Recent Events"
+            action={<span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>{obs.event_count ?? events.length} newest first</span>}
+          >
             {events.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
                 No events recorded yet this process.
@@ -182,7 +211,7 @@ export default function DataQuality() {
                 {events.map((e, i) => <EventRow key={`${e.ts}-${i}`} e={e} now={now} />)}
               </div>
             )}
-          </div>
+          </Panel>
         </div>
       )}
     </div>

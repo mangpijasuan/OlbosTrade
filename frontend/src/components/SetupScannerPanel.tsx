@@ -8,6 +8,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Panel, Button } from "./ui";
 
 interface SetupRow {
   symbol: string; bias: string; confirmation_score: number;
@@ -37,12 +38,11 @@ export default function SetupScannerPanel() {
   useEffect(() => { run(); }, []);
 
   return (
-    <div style={{ border: "1px solid var(--line-dim)", borderRadius: 6, background: "var(--bg-2)" }}>
-      <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-dim)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span className="panel-title">Setup Readiness</span>
-        <button className="btn-t" style={{ fontSize: 11 }} onClick={run} disabled={loading}>{loading ? "Scanning…" : "Rescan"}</button>
-      </div>
-      <div style={{ padding: 8 }}>
+    <Panel
+      padding={8}
+      title="Setup Readiness"
+      action={<Button style={{ fontSize: 11 }} onClick={run} disabled={loading}>{loading ? "Scanning…" : "Rescan"}</Button>}
+    >
         {loading && rows.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--ink-dim)", padding: 8 }}>Scanning watchlist…</div>
         ) : rows.length === 0 ? (
@@ -77,7 +77,6 @@ export default function SetupScannerPanel() {
         <div style={{ fontSize: 10, color: "var(--ink-faint)", padding: "6px 4px 2px" }}>
           Readiness evidence only — not a trade signal. Blocked setups show why.
         </div>
-      </div>
-    </div>
+    </Panel>
   );
 }

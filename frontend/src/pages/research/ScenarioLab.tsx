@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { EvidenceBadge, FreshnessLabel, PageHeader, StatusState } from "../../components/Workspace";
+import { Button } from "../../components/ui";
 
 type Factor = { name: string; score: number };
 type Scenario = {
@@ -107,7 +108,7 @@ export default function ScenarioLab() {
       <div className="forecast-controls panel">
         <label>Symbol<select value={symbol} onChange={event => setSymbol(event.target.value)}>{SYMBOLS.map(value => <option key={value}>{value}</option>)}</select></label>
         <label>Horizon<select value={horizon} onChange={event => setHorizon(Number(event.target.value))}>{HORIZONS.map(value => <option value={value} key={value}>{value} trading day{value === 1 ? "" : "s"}</option>)}</select></label>
-        <button className="btn-t active" onClick={() => setRefreshKey(value => value + 1)} disabled={loading}>{loading ? "Refreshing…" : "Refresh outlook"}</button>
+        <Button active onClick={() => setRefreshKey(value => value + 1)} disabled={loading}>{loading ? "Refreshing…" : "Refresh outlook"}</Button>
       </div>
 
       {error && <StatusState kind="error" title="Forecast unavailable" detail={error} />}

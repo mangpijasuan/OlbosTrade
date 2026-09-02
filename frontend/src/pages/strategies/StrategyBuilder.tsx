@@ -6,6 +6,7 @@
  * form doesn't surface.
  */
 import React, { useEffect, useState } from "react";
+import { Button } from "../../components/ui";
 
 const STRATEGIES = [
   { key: "bull_put_spread", label: "Bull Put Spread" },
@@ -127,9 +128,9 @@ export default function StrategyBuilder() {
           </label>
         </div>
 
-        <button onClick={create} disabled={busy} className="btn-t active" style={{ marginTop: 14 }}>
+        <Button onClick={create} disabled={busy} active style={{ marginTop: 14 }}>
           {busy ? "…" : "Create draft experiment"}
-        </button>
+        </Button>
         {msg && (
           <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: msg.startsWith("Created") ? "var(--green)" : "var(--amber)", marginTop: 10 }}>
             {msg}

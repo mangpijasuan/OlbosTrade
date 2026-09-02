@@ -3,7 +3,10 @@ and the options execution branch."""
 
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -206,6 +209,15 @@ def _open_trade(spread_type="equity_long", status="open", quantity=10):
     return t
 
 
+def _open_options_trade(spread_type="put", quantity=2):
+    t = _open_trade(spread_type=spread_type, quantity=quantity)
+    t.strategy = "bull_put_spread"
+    t.short_strike = Decimal("100")
+    t.long_strike = Decimal("95")
+    t.expiration = date(2026, 9, 18)
+    return t
+
+
 @pytest.mark.asyncio
 async def test_close_position_invalid_trade_id_raises():
     with pytest.raises(Exception):
@@ -231,9 +243,56 @@ async def test_close_position_already_closed_raises():
 
 
 @pytest.mark.asyncio
-async def test_close_position_options_not_yet_supported_raises():
-    session = _fake_trade_session(_open_trade(spread_type="put"))
+async def test_close_position_invalid_spread_type_raises_400():
+    session = _fake_trade_session(_open_trade(spread_type="short_straddle"))
     with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        with pytest.raises(Exception):
+            await close_position(ClosePositionRequest(
+                trade_id="11111111-1111-1111-1111-111111111111"))
+
+
+@pytest.mark.asyncio
+async def test_close_position_options_routes_to_close_options_trade():
+    session = _fake_trade_session(_open_options_trade(spread_type="put"))
+    close_opt_mock = AsyncMock(return_value={
+        "trade_id": "11111111-1111-1111-1111-111111111111",
+        "ticker": "AAPL", "status": "filled",
+    })
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
+         patch("app.services.position_rotation.close_options_trade", new=close_opt_mock), \
+         patch("app.services.position_rotation.close_equity_trade") as close_eq_mock, \
+         patch.object(td, "_log_execution", new=AsyncMock()):
+        out = await close_position(ClosePositionRequest(
+            trade_id="11111111-1111-1111-1111-111111111111"))
+
+    close_opt_mock.assert_awaited_once()
+    close_eq_mock.assert_not_called()
+    assert out["status"] == "filled"
+
+
+@pytest.mark.asyncio
+async def test_close_position_options_missing_strikes_raises_400():
+    trade = _open_options_trade()
+    trade.short_strike = None
+    session = _fake_trade_session(trade)
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
+        with pytest.raises(Exception):
+            await close_position(ClosePositionRequest(
+                trade_id="11111111-1111-1111-1111-111111111111"))
+
+
+@pytest.mark.asyncio
+async def test_close_position_options_broker_rejection_raises_502():
+    session = _fake_trade_session(_open_options_trade())
+    broker = MagicMock()
+    broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.place_order = AsyncMock(return_value=MagicMock(
+        status="rejected", order_id=None, fill_price=None,
+    ))
+    with patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker):
         with pytest.raises(Exception):
             await close_position(ClosePositionRequest(
                 trade_id="11111111-1111-1111-1111-111111111111"))
@@ -247,6 +306,12 @@ async def test_close_position_long_submits_sell_and_cancels_bracket():
     session = _fake_trade_session(_open_trade(spread_type="equity_long", quantity=10))
     broker = MagicMock()
     broker.cancel_open_orders = AsyncMock(return_value=2)
+    # close_equity_trade() sizes and sides the close from the broker's own
+    # live position, not the DB's spread_type/quantity — see that
+    # function's docstring for the 2026-08-26 incident this guards against.
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="AAPL", quantity=10)]
+    )
     broker.place_equity_order = AsyncMock(return_value=MagicMock(
         status="filled", order_id="ord-1", fill_price=101.5,
     ))
@@ -276,6 +341,9 @@ async def test_close_position_short_submits_buy():
     session = _fake_trade_session(_open_trade(spread_type="equity_short", quantity=5))
     broker = MagicMock()
     broker.cancel_open_orders = AsyncMock(return_value=0)
+    broker.get_equity_positions = AsyncMock(
+        return_value=[SimpleNamespace(symbol="AAPL", quantity=-5)]
+    )
     broker.place_equity_order = AsyncMock(return_value=MagicMock(
         status="submitted", order_id="ord-2", fill_price=None,
     ))
@@ -361,10 +429,38 @@ def _options_signal():
 
 
 def _dup_session(existing=None):
+    """Mock DB session for Stage 3 duplicate guard.
+
+    `existing` may be:
+      - None / [] → no open trades
+      - a Trade-like object or list of them
+      - legacy ``("trade-id",)`` → synthesize an open SPY options trade
+    """
     session = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
-    session.execute = AsyncMock(return_value=MagicMock(first=lambda: existing))
+    if existing is None or existing == []:
+        rows = []
+    elif (
+        isinstance(existing, tuple)
+        and existing
+        and not hasattr(existing[0], "underlying")
+    ):
+        t = MagicMock()
+        t.id = existing[0]
+        t.underlying = "SPY"
+        t.spread_type = "bull_put_spread"
+        t.strategy = "bull_put_spread"
+        t.status = "open"
+        rows = [t]
+    elif isinstance(existing, (list, tuple)):
+        rows = list(existing)
+    else:
+        rows = [existing]
+    result = MagicMock()
+    result.scalars.return_value = MagicMock(all=lambda: rows)
+    result.first = MagicMock(return_value=rows[0] if rows else None)
+    session.execute = AsyncMock(return_value=result)
     return session
 
 
@@ -422,6 +518,72 @@ async def test_options_record_failure_still_submits():
 
 
 @pytest.mark.asyncio
+async def test_options_place_order_timeout_records_pending_not_lost():
+    """The coordinator's wait_for can time out while the real IBKR call
+    (shielded, still running) later fills — this must not be a silent lost
+    fill: a pending Trade row has to get written so _poll_fills() can later
+    promote or cancel it, and the caller must see an honest result instead
+    of a generic error."""
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch.object(td.ibkr_coordinator, "submit",
+                      new=AsyncMock(side_effect=asyncio.TimeoutError("timed out"))), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-pending-1")) as record_mock:
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+
+    assert res["result"] == "pending_confirmation"
+    assert res["asset_type"] == "options"
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["status"] == "pending"
+    assert record_mock.await_args.kwargs["dispatch_id"] == "o1"
+
+
+@pytest.mark.asyncio
+async def test_options_place_order_timeout_and_record_failure_logs_critical():
+    """Belt-and-suspenders: even the pending-row write can fail (DB down) —
+    must not raise, just log critical, since a real order may be in flight
+    at the broker with zero remaining trace of it."""
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch.object(td.ibkr_coordinator, "submit",
+                      new=AsyncMock(side_effect=asyncio.TimeoutError("timed out"))), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value=None)):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+
+    assert res["result"] == "pending_confirmation"
+
+
+@pytest.mark.asyncio
+async def test_equity_place_order_timeout_records_pending_not_lost():
+    broker = MagicMock()
+    broker.get_latest_quote = AsyncMock(return_value=MagicMock(ask_price=150.5, bid_price=150.0))
+    sig = _equity_signal(source="equity_desk_composer", confidence=None, kelly_fraction=None)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch.object(td.ibkr_coordinator, "submit",
+                      new=AsyncMock(side_effect=asyncio.TimeoutError("timed out"))), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-pending-2")) as record_mock:
+        res = await _execute_signal(sig, approved_by="user")
+
+    assert res["result"] == "pending_confirmation"
+    assert res["asset_type"] == "equity"
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["status"] == "pending"
+    assert record_mock.await_args.kwargs["dispatch_id"] == "e1"
+    assert record_mock.await_args.kwargs["option_type"] == "equity_long"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_open_trade_skipped():
     with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
          patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
@@ -429,3 +591,464 @@ async def test_duplicate_open_trade_skipped():
          patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
         res = await _execute_signal(_options_signal(), approved_by="manual")
     assert res["result"] == "skipped" and "already_open" in res["reason"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_guard_allows_other_asset_class_same_underlying():
+    """Open SPY equity must not block a new SPY options signal (and vice versa)."""
+    equity_open = MagicMock()
+    equity_open.id = "eq-1"
+    equity_open.underlying = "SPY"
+    equity_open.spread_type = "equity_long"
+    equity_open.strategy = "equity"
+    equity_open.status = "open"
+
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-opt", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(existing=[equity_open])), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-opt")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+def _dup_and_cooldown_session(dup_existing=None, cooldown_existing=None):
+    """Three sequential AsyncSessionLocal() calls happen before Stage 3b can
+    run: Stage 2b's own portfolio-risk-state read (check_execution_portfolio
+    -> load_portfolio_risk_state, independent of the _fetch_portfolio_state
+    mock used for Stage 2), then Stage 3 (open/pending duplicate guard),
+    then Stage 3b (closed/cooldown). session.execute must answer them in
+    that order."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    dup_rows = [] if not dup_existing else (
+        dup_existing if isinstance(dup_existing, list) else [dup_existing]
+    )
+    cd_rows = [] if not cooldown_existing else (
+        cooldown_existing if isinstance(cooldown_existing, list) else [cooldown_existing]
+    )
+    portfolio_result = MagicMock()
+    portfolio_result.scalars.return_value = MagicMock(all=lambda: [])
+    dup_result = MagicMock()
+    dup_result.scalars.return_value = MagicMock(all=lambda: dup_rows)
+    cd_result = MagicMock()
+    cd_result.scalars.return_value = MagicMock(all=lambda: cd_rows)
+    session.execute = AsyncMock(side_effect=[portfolio_result, dup_result, cd_result])
+    return session
+
+
+def _closed_trade(underlying="SPY", asset_class="options", exit_date=None):
+    t = MagicMock()
+    t.underlying = underlying
+    t.status = "closed"
+    t.exit_date = exit_date or datetime.now(timezone.utc)
+    if asset_class == "equity":
+        t.spread_type = "equity_long"
+        t.strategy = "equity"
+    else:
+        t.spread_type = "bull_put_spread"
+        t.strategy = "bull_put_spread"
+    return t
+
+
+@pytest.mark.asyncio
+async def test_cooldown_blocks_recently_closed_same_ticker_same_asset_class():
+    closed = _closed_trade(exit_date=datetime.now(timezone.utc) - timedelta(minutes=30))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_dup_and_cooldown_session(cooldown_existing=closed)), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "skipped" and "cooldown_active" in res["reason"]
+
+
+@pytest.mark.asyncio
+async def test_cooldown_allows_different_asset_class_same_underlying():
+    """A closed SPY equity trade must not cooldown-block a new SPY options
+    signal (and vice versa) — matches Stage 3's own asset-class carve-out."""
+    closed_equity = _closed_trade(
+        asset_class="equity", exit_date=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-cd", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_dup_and_cooldown_session(cooldown_existing=closed_equity)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-cd")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cooldown_allows_close_older_than_window():
+    closed = _closed_trade(exit_date=datetime.now(timezone.utc) - timedelta(hours=3))
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-old", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal",
+               return_value=_dup_and_cooldown_session(cooldown_existing=closed)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-old")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_cooldown_disabled_skips_check():
+    closed = _closed_trade(exit_date=datetime.now(timezone.utc) - timedelta(minutes=1))
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-off", status="submitted"))
+    session = _dup_and_cooldown_session(cooldown_existing=closed)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 0), \
+         patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-off")):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "submitted"
+    # Stage 2b's own portfolio-state read + Stage 3's dup check — Stage 3b's
+    # DB call never happens since the cooldown is disabled.
+    assert session.execute.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cooldown_check_db_error_fails_closed():
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    portfolio_result = MagicMock()
+    portfolio_result.scalars.return_value = MagicMock(all=lambda: [])
+    dup_result = MagicMock()
+    dup_result.scalars.return_value = MagicMock(all=lambda: [])
+    session.execute = AsyncMock(side_effect=[portfolio_result, dup_result, RuntimeError("db down")])
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.core.config.settings.position_cooldown_hours", 2), \
+         patch("app.core.database.AsyncSessionLocal", return_value=session), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()):
+        res = await _execute_signal(_options_signal(), approved_by="manual")
+    assert res["result"] == "blocked" and "cooldown_check_error" in res["reason"]
+
+
+# ── Stage 1c: Equity Desk composer confidence-gate carve-out ──────────────────────
+def _equity_signal(**overrides):
+    sig = {
+        "id": "e1", "ticker": "AAPL", "action": "BUY", "asset_type": "equity",
+        "trade_plan": {"shares": 10, "entry_price": 150.0, "stop_price": 147.0,
+                        "target_price": 156.0},
+        "source": "scan_engine", "confidence": 0.1, "kelly_fraction": 0.1,
+    }
+    sig.update(overrides)
+    return sig
+
+
+@pytest.mark.asyncio
+async def test_equity_desk_composer_order_bypasses_confidence_gate():
+    """Regression: a human-composed Equity Desk order (no AI signal behind
+    it) must not be silently blocked by the AI-signal confidence gate —
+    every mode's min_confidence exceeds a fabricated 0.5, so this order
+    would previously be blocked unconditionally."""
+    broker = MagicMock()
+    broker.get_latest_quote = AsyncMock(return_value=MagicMock(ask_price=150.5, bid_price=150.0))
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(order_id="ORD-1", status="filled"))
+    sig = _equity_signal(source="equity_desk_composer", confidence=None, kelly_fraction=None)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-e1")):
+        res = await _execute_signal(sig, approved_by="user")
+    assert res["result"] == "submitted"
+    broker.place_equity_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scan_signal_low_confidence_still_blocked_when_approved_by_user():
+    """The carve-out must be scoped to equity_desk_composer only — a real
+    AI scan signal with genuinely low confidence, approved by a human,
+    must still be caught by the frequency controller."""
+    sig = _equity_signal(source="scan_engine", confidence=0.1)
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False):
+        res = await _execute_signal(sig, approved_by="user")
+    assert res["result"] == "blocked"
+    assert "below_min_confidence" in res["reason"]
+
+
+# ── 0DTE autopilot gate ──────────────────────────────────────────────────────
+def _options_signal_dte(dte: int):
+    sig = _options_signal()
+    sig["spread"]["dte"] = dte
+    return sig
+
+
+@pytest.mark.asyncio
+async def test_0dte_autopilot_signal_blocked_before_broker():
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(_options_signal_dte(0), approved_by="autopilot")
+    assert res["result"] == "blocked"
+    assert res["reason"] == "0dte_autopilot_disabled"
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_1dte_autopilot_signal_also_blocked():
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False):
+        res = await _execute_signal(_options_signal_dte(1), approved_by="autopilot")
+    assert res["result"] == "blocked"
+    assert res["reason"] == "0dte_autopilot_disabled"
+
+
+@pytest.mark.asyncio
+async def test_2dte_autopilot_signal_not_blocked_by_0dte_gate():
+    """2 DTE clears the hard gate — must reach broker submission, not be
+    silently swallowed by an off-by-one in the dte<=1 comparison."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-2DTE", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-2dte")):
+        res = await _execute_signal(_options_signal_dte(2), approved_by="autopilot")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_0dte_manual_approval_not_blocked_by_autopilot_gate():
+    """0DTE stays available with a human in the loop — the gate only fires
+    for approved_by=="autopilot", matching the UI's "Copilot or manual
+    only" language."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-MANUAL-0DTE", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.utils.market_hours.minutes_to_close", return_value=None), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-manual-0dte")):
+        res = await _execute_signal(_options_signal_dte(0), approved_by="manual")
+    assert res["result"] == "submitted"
+    broker.place_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_0dte_gate_does_not_apply_to_equity_signals():
+    """Equity signals have no spread.dte at all — the gate must be a no-op
+    for asset_type != "options", not raise on a missing key."""
+    sig = _equity_signal(source="equity_desk_composer", confidence=0.05, action="BUY")
+    broker = MagicMock()
+    broker.place_equity_order = AsyncMock(return_value=MagicMock(order_id="ORD-EQ", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-eq-0dte")):
+        res = await _execute_signal(sig, approved_by="autopilot")
+    assert res["result"] == "submitted"
+
+
+# ── Liquidity / gamma / close-proximity gates (Stage 1b3) ────────────────────
+def _options_signal_liquidity(**spread_overrides):
+    sig = _options_signal()
+    sig["spread"].update(spread_overrides)
+    return sig
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_blocks_wide_spread():
+    sig = _options_signal_liquidity(bid_ask_width_pct=0.20)
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "blocked"
+    assert "spread_too_wide" in res["reason"]
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_blocks_low_open_interest():
+    sig = _options_signal_liquidity(open_interest=10)
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "blocked"
+    assert "open_interest_too_low" in res["reason"]
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_blocks_0dte_near_close():
+    sig = _options_signal_liquidity(dte=0)
+    with patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.utils.market_hours.minutes_to_close", return_value=10.0), \
+         patch("app.broker.broker_factory.get_broker", return_value=MagicMock()) as get_broker_mock:
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "blocked"
+    assert "0dte_near_close" in res["reason"]
+    get_broker_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_0dte_check_skipped_when_not_0dte():
+    """minutes_to_close < 30 must not block a >1 DTE signal — the close-
+    proximity check is scoped to dte<=1 only."""
+    sig = _options_signal_liquidity(dte=5)
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-NOT0DTE", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.utils.market_hours.minutes_to_close", return_value=10.0), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-not0dte")):
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_fails_open_on_missing_data():
+    """The base _options_signal() fixture has no bid_ask_width_pct/
+    open_interest/gamma keys at all (the yfinance/Black-Scholes fallback
+    shape) — must reach broker submission, not be blocked for missing
+    fields that were never fabricated."""
+    sig = _options_signal()
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-NODATA", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-nodata")):
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_liquidity_gate_passes_healthy_spread():
+    sig = _options_signal_liquidity(bid_ask_width_pct=0.05, open_interest=500, gamma=0.01)
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-HEALTHY", status="submitted"))
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-healthy")):
+        res = await _execute_signal(sig, approved_by="manual")
+    assert res["result"] == "submitted"
+
+
+# ── margin guard: stale account values must not clear it ─────────────────────
+# The guard reads figures out of IBKR's locally-cached push stream. A dead
+# stream still answers, with the complete margin picture from whenever it
+# died — so the guard's one dangerous failure is reading "margin is fine" off
+# numbers that predate the blow-up it exists to catch.
+
+def _submit_router(acct):
+    """Stand in for ibkr_coordinator.submit.
+
+    The coordinator is the single door for ACCOUNT_SUMMARY *and* PLACE_ORDER,
+    so a blanket stub would hand the order path an AccountSummary. Route by
+    req_type and let anything that isn't an account read run for real.
+    """
+    async def _submit(priority, fn, *args, req_type=None, **kwargs):
+        if req_type == "ACCOUNT_SUMMARY":
+            return acct
+        res = fn(*args) if args else fn()
+        return await res if hasattr(res, "__await__") else res
+    return AsyncMock(side_effect=_submit)
+
+
+def _acct_summary(*, is_stale: bool, age: float, maint: float = 10_000.0):
+    from decimal import Decimal
+    from app.broker.broker_interface import AccountSummary
+    return AccountSummary(
+        account_id="DU123456",
+        net_liquidation=Decimal("100000"),
+        cash_balance=Decimal("50000"),
+        buying_power=Decimal("200000"),
+        maintenance_margin=Decimal(str(maint)),
+        excess_liquidity=Decimal("50000"),
+        init_margin=Decimal("20000"),
+        data_age_seconds=age,
+        is_stale=is_stale,
+    )
+
+
+@pytest.mark.asyncio
+async def test_margin_guard_is_skipped_when_account_values_are_stale():
+    """Stale figures are treated as absent, not as an all-clear.
+
+    evaluate_margin must never even run: a frozen snapshot can be wrong in
+    either direction — a false 'fine' that lets a trade through during a real
+    margin event, or a false 'critical' that blocks after recovery.
+    """
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-1", status="submitted"))
+
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.api.routes.trade_desk.ibkr_coordinator.submit",
+               new=_submit_router(_acct_summary(is_stale=True, age=1800.0, maint=99_000.0))), \
+         patch("app.services.margin_monitor.evaluate_margin") as eval_mock, \
+         patch("app.services.trade_recorder.trade_recorder.record_fill",
+               new=AsyncMock(return_value="trade-1")):
+        res = await _execute_signal(_options_signal(), approved_by="autopilot")
+
+    eval_mock.assert_not_called()
+    # maint=99k against nl=100k would be a hard 'critical' block if evaluated —
+    # proving the skip is what let this through, not a benign margin picture.
+    assert res["result"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_margin_guard_still_blocks_on_fresh_critical_figures():
+    """Regression pin for the other direction: the staleness check must not
+    have quietly disabled the guard for live data."""
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=MagicMock(order_id="ORD-2", status="submitted"))
+
+    with patch("app.api.routes.trade_desk._fetch_portfolio_state", new=AsyncMock(return_value=_clean())), \
+         patch("app.api.routes.trade_desk._is_kill_switch_active", return_value=False), \
+         patch("app.api.routes.trade_desk._strategy_health_for", new=AsyncMock(return_value=None)), \
+         patch("app.broker.broker_factory.get_broker", return_value=broker), \
+         patch("app.core.database.AsyncSessionLocal", return_value=_dup_session(None)), \
+         patch("app.api.routes.trade_desk.ibkr_coordinator.submit",
+               new=_submit_router(_acct_summary(is_stale=False, age=12.0, maint=99_000.0))):
+        res = await _execute_signal(_options_signal(), approved_by="autopilot")
+
+    assert res["result"] == "blocked"
+    assert "margin_critical" in res["reason"]
+    broker.place_order.assert_not_awaited()

@@ -3,6 +3,7 @@
  * The connect/disconnect controls live in Settings; this is the read-only ops view.
  */
 import React, { useEffect, useState } from "react";
+import { Badge } from "../../components/ui";
 
 interface BrokerStatus {
   broker: string;
@@ -64,13 +65,12 @@ function BrokerOptionRow({ opt, active }: { opt: BrokerOption; active: boolean }
             {opt.label}
           </span>
           {active && (
-            <span style={{
-              fontFamily: "var(--mono)", fontSize: 9, color: "var(--green)",
+            <Badge kind="tag" tone="var(--green)" style={{
               border: "1px solid rgba(34,197,94,0.4)", padding: "1px 6px",
-              textTransform: "uppercase", letterSpacing: "0.06em",
+              textTransform: "uppercase", letterSpacing: "0.06em", opacity: 1,
             }}>
               active
-            </span>
+            </Badge>
           )}
         </div>
         <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-faint)", marginTop: 3 }}>
@@ -79,14 +79,14 @@ function BrokerOptionRow({ opt, active }: { opt: BrokerOption; active: boolean }
       </div>
       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
         {opt.equities && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-dim)", border: "1px solid var(--line-dim)", padding: "1px 6px" }}>
+          <Badge kind="tag" tone="var(--ink-dim)" style={{ border: "1px solid var(--line-dim)", padding: "1px 6px", opacity: 1 }}>
             equities
-          </span>
+          </Badge>
         )}
         {opt.options && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-dim)", border: "1px solid var(--line-dim)", padding: "1px 6px" }}>
+          <Badge kind="tag" tone="var(--ink-dim)" style={{ border: "1px solid var(--line-dim)", padding: "1px 6px", opacity: 1 }}>
             options
-          </span>
+          </Badge>
         )}
       </div>
     </div>
@@ -121,7 +121,7 @@ export default function BrokerGateway() {
         </span>
       </div>
 
-      <div style={{ maxWidth: 520, border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "12px 16px" }}>
+      <div className="instrument-card" style={{ maxWidth: 520, padding: "12px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
           <StatusDot ok={connected} />
           <span style={{
@@ -132,14 +132,12 @@ export default function BrokerGateway() {
             {b?.status ?? "…"}
           </span>
           {b?.paper_mode != null && (
-            <span style={{
-              marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 10,
-              color: b.paper_mode ? "var(--amber)" : "var(--cyan)",
-              border: `1px solid ${b.paper_mode ? "var(--amber)" : "var(--cyan)"}`,
-              padding: "2px 7px", borderRadius: 2, textTransform: "uppercase", letterSpacing: "0.08em",
+            <Badge kind="tag" tone={b.paper_mode ? "var(--amber)" : "var(--cyan)"} style={{
+              marginLeft: "auto", fontSize: 10,
+              padding: "2px 7px", borderRadius: 2, textTransform: "uppercase", letterSpacing: "0.08em", opacity: 1,
             }}>
               {b.paper_mode ? "paper" : "live"}
-            </span>
+            </Badge>
           )}
         </div>
 
@@ -155,7 +153,7 @@ export default function BrokerGateway() {
 
       <div style={{ marginTop: 24, maxWidth: 520 }}>
         <div className="panel-title" style={{ marginBottom: 10 }}>Supported Brokers</div>
-        <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", padding: "4px 16px" }}>
+        <div className="instrument-card" style={{ padding: "4px 16px" }}>
           {SUPPORTED_BROKERS.map(opt => (
             <BrokerOptionRow key={opt.id} opt={opt} active={(b?.broker ?? "").toLowerCase() === opt.id} />
           ))}

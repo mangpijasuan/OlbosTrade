@@ -19,6 +19,7 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
     { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
+    { key: "markets:sector-rotation", label: "Sector Rotation", advanced: true },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:overview",  label: "Overview" },
@@ -33,9 +34,13 @@ export const NAV_MODEL_LEGACY: NavGroup[] = [
     { key: "options:flow",    label: "Options Flow", advanced: true },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
+    { key: "strat:alpha-edge", label: "Alpha Edge" },
     { key: "equity",           label: "Equity Signals" },
     { key: "options:signals",  label: "Options Signals" },
+    { key: "strat:research",   label: "Signal Research" },
     { key: "strat:cards",   label: "Strategy Cards", advanced: true },
+    { key: "strat:health",  label: "Strategy Health", advanced: true },
+    { key: "strat:calendar", label: "Signal Calendar" },
     { key: "strat:builder", label: "Strategy Builder", advanced: true },
     { key: "strat:alerts",  label: "Alerts", advanced: true },
   ]},
@@ -72,6 +77,7 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "markets:watchlists", label: "Watchlists" },
     { key: "markets:heatmaps",   label: "Heatmaps", advanced: true },
     { key: "markets:news",       label: "News & Events", advanced: true },
+    { key: "markets:sector-rotation", label: "Sector Rotation", advanced: true },
   ]},
   { id: "trade", label: "Trade Desk", icon: "paper", children: [
     { key: "trade:overview",  label: "Command Overview" },
@@ -85,8 +91,12 @@ export const NAV_MODEL_V2: NavGroup[] = [
     { key: "trade:settings",  label: "Desk Settings", advanced: true },
   ]},
   { id: "strat", label: "Strategies", icon: "strategy", children: [
+    { key: "strat:alpha-edge", label: "Alpha Edge" },
     { key: "equity",        label: "Signal Center" },
+    { key: "strat:research", label: "Signal Research" },
     { key: "strat:cards",   label: "Strategy Cards", advanced: true },
+    { key: "strat:health",  label: "Strategy Health", advanced: true },
+    { key: "strat:calendar", label: "Signal Calendar" },
     { key: "strat:builder", label: "Strategy Builder", advanced: true },
     { key: "strat:alerts",  label: "Alerts", advanced: true },
     { key: "options:chain",  label: "Options Chain", advanced: true },

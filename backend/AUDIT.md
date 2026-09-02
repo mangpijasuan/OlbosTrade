@@ -1,4 +1,4 @@
-# OlbosQuant Security & Correctness Audit
+# OlbosTrade Security & Correctness Audit
 
 ## Batch 1 — Single Fail-Closed Order Pipeline
 

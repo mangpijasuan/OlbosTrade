@@ -107,7 +107,7 @@ export default function MarketStructurePanel({
 
 function LevelStack({ label, tone, levels }: { label: string; tone: string; levels: number[] }) {
   return (
-    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-3)", padding: 10 }}>
+    <div className="instrument-card--flat" style={{ padding: 10 }}>
       <div className="kicker" style={{ marginBottom: 8 }}>{label}</div>
       {levels.length ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>

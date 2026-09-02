@@ -38,6 +38,11 @@ class ReconciliationResult:
     untracked_at_broker: list[str]   # in broker, not in DB — ghost positions
     phantom_in_db: list[str]         # in DB as open, not at broker — orphaned records
     quantity_mismatches: list[str] = field(default_factory=list)
+    # Bare tickers with a quantity disagreement, populated only by check()
+    # (reconcile()'s own quantity_mismatches field holds full warning
+    # strings instead) — main.py's auto-correct step needs plain tickers,
+    # not prose, to look the position back up.
+    quantity_mismatch_tickers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     checked_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -98,11 +103,13 @@ class PositionReconciler:
         phantom   = sorted(set(db_qty) - set(broker_qty))
 
         warnings = []
-        for sym in set(broker_qty) & set(db_qty):
+        mismatch_tickers = []
+        for sym in sorted(set(broker_qty) & set(db_qty)):
             if broker_qty[sym] != db_qty[sym]:
                 warnings.append(
                     f"QUANTITY MISMATCH {sym}: broker={broker_qty[sym]} db={db_qty[sym]}"
                 )
+                mismatch_tickers.append(sym)
 
         return ReconciliationResult(
             clean=not untracked and not phantom and not warnings,
@@ -110,6 +117,7 @@ class PositionReconciler:
             db_open_trade_count=len(db_open_trades),
             untracked_at_broker=untracked,
             phantom_in_db=phantom,
+            quantity_mismatch_tickers=mismatch_tickers,
             warnings=warnings,
         )
 
@@ -349,8 +357,12 @@ class PositionReconciler:
         from app.models.risk_state import PortfolioSnapshot
         from app.core.config import settings
 
+        from app.broker.ibkr_coordinator import Priority, ibkr_coordinator
+
         positions = await self.broker.get_positions()
-        account = await self.broker.get_account_summary()
+        account = await ibkr_coordinator.submit(
+            Priority.P0, self.broker.get_account_summary, key="account_summary", req_type="ACCOUNT_SUMMARY",
+        )
 
         async with AsyncSessionLocal() as session:
             snap = PortfolioSnapshot(

@@ -19,6 +19,9 @@ def make_portfolio(**kwargs) -> PortfolioState:
         consecutive_losses=0,
         trades_today=0,
         cooling_off_until=None,
+        peak_value=0.0,  # untracked by default — matches PortfolioState's own
+                         # default so unrelated tests lowering current_value
+                         # don't unintentionally trip the drawdown check too.
     )
     defaults.update(kwargs)
     return PortfolioState(**defaults)
@@ -99,6 +102,77 @@ def test_monthly_loss_suspends_30_days(engine):
     assert status.trading_allowed is False
     now = datetime.now(timezone.utc)
     assert status.suspended_until > now + timedelta(days=25)
+
+
+# ── Maximum drawdown limit ────────────────────────────────────────────────────
+
+def test_drawdown_limit_exact_triggers(engine):
+    """At exactly 15% peak-to-trough drawdown, trading must stop."""
+    status = engine.check_all(make_portfolio(
+        peak_value=25000.0, current_value=25000.0 * 0.85,
+    ))
+    assert status.trading_allowed is False
+    assert "max_drawdown_limit" in status.flags
+
+
+def test_drawdown_below_limit_allowed(engine):
+    status = engine.check_all(make_portfolio(
+        peak_value=25000.0, current_value=25000.0 * 0.86,
+    ))
+    assert status.trading_allowed is True
+
+
+def test_drawdown_suspends_30_days(engine):
+    status = engine.check_all(make_portfolio(
+        peak_value=25000.0, current_value=25000.0 * 0.80,
+    ))
+    now = datetime.now(timezone.utc)
+    assert status.suspended_until > now + timedelta(days=25)
+
+
+def test_drawdown_uses_peak_not_starting_capital(engine):
+    """A book that grew to 30000 then fell to 30000*0.85 (=25500) is still
+    'profitable' vs. a 25000 starting capital — but must still breach the
+    drawdown limit, since it fell 15% from its own peak. Proves peak
+    tracking is separate from starting-capital-relative checks."""
+    status = engine.check_all(make_portfolio(
+        starting_capital=25000.0, peak_value=30000.0, current_value=30000.0 * 0.85,
+    ))
+    assert status.trading_allowed is False
+    assert "max_drawdown_limit" in status.flags
+
+
+def test_drawdown_takes_priority_over_consecutive_losses(engine):
+    """Drawdown (step 5) is evaluated before consecutive losses (step 6)."""
+    status = engine.check_all(make_portfolio(
+        peak_value=25000.0, current_value=25000.0 * 0.80,
+        consecutive_losses=5,
+    ))
+    assert status.trading_allowed is False
+    assert "max_drawdown_limit" in status.flags
+    assert "consecutive_loss_limit" not in status.flags
+
+
+def test_zero_peak_value_treated_as_current_value(engine):
+    """peak_value=0.0 (untracked) must never divide-by-zero or fabricate a
+    drawdown — it's treated as equal to current_value, i.e. 0% drawdown."""
+    status = engine.check_all(make_portfolio(peak_value=0.0, current_value=20000.0))
+    assert status.drawdown_pct == 0.0
+    assert status.trading_allowed is True
+
+
+def test_paper_visibility_mode_relaxes_drawdown_limit(monkeypatch):
+    monkeypatch.setattr(settings, "broker", "ibkr")
+    monkeypatch.setattr(settings, "ibkr_trading_mode", "paper")
+    monkeypatch.setattr(settings, "paper_trade_visibility_mode", True)
+    monkeypatch.setattr(settings, "paper_visibility_max_drawdown_pct", 0.30)
+
+    pv_engine = GuardrailEngine()
+    assert pv_engine.max_drawdown_pct == 0.30
+    status = pv_engine.check_all(make_portfolio(
+        peak_value=25000.0, current_value=25000.0 * 0.80,  # 20% drawdown
+    ))
+    assert status.trading_allowed is True
 
 
 # ── Consecutive losses ────────────────────────────────────────────────────────

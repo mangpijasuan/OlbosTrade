@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — Instrument console UI (skeuomorphic-lite)
+
+- Terminal chrome: raised bezels on panels/buttons, rack ticker + status bars,
+  instrument chips on Trade Desk header, physical-style kill + mode cards
+- Typography: IBM Plex Sans + JetBrains Mono (replaces Inter)
+- Explicitly not glass/neumorphism/clay — crisp console, high contrast
+
+## Unreleased — Trading Style in Trade Desk V2
+
+- Desk Settings now includes Trading Style (Conservative / Balanced /
+  Aggressive / Scalper) — was only on the legacy Trade Desk page
+- Mode cards show min confidence + daily hard max from the frequency controller
+
+## Unreleased — Position rotation at max concurrent
+
+- When `POSITION_ROTATION_ON_MAX=true` and max open positions blocks a new
+  **equity** entry, close N positions (default 2): highest unrealized P&L,
+  then lowest `signal_score` (oldest if scores missing). Skips the incoming
+  ticker; options closes deferred. Flag **off** by default.
+
+## Unreleased — Trade Desk V2 default-on
+
+- Product defaults: `trade_desk_v2` + equity/options/copilot/execution/replay/
+  mobile flags **on**; experimental desks stay off
+- Desk Settings copy: default V2 with localStorage rollback to legacy
+- Paper E2E decision updated accordingly
+
+## Unreleased — P1 identity / sizing / scan honesty
+
+- Position identity + OMS duplicate guard key on `(underlying, equity|options)`
+  so SPY stock and SPY spreads coexist (`trade_identity.py`, `paper_trade`,
+  `_execute_signal` Stage 3)
+- Equity sizing allows **0 shares** (skip) instead of forcing `max(1, …)`
+- Scan panels: “Queue top for approval” (not Auto-execute); removed dead
+  EXECUTE LADDER; options `/signal` requires `asset_type=options` + spread
+- Paper E2E updated; **V2 flags stay opt-in** (no default-on)
+
 ## Unreleased — Feature flags opt-in (pre-deploy)
 
 - Trade Desk V2 flags default **off** (`trade_desk_v2` and desk/monitor/replay/mobile)

@@ -46,6 +46,7 @@ class ModeTrade:
     signal_score: float
     exit_reason:  str
     iv_rank:      float = 0.0
+    regime:       Optional[str] = None
 
 
 @dataclass

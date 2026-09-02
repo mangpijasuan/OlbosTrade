@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Button } from "./ui";
 
 interface ModeInfo {
   display_name: string; description: string; dte_range: string;
   risk_per_trade: string; requires_monitoring: boolean;
   monitoring_warning: string; ui_color: string; is_active: boolean;
+  min_confidence?: number;
+  hard_max_per_day?: number;
 }
 
 const COLOR: Record<string, string> = {
@@ -50,16 +53,16 @@ export default function TradingModeSelector() {
           const color = COLOR[info.ui_color] || "var(--accent)";
           const active = info.is_active;
           return (
-            <button key={key} onClick={() => handleSelect(key, info)}
+            <button
+              key={key}
+              onClick={() => handleSelect(key, info)}
               disabled={!!switching}
+              className={`instrument-mode-card${active ? " is-active" : ""}`}
               style={{
-                textAlign: "left", padding: 12, cursor: active ? "default" : "pointer",
-                borderRadius: 6,
-                background: active ? "var(--fill-active)" : "var(--bg-3)",
-                border: `1px solid ${active ? color + "50" : "var(--line-dim)"}`,
-                borderLeft: `2px solid ${active ? color : "transparent"}`,
-                transition: "all 0.12s",
-              }}>
+                cursor: active ? "default" : "pointer",
+                borderLeft: `3px solid ${active ? color : "transparent"}`,
+              }}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: active ? color : "var(--ink)" }}>
                   {info.display_name}
@@ -77,11 +80,23 @@ export default function TradingModeSelector() {
               <div style={{ fontSize: 12, color: "var(--ink-faint)", lineHeight: 1.6, marginBottom: 8 }}>
                 {info.description}
               </div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <span className="tnum" style={{ fontSize: 11, padding: "1px 7px", borderRadius: 3,
                   border: "1px solid var(--line-dim)", color: "var(--ink-dim)" }}>
                   {info.risk_per_trade}/trade
                 </span>
+                {typeof info.min_confidence === "number" && (
+                  <span className="tnum" style={{ fontSize: 11, padding: "1px 7px", borderRadius: 3,
+                    border: "1px solid var(--line-dim)", color: "var(--ink-dim)" }}>
+                    Min conf {(info.min_confidence * 100).toFixed(0)}%
+                  </span>
+                )}
+                {typeof info.hard_max_per_day === "number" && (
+                  <span className="tnum" style={{ fontSize: 11, padding: "1px 7px", borderRadius: 3,
+                    border: "1px solid var(--line-dim)", color: "var(--ink-dim)" }}>
+                    Max {info.hard_max_per_day}/day
+                  </span>
+                )}
                 {info.requires_monitoring && (
                   <span style={{ fontSize: 11, padding: "1px 7px", borderRadius: 3,
                     border: "1px solid rgba(239,68,68,0.4)", color: "var(--red)" }}>
@@ -118,12 +133,12 @@ export default function TradingModeSelector() {
               </p>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn-t" onClick={() => setWarning(null)} style={{ flex: 1 }}>
+              <Button onClick={() => setWarning(null)} style={{ flex: 1 }}>
                 Cancel
-              </button>
-              <button className="btn-t danger" onClick={() => activate(warning.mode, true)} style={{ flex: 1 }}>
+              </Button>
+              <Button danger onClick={() => activate(warning.mode, true)} style={{ flex: 1 }}>
                 Confirm scalper
-              </button>
+              </Button>
             </div>
           </div>
         </div>

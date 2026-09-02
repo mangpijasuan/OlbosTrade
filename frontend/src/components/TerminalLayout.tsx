@@ -18,8 +18,10 @@ import KillSwitchButton from "./KillSwitchButton";
 import { api } from "../api/client";
 import { statusLabelForPage, filterNavForDisplay, type NavGroup } from "../utils/navLabels";
 import { NAV_MODEL_LEGACY, NAV_MODEL_V2, groupIdForKey } from "../utils/navModels";
+import MobileBottomNav from "./MobileBottomNav";
 import { isTradeDeskV2Enabled } from "../trade-desk/featureFlags";
 import { TerminalNavProvider } from "./TerminalNavContext";
+import { Badge } from "./ui";
 
 // ── Icons (inline SVG — no dep) ───────────────────────────────────────────────
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
@@ -114,9 +116,18 @@ function AccountMenuItem({ icon, label, onClick, danger = false }: {
 function ExecutionModeControl({
   mode,
   onChange,
+  busy = false,
+  error = null,
+  pending = null,
 }: {
   mode: "manual" | "copilot" | "autopilot";
   onChange: (m: "manual" | "copilot" | "autopilot") => void;
+  busy?: boolean;
+  error?: string | null;
+  /** Mode requested but not yet confirmed by the server. Rendered distinctly
+   *  from `mode` — never as selected — so an in-flight request can never be
+   *  mistaken for an applied one. */
+  pending?: "manual" | "copilot" | "autopilot" | null;
 }) {
   const options: { key: "manual" | "copilot" | "autopilot"; label: string; onColor: string }[] = [
     { key: "manual", label: "MANUAL", onColor: "var(--ink-dim)" },
@@ -124,39 +135,74 @@ function ExecutionModeControl({
     { key: "autopilot", label: "AUTOPILOT", onColor: "var(--amber)" },
   ];
   return (
-    <div
-      role="group"
-      aria-label="Execution mode"
-      title="Execution mode: Manual (signals only) → Copilot (approve each trade) → Autopilot (auto within guardrails). Leaving Autopilot returns to Copilot; choose Manual to stop approvals."
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 2,
-        height: 22, padding: 2, borderRadius: 11,
-        border: "1px solid var(--line-dim)", background: "var(--bg-3)",
-      }}
-    >
-      {options.map((opt) => {
-        const on = mode === opt.key;
-        return (
-          <button
-            key={opt.key}
-            type="button"
-            onClick={() => onChange(opt.key)}
-            aria-pressed={on}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              height: 18, padding: "0 8px", borderRadius: 9,
-              background: on ? "var(--cyan-dim)" : "transparent",
-              border: `1px solid ${on ? opt.onColor : "transparent"}`,
-              color: on ? opt.onColor : "var(--ink-faint)",
-              fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
-              cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
-            }}
-          >
-            <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? opt.onColor : undefined }} />
-            {opt.label}
-          </button>
-        );
-      })}
+    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+      <div
+        role="group"
+        aria-label="Execution mode"
+        title="Execution mode: Manual (signals only) → Copilot (approve each trade) → Autopilot (auto within guardrails). Leaving Autopilot returns to Copilot; choose Manual to stop approvals."
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 2,
+          height: 22, padding: 2, borderRadius: 11,
+          border: `1px solid ${error ? "rgba(239,68,68,0.55)" : "var(--line-dim)"}`,
+          background: "var(--bg-3)",
+          opacity: busy ? 0.7 : 1,
+        }}
+      >
+        {options.map((opt) => {
+          // `on` tracks the server-confirmed mode only. A requested-but-
+          // unconfirmed mode gets its own dashed treatment and never borrows
+          // the selected styling, so the control cannot imply a change that
+          // has not happened.
+          const on = mode === opt.key;
+          const isPending = pending === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => onChange(opt.key)}
+              aria-pressed={on}
+              aria-busy={isPending || undefined}
+              disabled={busy}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                height: 18, padding: "0 8px", borderRadius: 9,
+                background: on ? "var(--cyan-dim)" : "transparent",
+                border: isPending
+                  ? "1px dashed var(--ink-dim)"
+                  : `1px solid ${on ? opt.onColor : "transparent"}`,
+                color: on ? opt.onColor : "var(--ink-faint)",
+                fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
+                cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
+              }}
+            >
+              <span className={`dot ${on ? "live" : "dead"}`} style={{ background: on ? opt.onColor : undefined }} />
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      {error && (
+        // role="alert" (assertive), not "status" (polite): a refused change to
+        // the control that decides whether the desk trades unattended has to
+        // interrupt, not wait for a pause in screen-reader output. The block
+        // treatment replaces a 9px right-aligned span that was easy to miss
+        // entirely — which is how a 403 went unnoticed in production.
+        <div
+          role="alert"
+          data-testid="exec-mode-error"
+          style={{
+            fontFamily: "var(--sans)", fontSize: 11, fontWeight: 600,
+            color: "var(--red)",
+            background: "rgba(239,68,68,0.12)",
+            border: "1px solid rgba(239,68,68,0.55)",
+            borderRadius: 4,
+            padding: "5px 8px",
+            maxWidth: 340, textAlign: "left", lineHeight: 1.35,
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -188,12 +234,57 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
   // Execution mode (manual / copilot / autopilot) — the real backend tri-state.
   // Header shows a single three-way control so the state machine is visible.
   const [execMode, setExecMode] = useState<"manual" | "copilot" | "autopilot">("manual");
+  const [execBusy, setExecBusy] = useState(false);
+  const [execError, setExecError] = useState<string | null>(null);
+
+  // The mode being requested, if any. Kept separate from execMode so the
+  // control can show that a change is in flight without ever claiming it
+  // happened.
+  const [execPending, setExecPending] = useState<"manual" | "copilot" | "autopilot" | null>(null);
 
   const setExec = (m: "manual" | "copilot" | "autopilot") => {
-    setExecMode(m); // optimistic
+    if (m === execMode || execBusy) return;
+
+    // No optimistic update. This control decides whether the desk trades on
+    // its own, and the previous version flipped to the requested mode
+    // immediately, then silently reverted if the server refused. Against a
+    // 403 (the route is api-key gated and the browser holds no key) the
+    // toggle visibly moved to MANUAL and snapped back — an operator could
+    // reasonably read that as "trading is paused" while autopilot kept
+    // running. For a safety control, showing an unconfirmed state is the
+    // worst available failure, so execMode only ever moves on a server answer.
+    setExecPending(m);
+    setExecBusy(true);
+    setExecError(null);
     api.setExecutionMode(m)
-      .then((d: any) => { if (d.mode) setExecMode(d.mode); })
-      .catch(() => {});
+      .then((d: any) => {
+        if (d?.mode) {
+          setExecMode(d.mode);
+        } else {
+          // 2xx with no mode in the body: the change may or may not have
+          // applied. Say exactly that rather than assuming either way.
+          setExecError(
+            `Mode change returned no mode — current state unconfirmed. ` +
+            `Reload to re-read it from the server before acting.`,
+          );
+        }
+      })
+      .catch((err: any) => {
+        const msg = String(err?.message || err || "");
+        const denied = msg.includes("403") || msg.toLowerCase().includes("forbidden");
+        // Lead with the mode still in force. "Change failed" alone leaves the
+        // operator to infer the current state, which is the thing they most
+        // need to be certain about.
+        setExecError(
+          denied
+            ? `REFUSED — still ${execMode.toUpperCase()}. Needs Operator API Key: Risk → paste SECRET_KEY → Save.`
+            : `FAILED — still ${execMode.toUpperCase()}. ${msg || "Unknown error"}`,
+        );
+      })
+      .finally(() => {
+        setExecPending(null);
+        setExecBusy(false);
+      });
   };
   const [regime, setRegime] = useState<{regime: string; equity_allowed: boolean; options_allowed: boolean; equity_strategies: string[]; options_strategies: string[]} | null>(null);
 
@@ -322,7 +413,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         {sep}
       </>}
       <span style={{ color: "var(--ink-dim)", marginRight: 6 }}>MODE</span>
-      <span className={`mode-badge ${mode}`} style={{ marginRight: 20 }}>{mode}</span>
+      <Badge kind="mode" tone={mode as "conservative" | "balanced" | "aggressive" | "scalper"} style={{ marginRight: 20 }}>{mode}</Badge>
       {/* Guard on regime.regime specifically, not just the object: a partial
           or error payload (e.g. `{}`) is still a truthy object but has no
           `.regime` string, and `.includes()`/`.replace()` on `undefined`
@@ -347,9 +438,7 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
-    <div style={{
-      background: "var(--bg-3)",
-      borderBottom: "1px solid var(--line-dim)",
+    <div className="instrument-ticker" style={{
       display: "flex",
       alignItems: "center",
       height: 38,
@@ -396,13 +485,11 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
               style={{ flexShrink: 0, filter: "drop-shadow(0 0 4px rgba(212,175,55,.35))" }}
             />
             <div style={{ display: "flex", flexDirection: "column", gap: 2, overflow: "hidden" }}>
-              <span style={{
-                fontFamily: "'Georgia', 'Times New Roman', serif",
-                fontWeight: 400, fontSize: 17, letterSpacing: "0.01em", lineHeight: 1, whiteSpace: "nowrap",
-              }}>
-                {/* Matches the marketing site's wordmark treatment — same
-                    weight/spacing/phosphor glow, see olbos.trade header. */}
-                <span style={{ color: "var(--brand)", textShadow: "0 0 10px rgba(212,175,55,.3)" }}>OLBOS</span>
+              <span
+                className="brand-wordmark"
+                style={{ fontSize: 17, lineHeight: 1, whiteSpace: "nowrap" }}
+              >
+                OLBOS
               </span>
               <span style={{
                 fontFamily: "var(--mono)", fontSize: 8, fontWeight: 500,
@@ -420,12 +507,12 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
         </div>
       </div>
 
-      {/* Execution mode — single tri-state control */}
+      {/* Execution mode (trading style lives in Desk Settings) */}
       <div style={{
         display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
         padding: "0 12px", borderLeft: "1px solid var(--line-dim)",
       }}>
-        <ExecutionModeControl mode={execMode} onChange={setExec} />
+        <ExecutionModeControl mode={execMode} onChange={setExec} busy={execBusy} error={execError} pending={execPending} />
       </div>
 
       {/* Market status + clock — pinned right */}
@@ -544,6 +631,8 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
         >
           <button
             onClick={onHeaderClick}
+            aria-label={g.label}
+            aria-current={isActive ? "page" : undefined}
             style={{
               width: "100%", height: 38, display: "flex", alignItems: "center",
               justifyContent: showLabels ? "flex-start" : "center",
@@ -594,6 +683,8 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
               onClick={() => onNav(c.key)}
               onMouseEnter={() => setHovered(c.key)}
               onMouseLeave={() => setHovered(null)}
+              aria-label={c.label}
+              aria-current={subActive ? "page" : undefined}
               style={{
                 width: "100%", height: 32, display: "flex", alignItems: "center",
                 paddingLeft: 40, gap: 0,
@@ -702,13 +793,13 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
               onClick={() => setAccountMenuOpen(false)}
               style={{ position: "fixed", inset: 0, zIndex: 90 }}
             />
-            <div style={{
+            <div className="glass-surface" style={{
               position: "absolute",
               ...(showLabels
                 ? { bottom: "100%", left: 8, right: 8, marginBottom: 4 }
                 : { bottom: 0, left: 52 }),
               width: showLabels ? undefined : 200,
-              background: "var(--bg-4)", border: "1px solid var(--line-dim)",
+              border: "1px solid var(--line-dim)",
               borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
               zIndex: 100, overflow: "hidden",
             }}>
@@ -740,27 +831,106 @@ function Sidebar({ active, onNav, expanded, isMobile = false }: {
 }
 
 // ── Status bar ────────────────────────────────────────────────────────────────
+function StatusLamp({
+  label,
+  on,
+  warn,
+}: {
+  label: string;
+  on: boolean;
+  warn?: boolean;
+}) {
+  const color = warn ? "var(--amber)" : on ? "var(--green)" : "var(--ink-faint)";
+  return (
+    <span
+      title={`${label}: ${warn ? "warn" : on ? "on" : "off"}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        color,
+        textTransform: "uppercase",
+      }}
+    >
+      <span
+        className={`dot ${on || warn ? "live" : "dead"}`}
+        style={{ background: color, width: 6, height: 6 }}
+      />
+      {label}
+    </span>
+  );
+}
+
 function StatusBar({ page }: { page: string }) {
   const label = statusLabelForPage(page, activeNavModel());
+  const [killOn, setKillOn] = useState(false);
+  const [execMode, setExecMode] = useState("manual");
+  const [styleMode, setStyleMode] = useState("balanced");
+  const [rotationOn, setRotationOn] = useState(false);
+  const [paper, setPaper] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      Promise.all([
+        api.getTradeDeskKillSwitch().catch(() =>
+          api.getKillSwitchStatus().catch(() => ({})),
+        ),
+        api.getExecutionMode().catch(() => ({})),
+        api.getCurrentMode().catch(() => ({})),
+        api.getGuardrailStatus().catch(() => ({})),
+        fetch("/api/market/broker").then((r) => r.json()).catch(() => ({})),
+      ]).then(([kill, exec, mode, guard, broker]) => {
+        if (!alive) return;
+        setKillOn(!!(kill as any).engaged || !!(kill as any).is_engaged);
+        setExecMode(((exec as any).mode || "manual").toLowerCase());
+        setStyleMode(((mode as any).mode || "balanced").toLowerCase());
+        setRotationOn(!!(guard as any).position_rotation_on_max);
+        if ((broker as any).paper_mode === false) setPaper(false);
+        else if ((broker as any).paper_mode === true) setPaper(true);
+        else if (typeof (guard as any).paper_mode === "boolean") {
+          setPaper(!!(guard as any).paper_mode);
+        }
+      });
+    };
+    load();
+    const id = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
   return (
-    <div style={{
+    <div className="instrument-status" style={{
       height: 28,
-      background: "var(--bg-3)",
-      borderTop: "1px solid var(--line-dim)",
       display: "flex",
       alignItems: "center",
       padding: "0 16px",
-      gap: 24,
+      gap: 16,
       fontFamily: "var(--mono)",
       fontSize: 10,
       color: "var(--ink-faint)",
       letterSpacing: "0.08em",
       flexShrink: 0,
     }}>
-      <span style={{ color: "var(--cyan)", textTransform: "uppercase" }}>{label}</span>
-      <span id="broker-status-bar">IBKR GATEWAY</span>
-      <span>SPY · QQQ · IWM · NVDA · AAPL</span>
+      <span style={{ color: "var(--brand)", textTransform: "uppercase" }}>{label}</span>
+      <span
+        style={{
+          color: paper ? "var(--green)" : "var(--red)",
+          fontWeight: 700,
+          textTransform: "uppercase",
+        }}
+        title={paper ? "Paper trading" : "Live trading — real capital"}
+      >
+        {paper ? "PAPER" : "LIVE"}
+      </span>
+      <StatusLamp label="Kill" on={killOn} warn={killOn} />
+      <StatusLamp label={`Exec ${execMode}`} on={execMode !== "manual"} warn={execMode === "autopilot"} />
+      <StatusLamp label={`Style ${styleMode}`} on />
+      <StatusLamp label="Rotation" on={rotationOn} />
       <div style={{ flex: 1 }} />
+      <span id="broker-status-bar">IBKR GATEWAY</span>
       <span style={{ color: "var(--brand)", fontWeight: 700 }}>Olbos v5.0</span>
     </div>
   );
@@ -785,7 +955,9 @@ export default function TerminalLayout({ children, activePage, onNav }: {
 
   return (
     <TerminalNavProvider onNav={handleNav}>
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    {/* .app-shell carries the height: 100dvh fallback — 100vh on mobile
+        Safari counts the URL bar, which pushes the status bar off screen. */}
+    <div className="app-shell" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <ErrorBoundary label="Ticker strip">
         <TickerStrip onToggle={() => setSidebarExpanded(p => !p)} sidebarExpanded={sidebarExpanded} isMobile={isMobile} />
       </ErrorBoundary>
@@ -820,6 +992,18 @@ export default function TerminalLayout({ children, activePage, onNav }: {
         </main>
       </div>
       <StatusBar page={activePage} />
+      {/* Phones navigate from the bottom. The sidebar stays as the overflow,
+          reached through "More", rather than becoming a second nav surface. */}
+      {isMobile && (
+        <ErrorBoundary label="Bottom navigation">
+          <MobileBottomNav
+            active={activePage}
+            onNav={handleNav}
+            onOpenMore={() => setSidebarExpanded(p => !p)}
+            moreOpen={sidebarExpanded}
+          />
+        </ErrorBoundary>
+      )}
     </div>
     </TerminalNavProvider>
   );

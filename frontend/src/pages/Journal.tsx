@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { Panel, StatTile, Badge, Button } from "../components/ui";
 
 interface Entry {
   id: string;
@@ -64,31 +65,6 @@ const holdDays = (entry: string | null, exit: string | null) => {
 
 const currentMonth = () => new Date().toISOString().slice(0, 7);
 
-function StatTile({ label, val, color, borderRight }: { label: string; val: string; color?: string; borderRight?: boolean }) {
-  return (
-    <div style={{ padding: "16px 18px", borderRight: borderRight ? "1px solid var(--line-dim)" : "none" }}>
-      <div className="kicker" style={{ marginBottom: 6 }}>{label}</div>
-      <div className="data-val" style={{ color: color || "var(--ink)" }}>{val}</div>
-    </div>
-  );
-}
-
-function Panel({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)" }}>
-      <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--line-dim)" }}>
-        <span className="panel-title">{title}</span>
-        {sub && (
-          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)", marginLeft: 12 }}>
-            {sub}
-          </span>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function EmptyState({ title, sub }: { title: string; sub: string }) {
   return (
     <div style={{ padding: 24, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)" }}>
@@ -105,17 +81,16 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
 
   return (
     <div
+      className="instrument-card"
       onClick={onClick}
       style={{
-        background: "var(--bg-2)",
-        border: "1px solid var(--line-dim)",
         borderLeft: `3px solid ${isOpen ? "var(--cyan)" : (e.pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)"}`,
         padding: "14px 16px",
         cursor: "pointer",
         transition: "background 0.1s",
       }}
       onMouseEnter={ev => (ev.currentTarget.style.background = "var(--bg-3)")}
-      onMouseLeave={ev => (ev.currentTarget.style.background = "var(--bg-2)")}
+      onMouseLeave={ev => (ev.currentTarget.style.background = "")}
     >
       {/* Row 1: symbol + P&L */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -123,13 +98,9 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
           <span style={{ fontFamily: "var(--mono)", fontSize: 15, fontWeight: 700, color: "var(--cyan)" }}>
             {e.underlying || "—"}
           </span>
-          <span style={{
-            fontFamily: "var(--mono)", fontSize: 9, padding: "2px 7px",
-            border: `1px solid ${isOpen ? "rgba(6,182,212,0.4)" : "rgba(34,197,94,0.3)"}`,
-            color: isOpen ? "var(--cyan)" : "var(--green)",
-          }}>
+          <Badge kind="tag" tone={isOpen ? "var(--cyan)" : "var(--green)"}>
             {isOpen ? "OPEN" : "CLOSED"}
-          </span>
+          </Badge>
           <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-dim)" }}>
             {e.strategy?.replace(/_/g, " ").toUpperCase() || "—"}
           </span>
@@ -175,14 +146,11 @@ function EntryCard({ e, onClick }: { e: Entry; onClick: () => void }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>RULES</span>
           {e.followed_rules == null ? (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--amber)",
-              border: "1px solid rgba(245,158,11,0.4)", padding: "0px 5px" }}>ADD</span>
+            <Badge kind="tag" tone="var(--amber)">ADD</Badge>
           ) : e.followed_rules ? (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--green)",
-              border: "1px solid rgba(34,197,94,0.3)", padding: "0px 5px" }}>YES ✓</span>
+            <Badge kind="tag" tone="var(--green)">YES ✓</Badge>
           ) : (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--red)",
-              border: "1px solid rgba(239,68,68,0.3)", padding: "0px 5px" }}>NO ✗</span>
+            <Badge kind="tag" tone="var(--red)">NO ✗</Badge>
           )}
         </div>
       </div>
@@ -328,17 +296,17 @@ export default function Journal() {
           { key: "mistakes",    label: "MISTAKES" },
           { key: "review",      label: "MONTHLY REVIEW" },
         ] as const).map(t => (
-          <button key={t.key} className={`btn-t ${tab === t.key ? "active" : ""}`}
-            onClick={() => setTab(t.key)}>{t.label}</button>
+          <Button key={t.key} active={tab === t.key}
+            onClick={() => setTab(t.key)}>{t.label}</Button>
         ))}
         {tab === "entries" && (
           <>
             <div style={{ width: 1, height: 16, background: "var(--line-dim)", margin: "0 4px" }} />
             {(["all","open","closed"] as const).map(f => (
-              <button key={f} className={`btn-t ${filter === f ? "active" : ""}`}
+              <Button key={f} active={filter === f}
                 style={{ fontSize: 10 }} onClick={() => setFilter(f)}>
                 {f.toUpperCase()}
-              </button>
+              </Button>
             ))}
           </>
         )}
@@ -369,12 +337,12 @@ export default function Journal() {
 
               {/* Overview strip */}
               {entries.length > 0 && (
-                <div style={{ border: "1px solid var(--line-dim)", background: "var(--bg-2)", display: "grid", gridTemplateColumns: "repeat(5,1fr)" }}>
-                  <StatTile label="Total P&L"       val={fmt(totalPnl)}                         color={totalPnl >= 0 ? "var(--green)" : "var(--red)"} borderRight />
-                  <StatTile label="Win Rate"        val={closed > 0 ? `${winRate}%` : "—"}       color={winRate >= 50 ? "var(--green)" : "var(--amber)"} borderRight />
-                  <StatTile label="Closed / Open"   val={`${closed} / ${open}`}                  borderRight />
-                  <StatTile label="Rules Followed"  val={rulesPct != null ? `${rulesPct}%` : "—"} color={rulesPct != null && rulesPct >= 80 ? "var(--green)" : "var(--amber)"} borderRight />
-                  <StatTile label="Total Entries"   val={String(entries.length)} />
+                <div className="instrument-stat-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)" }}>
+                  <StatTile variant="divider" size="default" label="Total P&L"       value={fmt(totalPnl)}                         tone={totalPnl >= 0 ? "var(--green)" : "var(--red)"} />
+                  <StatTile variant="divider" size="default" label="Win Rate"        value={closed > 0 ? `${winRate}%` : "—"}       tone={winRate >= 50 ? "var(--green)" : "var(--amber)"} />
+                  <StatTile variant="divider" size="default" label="Closed / Open"   value={`${closed} / ${open}`} />
+                  <StatTile variant="divider" size="default" label="Rules Followed"  value={rulesPct != null ? `${rulesPct}%` : "—"} tone={rulesPct != null && rulesPct >= 80 ? "var(--green)" : "var(--amber)"} />
+                  <StatTile variant="divider" size="default" label="Total Entries"   value={String(entries.length)} />
                 </div>
               )}
 
@@ -394,16 +362,20 @@ export default function Journal() {
         {/* ── Performance tab ── */}
         {tab === "performance" && (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-            <Panel title="Rule Breach Impact" sub="Requires followed_rules set on trades">
+            <Panel
+              padding={0}
+              title="Rule Breach Impact"
+              action={<span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>Requires followed_rules set on trades</span>}
+            >
               {!impact ? (
                 <EmptyState title="NOT ENOUGH DATA" sub="Need 5+ trades with followed_rules data. Click any trade card and mark whether you followed the rules." />
               ) : (
                 <>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
-                    <StatTile label="Followed — Avg P&L"   val={fmt(impact.followed_avg_pnl)}                    color="var(--green)" borderRight />
-                    <StatTile label="Breached — Avg P&L"   val={fmt(impact.breached_avg_pnl)}                    color="var(--red)"   borderRight />
-                    <StatTile label="Followed — Win Rate"  val={`${(impact.followed_win_rate*100).toFixed(1)}%`} color="var(--green)" borderRight />
-                    <StatTile label="Cost of Breach/Trade"  val={fmt(impact.pnl_delta)}                          color="var(--amber)" />
+                    <StatTile variant="divider" size="default" label="Followed — Avg P&L"   value={fmt(impact.followed_avg_pnl)}                    tone="var(--green)" />
+                    <StatTile variant="divider" size="default" label="Breached — Avg P&L"   value={fmt(impact.breached_avg_pnl)}                    tone="var(--red)" />
+                    <StatTile variant="divider" size="default" label="Followed — Win Rate"  value={`${(impact.followed_win_rate*100).toFixed(1)}%`} tone="var(--green)" />
+                    <StatTile variant="divider" size="default" label="Cost of Breach/Trade"  value={fmt(impact.pnl_delta)}                          tone="var(--amber)" />
                   </div>
                   <div style={{ padding: "10px 14px", borderTop: "1px solid var(--line-dim)",
                     fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)" }}>
@@ -413,7 +385,11 @@ export default function Journal() {
               )}
             </Panel>
 
-            <Panel title="Performance by Tag" sub="Avg / total P&L for each tag you've applied to a closed trade">
+            <Panel
+              padding={0}
+              title="Performance by Tag"
+              action={<span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>Avg / total P&L for each tag you've applied to a closed trade</span>}
+            >
               {tagPerfLoading ? (
                 <EmptyState title="LOADING..." sub="" />
               ) : !tagPerf || tagPerf.length === 0 ? (
@@ -445,7 +421,11 @@ export default function Journal() {
         {/* ── Mistakes tab ── */}
         {tab === "mistakes" && (
           <div style={{ padding: 16 }}>
-            <Panel title="Mistake Frequency" sub="Counted from mistake_tags added during post-trade review">
+            <Panel
+              padding={0}
+              title="Mistake Frequency"
+              action={<span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-faint)" }}>Counted from mistake_tags added during post-trade review</span>}
+            >
               {mistakesLoading ? (
                 <EmptyState title="LOADING..." sub="" />
               ) : !mistakes || Object.keys(mistakes).length === 0 ? (
@@ -474,7 +454,7 @@ export default function Journal() {
         {/* ── Monthly Review tab ── */}
         {tab === "review" && (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-            <Panel title={`Monthly Review — ${month}`}>
+            <Panel padding={0} title={`Monthly Review — ${month}`}>
               {reviewLoading ? (
                 <EmptyState title="LOADING..." sub="" />
               ) : !review || review.total_trades === 0 ? (
@@ -482,10 +462,10 @@ export default function Journal() {
               ) : (
                 <>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)" }}>
-                    <StatTile label="Total Trades"     val={String(review.total_trades)}                    borderRight />
-                    <StatTile label="Win Rate"         val={pct(review.win_rate)}                           color={review.win_rate >= 0.5 ? "var(--green)" : "var(--amber)"} borderRight />
-                    <StatTile label="Total P&L"        val={fmt(review.total_pnl)}                          color={review.total_pnl >= 0 ? "var(--green)" : "var(--red)"} borderRight />
-                    <StatTile label="Rules Followed"   val={`${review.rules_followed_pct.toFixed(0)}%`}     color={review.rules_followed_pct >= 80 ? "var(--green)" : "var(--amber)"} />
+                    <StatTile variant="divider" size="default" label="Total Trades"     value={String(review.total_trades)} />
+                    <StatTile variant="divider" size="default" label="Win Rate"         value={pct(review.win_rate)}                           tone={review.win_rate >= 0.5 ? "var(--green)" : "var(--amber)"} />
+                    <StatTile variant="divider" size="default" label="Total P&L"        value={fmt(review.total_pnl)}                          tone={review.total_pnl >= 0 ? "var(--green)" : "var(--red)"} />
+                    <StatTile variant="divider" size="default" label="Rules Followed"   value={`${review.rules_followed_pct.toFixed(0)}%`}     tone={review.rules_followed_pct >= 80 ? "var(--green)" : "var(--amber)"} />
                   </div>
 
                   {(review.top_tags.length > 0 || review.top_mistakes.length > 0) && (
@@ -532,8 +512,7 @@ export default function Journal() {
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
           display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
         }}>
-          <div style={{
-            background: "var(--bg-2)", border: "1px solid var(--line-dim)",
+          <div className="instrument-card" style={{
             maxWidth: 500, width: "100%", padding: 28,
           }}>
             <div className="panel-title" style={{ marginBottom: 20 }}>ADD TRADE NOTES</div>
@@ -546,12 +525,12 @@ export default function Journal() {
                   { val: false, label: "NO — broke a rule",     color: "var(--red)"   },
                   { val: null,  label: "Skip",                  color: "var(--ink-dim)" },
                 ].map(o => (
-                  <button key={String(o.val)}
-                    className={`btn-t ${editing.followed_rules === o.val ? "active" : ""}`}
+                  <Button key={String(o.val)}
+                    active={editing.followed_rules === o.val}
                     style={editing.followed_rules === o.val ? { borderColor: o.color, color: o.color } : {}}
                     onClick={() => setEditing({ ...editing, followed_rules: o.val })}>
                     {o.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -588,10 +567,10 @@ export default function Journal() {
             </div>
 
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn-t" onClick={() => setEditing(null)} style={{ flex: 1 }}>CANCEL</button>
-              <button className="btn-t active" onClick={saveEdit} disabled={saving} style={{ flex: 2 }}>
+              <Button onClick={() => setEditing(null)} style={{ flex: 1 }}>CANCEL</Button>
+              <Button active onClick={saveEdit} disabled={saving} style={{ flex: 2 }}>
                 {saving ? "SAVING..." : "SAVE NOTES"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

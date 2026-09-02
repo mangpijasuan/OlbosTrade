@@ -8,6 +8,7 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -25,7 +26,8 @@ jobs:
         run: >
           pytest tests/test_trade_frequency_controller.py tests/test_symphony.py
           tests/test_options_intelligence.py tests/test_performance_analytics.py
-          tests/test_portfolio_engine.py tests/test_strategy_health.py
+          tests/test_portfolio_engine.py tests/test_portfolio_correlation.py
+          tests/test_strategy_health.py
           tests/test_volatility_sizing.py tests/test_observability.py
           tests/test_research_lab.py tests/test_feature_store.py
           tests/test_strategy_registry.py tests/test_meta_strategy.py
@@ -35,7 +37,14 @@ jobs:
           tests/test_margin_monitor.py tests/test_unusual_activity.py
           tests/test_income_screener.py tests/test_flow_recommender.py
           tests/test_options_decision_engine.py
+          tests/test_kill_switch.py tests/test_kill_switch_engage.py
+          tests/test_guardrails.py tests/test_risk_manager.py
+          tests/test_position_reconciler.py
           --cov=app.services.options_decision_engine
+          --cov=app.services.kill_switch
+          --cov=app.services.guardrails
+          --cov=app.services.risk_manager
+          --cov=app.services.position_reconciler
           --cov=app.services.account_guard
           --cov=app.services.margin_monitor
           --cov=app.services.unusual_activity
@@ -61,3 +70,29 @@ jobs:
           --cov-report=term-missing --cov-fail-under=95
       - name: Whole-app coverage (ratchet floor; target 95%)
         run: pytest --cov=app --cov-report=term-missing
+      - name: Dependency vulnerability scan (informational)
+        # Non-blocking: CVE disclosures land on a schedule unrelated to any
+        # commit here, so failing the build on one would block unrelated
+        # pushes. Surface it in the log instead of gating on it.
+        run: pip install pip-audit && pip-audit -r requirements.txt || true
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npx vitest run
+      - name: Dependency vulnerability scan (informational)
+        run: npm audit --audit-level=high || true

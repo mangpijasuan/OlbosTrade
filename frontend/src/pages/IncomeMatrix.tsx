@@ -6,6 +6,7 @@
  * breakeven, and probability the option expires OTM. Free yfinance snapshot.
  */
 import React, { useEffect, useState } from "react";
+import { Button } from "../components/ui";
 
 interface Row {
   ticker: string; strategy: string; type: "PUT" | "CALL"; strike: number;
@@ -43,10 +44,10 @@ export default function IncomeMatrix({ initialFilter = "all" }: { initialFilter?
         </span>
         <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
           {(["all","csp","cc"] as const).map(f => (
-            <button key={f} className={`btn-t ${f === filter ? "active" : ""}`}
+            <Button key={f} active={f === filter}
               style={{ padding: "2px 10px", fontSize: 10 }} onClick={() => setFilter(f)}>
               {f === "all" ? "ALL" : f === "csp" ? "PUTS" : "CALLS"}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

@@ -37,8 +37,15 @@ class Trade(Base):
     long_strike_2: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
 
     expiration: Mapped[date] = mapped_column(Date, nullable=False)
-    entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    exit_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    exit_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Take-profit level as placed at entry. For equities the stop lives in
+    # long_strike and the entry in credit_received/short_strike; the target
+    # had no home until now, which made a target fill unprovable after the
+    # fact. Null on every row written before migration 0028, and on any
+    # entry that genuinely placed no profit leg.
+    target_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
 
     # P&L
     credit_received: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
@@ -66,7 +73,7 @@ class Trade(Base):
 
     # Status
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="open",
+        String(20), nullable=False, default="open", index=True,
         comment="open | closed | expired"
     )
     exit_reason: Mapped[Optional[str]] = mapped_column(
@@ -76,7 +83,16 @@ class Trade(Base):
 
     # Quantity and mode
     quantity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=1)
+    # Risk-style mode active at entry: conservative|balanced|aggressive|scalper.
+    # Feeds ModeAnalyticsEngine and the Trade Desk mode badge.
     trading_mode_at_entry: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Who/what approved the trade: manual|autopilot|user|copilot|scan_panel.
+    # A separate concept from trading_mode_at_entry — do not conflate the two.
+    approved_by: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Market regime at entry (e.g. low_vol_trending) — same value already
+    # threaded into JournalEntry.market_context; this makes it queryable
+    # for a regime-bucketed performance ledger without a join.
+    regime: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
     # AI & execution
     signal_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4), nullable=True)

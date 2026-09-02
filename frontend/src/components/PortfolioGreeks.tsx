@@ -3,6 +3,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { Badge } from "./ui";
 
 interface Greeks {
   net_delta: number;
@@ -46,9 +47,8 @@ export default function PortfolioGreeks() {
 
   if (!greeks) {
     return (
-      <div style={{
-        background: "var(--bg-2)", border: "1px solid var(--line-dim)",
-        borderRadius: 4, padding: "12px 16px",
+      <div className="instrument-card" style={{
+        padding: "12px 16px",
         fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-faint)",
       }}>
         Loading Greeks...
@@ -57,12 +57,13 @@ export default function PortfolioGreeks() {
   }
 
   return (
-    <div style={{
-      background: "var(--bg-2)",
-      border: `1px solid ${greeks.needs_hedge ? "var(--amber)" : "var(--line-dim)"}`,
-      borderRadius: 4,
-      padding: "12px 20px",
-    }}>
+    <div
+      className="instrument-card"
+      style={{
+        border: `1px solid ${greeks.needs_hedge ? "var(--amber)" : "var(--line-dim)"}`,
+        padding: "12px 20px",
+      }}
+    >
       <div style={{
         display: "flex", alignItems: "center", gap: 4,
         marginBottom: 10, fontFamily: "var(--mono)", fontSize: 10,
@@ -70,20 +71,14 @@ export default function PortfolioGreeks() {
       }}>
         PORTFOLIO GREEKS
         {greeks.needs_hedge && (
-          <span style={{
-            color: "var(--amber)", border: "1px solid var(--amber)",
-            borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8,
-          }}>
+          <Badge kind="tag" tone="var(--amber)" style={{ borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8, opacity: 1 }}>
             HEDGE NEEDED
-          </span>
+          </Badge>
         )}
         {greeks.is_delta_neutral && (
-          <span style={{
-            color: "var(--green)", border: "1px solid var(--green)",
-            borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8,
-          }}>
+          <Badge kind="tag" tone="var(--green)" style={{ borderRadius: 2, padding: "1px 5px", fontSize: 9, marginLeft: 8, opacity: 1 }}>
             DELTA NEUTRAL
-          </span>
+          </Badge>
         )}
       </div>
 

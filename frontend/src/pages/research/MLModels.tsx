@@ -4,6 +4,7 @@
  * Backed by /api/research/model-performance. See backend/app/services/signal_scorer.py.
  */
 import React, { useEffect, useState } from "react";
+import { Badge } from "../../components/ui";
 
 interface ValidationMetrics {
   mae?: number;
@@ -115,12 +116,11 @@ export default function MLModels() {
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 640 }}>
         {FEATURES.map(f => (
-          <span key={f} style={{
-            fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--cyan)",
-            border: "1px solid var(--line-dim)", padding: "3px 8px",
+          <Badge key={f} kind="tag" tone="var(--cyan)" style={{
+            fontSize: 10.5, border: "1px solid var(--line-dim)", padding: "3px 8px", opacity: 1,
           }}>
             {f}
-          </span>
+          </Badge>
         ))}
       </div>
     </div>
