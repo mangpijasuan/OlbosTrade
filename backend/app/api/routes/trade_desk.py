@@ -1504,6 +1504,17 @@ async def _execute_signal(signal: dict, approved_by: str = "autopilot") -> dict:
             logger.critical("Order blocked for %s — account guard: %s", ticker, _detail)
             return _blocked(f"account_guard: {_detail}")
 
+        # ── Live tenure guard (fail closed) — the charter's paper-trading rule ──
+        # "Paper trade for 3 months minimum before any live capital." A no-op in
+        # paper mode; on a live account it blocks until the track record meets
+        # the configured floors. Manual orders are NOT exempt — like the account
+        # guard above, this is a safety floor, not a suggestion.
+        from app.services.live_tenure_guard import verify_live_tenure
+        _ok, _detail = await verify_live_tenure()
+        if not _ok:
+            logger.critical("Order blocked for %s — live tenure guard: %s", ticker, _detail)
+            return _blocked(f"live_tenure_guard: {_detail}")
+
         # ── Margin guard — block new entries when margin is critical ────────────
         # Fail-OPEN: margin figures are advisory and may be absent (paper); we only
         # block on a positively-detected critical state, never on missing data.

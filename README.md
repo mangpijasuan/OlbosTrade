@@ -423,6 +423,8 @@ Test coverage:
 | `MAX_MONTHLY_LOSS_PCT` | `0.10` | 10% monthly stop |
 | `MAX_CONCURRENT_POSITIONS` | `5` | Max open positions at once |
 | `MAX_TRADES_PER_DAY` | `6` | Daily trade cap |
+| `LIVE_MIN_PAPER_TRADING_DAYS` | `90` | Paper-trading days required before live orders (live mode only) |
+| `LIVE_MIN_PAPER_CLOSED_TRADES` | `20` | Finished trades required before live orders (live mode only) |
 | `SIGNAL_SCORE_THRESHOLD` | `0.65` | Legacy classifier threshold (v1 model) |
 | `MODEL_PATH` | `ml/model_registry/signal_scorer_v1.pkl` | Path to trained signal scorer |
 | `SENDGRID_API_KEY` | `` | Optional — for email alerts |

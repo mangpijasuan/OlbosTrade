@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     margin_warn_pct: float = Field(default=0.50)
     margin_critical_pct: float = Field(default=0.80)
 
+    # ── Paper → live tenure gate ──────────────────────────────────────────
+    # The charter requires a paper-trading track record before any live
+    # capital ("paper trade for 3 months minimum"). Enforced by
+    # app.services.live_tenure_guard, which blocks live order submission
+    # until both floors below are met. Applies ONLY when configured live;
+    # in paper mode the gate is a no-op. Set days to 0 to disable the gate
+    # entirely (a deliberate, auditable config change — not a runtime
+    # override, which the charter forbids).
+    live_min_paper_trading_days: int = Field(default=90)
+    # A time floor alone would pass an install that sat idle for 3 months and
+    # placed two trades, so require a minimum number of *finished* trades too.
+    live_min_paper_closed_trades: int = Field(default=20)
+
     # ── Paper visibility mode ─────────────────────────────────────────────
     # Lets the app generate more activity in paper mode so the operator can
     # confirm scans, execution, and trade history without weakening live rules.

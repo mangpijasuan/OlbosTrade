@@ -34,6 +34,7 @@ jobs:
           tests/test_allocation_engine.py tests/test_scenario_engine.py
           tests/test_portfolio_risk_sim.py tests/test_journal_intelligence.py
           tests/test_llm_provider.py tests/test_account_guard.py
+          tests/test_live_tenure_guard.py
           tests/test_margin_monitor.py tests/test_unusual_activity.py
           tests/test_income_screener.py tests/test_flow_recommender.py
           tests/test_options_decision_engine.py
@@ -46,6 +47,7 @@ jobs:
           --cov=app.services.risk_manager
           --cov=app.services.position_reconciler
           --cov=app.services.account_guard
+          --cov=app.services.live_tenure_guard
           --cov=app.services.margin_monitor
           --cov=app.services.unusual_activity
           --cov=app.services.income_screener
