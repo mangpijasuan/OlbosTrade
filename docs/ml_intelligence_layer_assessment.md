@@ -119,11 +119,60 @@ adjusted bars — universe mean 4.37% vs the DB's 4.46%, 1.0x on six of seven
 spot-checked tickers, and MNST is *higher* in clean data (24.66%). The
 watchlist is genuinely that volatile.
 
+## Skill-test calibration (2026-09-10) — the instrument, not a result
+
+`confidence_skill_test.py` **has still not been run**; no AUC exists yet. What
+was done instead is calibrating it, because a measurement worth recording needs
+an instrument worth trusting, and the test cannot answer this about itself.
+
+**The arithmetic is correct.** `auc()` matches sklearn's `roc_auc_score` to
+1.1e-16 over 500 randomised cases including heavy ties (confidence is coarsely
+quantised, so ties are the common case, and the average-rank handling is the
+right one). Edge cases hold: perfect separation → 1.0, all-tied → 0.5,
+single-class → NaN. `wilson()` reproduces the textbook interval for k=1, n=10.
+
+**But its verdict is weaker than it reads, at this sample size.**
+`confidence_skill_calibration.py` simulates 500 null datasets shaped like the
+real one — 14 days × 52/day, ~7% base rate, confidence *and* hit-rate both
+clustering by day but drawn independently, so true AUC is 0.500 by
+construction — and counts how often each interval wrongly excludes 0.5:
+
+| interval | coverage (nominal 95%) | false positives | mean width |
+|---|---|---|---|
+| date-clustered | 91.2% | **8.8%** | 0.207 |
+| naive (row bootstrap) | 82.6% | **17.4%** | 0.162 |
+
+- **The clustering earns its place** — it roughly halves the false-positive
+  rate. A naive row bootstrap would announce skill on about one run in six of
+  data that has none. The design choice was right.
+- **Even clustered, the interval is anti-conservative** here (~1.8× nominal),
+  and the point estimate is barely informative: a signal with *zero* skill
+  produced AUCs spanning **0.319 to 0.673**.
+
+So when the test is finally run: an AUC near 0.55–0.60 whose CI just clears 0.5
+is **not** evidence of edge — it is inside the range a skill-free signal
+produces by chance on 14 days. Only a large effect, or a re-run on a sample
+spanning months, should move a decision.
+
+Method note: `--draws` defaults to 2000 to match the shipping test's own
+`DRAWS`. Calibrating with fewer draws measures a noisier interval than the one
+that ships and overstates its false-positive rate — an earlier pass at 300
+draws did exactly that. Coverage is itself a Monte-Carlo estimate (~1.3 points
+of standard error at 500 reps), so read it to the nearest point.
+
+Timing: per the decision below, the label space first completes around
+mid-September 2026 (`expired` fires at 20 trading bars). Running the skill test
+*after* that, on an uncensored sample, is worth considerably more than running
+it now.
+
 ## Still open
 
 - Whether the deterministic Alpha Edge beats a coin flip out-of-sample has
   never been measured. The spec's §11 fusion assumes it is worth fusing with;
-  worth measuring before weighting ML against it.
+  worth measuring before weighting ML against it. The instrument for this is
+  now calibrated (above) — what is missing is the run itself, which needs the
+  production database: `docker compose exec backend python
+  scripts/confidence_skill_test.py` (read-only; no writes, no orders).
 - Options flow / positioning features (§4) have no data source — they need a
   paid feed.
 - The account runs on `reqMarketDataType(4)` (delayed 15-min), which undermines
