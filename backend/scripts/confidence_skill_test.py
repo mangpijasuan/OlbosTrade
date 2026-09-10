@@ -33,9 +33,9 @@ from scipy import stats
 
 sys.path.insert(0, "/app")
 
-from sqlalchemy import text  # noqa: E402
-
-from app.core.database import AsyncSessionLocal  # noqa: E402
+# The DB imports live inside main() rather than at module scope so auc() and
+# wilson() can be imported and checked from a machine with no database — see
+# confidence_skill_calibration.py, which needs the estimator but not the data.
 
 RNG = np.random.default_rng(20260828)
 DRAWS = 2000
@@ -61,6 +61,10 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 async def main() -> None:
+    from sqlalchemy import text
+
+    from app.core.database import AsyncSessionLocal
+
     async with AsyncSessionLocal() as s:
         rows = (await s.execute(text("""
             SELECT confidence, status, generated_at::date AS d, ticker
