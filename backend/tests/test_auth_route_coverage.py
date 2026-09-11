@@ -69,6 +69,10 @@ def test_every_registered_route_is_protected_or_explicitly_public():
     expected_public = {
         "/api/auth/login",
         "/api/auth/logout",
+        # Boot-time "is auth even on, and do I hold a session". Public because
+        # with auth off a 401 from /me is ambiguous between "logged out" and
+        # "nothing to log into". Reports only the caller's own session.
+        "/api/auth/status",
         # Both health paths: the container healthcheck and the nginx probe
         # cannot hold a session, and a healthcheck that 401s marks a working
         # container unhealthy and restarts it in a loop.

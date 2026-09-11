@@ -34,6 +34,11 @@ logger = get_logger(__name__)
 PUBLIC_EXACT = {
     "/api/auth/login",
     "/api/auth/logout",
+    # Tells a client whether auth is switched on at all, and whether it holds a
+    # session. Must be public: with auth disabled a 401 from /me is ambiguous
+    # between "logged out" and "there is nothing to log into", and a frontend
+    # that cannot tell them apart shows a login page where login 404s.
+    "/api/auth/status",
     "/api/health",
     "/health",
     "/",

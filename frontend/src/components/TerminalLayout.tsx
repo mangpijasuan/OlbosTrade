@@ -13,6 +13,7 @@
 import React, { useState, useEffect } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import GlobalRiskStatus from "./GlobalRiskStatus";
+import UserMenu from "./UserMenu";
 import ErrorBoundary from "./ErrorBoundary";
 import KillSwitchButton from "./KillSwitchButton";
 import { api } from "../api/client";
@@ -1100,6 +1101,8 @@ function StatusBar({ page }: { page: string }) {
       <StatusLamp label="Rotation" on={rotationOn} />
       <div style={{ flex: 1 }} />
       <span id="broker-status-bar">IBKR GATEWAY</span>
+      {/* Renders nothing when auth is disabled — see UserMenu. */}
+      <UserMenu />
       <span style={{ color: "var(--brand)", fontWeight: 700 }}>Olbos v5.0</span>
     </div>
   );

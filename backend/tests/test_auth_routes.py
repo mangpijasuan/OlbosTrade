@@ -267,6 +267,66 @@ async def test_rotating_the_api_key_header_does_not_reset_the_login_limit(client
     assert 429 in codes, "login throttling must not be keyed on a header the client picks"
 
 
+# ── /status: what the frontend boots on ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_status_reports_auth_off_without_requiring_a_session(client, user, monkeypatch):
+    """
+    The reason this endpoint exists. With auth disabled /me returns 401, which
+    a client cannot distinguish from "logged out" — so it would show a login
+    page on an instance where login returns 404.
+    """
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    async with client:
+        r = await client.get("/api/auth/status")
+    assert r.status_code == 200
+    assert r.json() == {"auth_enabled": False, "authenticated": False, "user": None}
+
+
+@pytest.mark.asyncio
+async def test_status_is_reachable_without_a_session_when_auth_is_on(client, user):
+    """It has to be public, or the client can never learn it needs to log in."""
+    async with client:
+        r = await client.get("/api/auth/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["auth_enabled"] is True
+    assert body["authenticated"] is False
+    assert body["user"] is None
+
+
+@pytest.mark.asyncio
+async def test_status_identifies_the_caller_once_signed_in(client, user):
+    async with client:
+        await _login(client)
+        r = await client.get("/api/auth/status")
+    body = r.json()
+    assert body["authenticated"] is True
+    assert body["user"]["email"] == "trader@example.com"
+    assert body["user"]["tier"] == "pro"
+
+
+@pytest.mark.asyncio
+async def test_status_tells_an_anonymous_caller_nothing_about_anyone(client, user):
+    """
+    Public endpoint, so it must not become a directory. It reports only the
+    caller's own session — never that an account exists.
+    """
+    async with client:
+        r = await client.get("/api/auth/status")
+    assert r.json()["user"] is None
+    assert "trader@example.com" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_status_does_not_leak_the_password_hash(client, user):
+    async with client:
+        await _login(client)
+        r = await client.get("/api/auth/status")
+    assert "password" not in r.text.lower()
+    assert "argon2" not in r.text.lower()
+
+
 # ── protected routes ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

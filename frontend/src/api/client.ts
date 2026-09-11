@@ -45,6 +45,12 @@ export function apiAuthHeaders(extra?: HeadersInit): HeadersInit {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
+    // Same-origin is already the default, stated explicitly because the whole
+    // session mechanism depends on it: the session cookie is httpOnly, so this
+    // is the only way it reaches the server. A later change to BASE_URL that
+    // points at another origin would silently stop sending it, and every call
+    // would 401 for a reason nothing here names.
+    credentials: "same-origin",
     headers: apiAuthHeaders(options?.headers),
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
