@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth_deps import current_user
-from app.api.rate_limit import rate_limit
+from app.api.rate_limit import login_rate_limit
 from app.core.config import settings
 from app.services.auth_service import (
     SESSION_COOKIE_NAME, hash_token, new_session_token, normalize_email,
@@ -44,7 +44,7 @@ async def login(
     body: LoginRequest,
     request: Request,
     response: Response,
-    _rl: None = Depends(rate_limit),
+    _rl: None = Depends(login_rate_limit),
 ) -> dict:
     """
     Exchange credentials for a session cookie.
@@ -119,6 +119,7 @@ async def logout(request: Request, response: Response) -> dict:
     from app.models.user import UserSession
 
     token = request.cookies.get(SESSION_COOKIE_NAME)
+    revoked = True
     if token:
         try:
             async with AsyncSessionLocal() as db:
@@ -129,9 +130,20 @@ async def logout(request: Request, response: Response) -> dict:
                     session.revoked_at = datetime.now(timezone.utc)
                     await db.commit()
         except Exception as exc:
-            logger.warning("Logout revoke failed: %s", exc)
+            # The cookie still gets cleared below — the person asked to log out
+            # and that part needs no database. But the row is still live, so a
+            # token someone copied starts working again the moment the database
+            # does, and saying {"ok": true} here would be a lie the caller has
+            # no way to detect. Report it instead; the session still dies at
+            # expires_at, so the exposure is bounded by AUTH_SESSION_HOURS.
+            logger.error("Logout could not revoke server-side: %s", exc)
+            revoked = False
 
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    if not revoked:
+        response.status_code = 503
+        return {"ok": False, "detail": "Signed out here, but the session could not "
+                                       "be revoked server-side. Retry to be sure."}
     return {"ok": True}
 
 

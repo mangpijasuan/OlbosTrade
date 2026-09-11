@@ -19,7 +19,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, WebSocketException, status
+from starlette.requests import HTTPConnection
 
 from app.core.config import settings
 from app.services.auth_service import SESSION_COOKIE_NAME, hash_token, is_session_valid
@@ -52,14 +53,18 @@ def is_public_path(path: str) -> bool:
     return any(path.startswith(p) for p in PUBLIC_PREFIXES)
 
 
-async def load_session_user(request: Request) -> Optional[dict]:
+async def load_session_user(conn: HTTPConnection) -> Optional[dict]:
     """
     Resolve the caller from the session cookie, or None.
+
+    Takes an HTTPConnection — the shared base of Request and WebSocket — because
+    this runs on both, and asking for a Request would make it uncallable on a
+    WebSocket route. See require_session.
 
     Returns a plain dict rather than the ORM object so callers cannot
     accidentally lazy-load or mutate a detached instance.
     """
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = conn.cookies.get(SESSION_COOKIE_NAME)
     if not token:
         return None
 
@@ -101,26 +106,50 @@ async def load_session_user(request: Request) -> Optional[dict]:
         return None
 
 
-async def require_session(request: Request) -> dict:
+async def require_session(conn: HTTPConnection) -> dict:
     """
     Global dependency. Rejects anything without a valid session once
     auth_enabled is on; a no-op otherwise.
+
+    The parameter is an HTTPConnection, NOT a Request, and that is load-bearing.
+    As an app-level dependency this is attached to every route including the
+    /api/ibkr/live WebSocket, and FastAPI supplies a WebSocket rather than a
+    Request in a WebSocket scope. Annotating it Request made the dependency
+    uncallable there — a TypeError on every connection attempt, regardless of
+    whether auth was enabled, which broke live market data for the frontend
+    rather than rejecting anyone. HTTPConnection is the common base of both and
+    carries everything used here: cookies, url, state, client.
     """
     if not settings.auth_enabled:
         return {}
 
-    if is_public_path(request.url.path):
+    if is_public_path(conn.url.path):
         return {}
 
-    user = await load_session_user(request)
+    user = await load_session_user(conn)
     if user is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
+        _reject(conn)
 
     # Downstream handlers read this instead of re-querying.
-    request.state.user = user
+    conn.state.user = user
     return user
 
 
-def current_user(request: Request) -> dict:
+def _reject(conn: HTTPConnection) -> None:
+    """
+    Refuse the connection in whichever protocol it arrived on.
+
+    An HTTPException raised during a WebSocket handshake is not translated into
+    a close frame by Starlette; it surfaces as a server error. The rejection has
+    to speak the right protocol or "denied" reads as "broken".
+    """
+    if conn.scope.get("type") == "websocket":
+        # 1008 = policy violation, the conventional close code for auth failure.
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION,
+                                 reason="Authentication required")
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def current_user(conn: HTTPConnection) -> dict:
     """Read the user resolved by require_session. {} when auth is disabled."""
-    return getattr(request.state, "user", {}) or {}
+    return getattr(conn.state, "user", {}) or {}

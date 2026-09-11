@@ -108,8 +108,9 @@ def store(monkeypatch):
     s = _Store()
     monkeypatch.setattr(db_mod, "AsyncSessionLocal", lambda: _FakeSession(s))
     # Rate limiting is process-global and keyed on client IP; every test here
-    # shares 127.0.0.1, so without this the later tests inherit earlier
-    # attempts and start failing with 429.
+    # shares the same test-client host, so without this the later tests inherit
+    # earlier attempts and start failing with 429.
+    rate_limit_mod._login_log.clear()
     rate_limit_mod._request_log.clear()
     monkeypatch.setattr(settings, "auth_enabled", True)
     monkeypatch.setattr(settings, "auth_cookie_secure", False)   # test client is http
@@ -241,8 +242,29 @@ async def test_login_404s_while_auth_is_disabled(client, user, monkeypatch):
 async def test_login_is_rate_limited(client, user):
     async with client:
         codes = [(await _login(client, password="wrong password entirely")).status_code
-                 for _ in range(rate_limit_mod.MAX_REQUESTS + 2)]
+                 for _ in range(rate_limit_mod.LOGIN_MAX_ATTEMPTS + 2)]
     assert 429 in codes, "unlimited login attempts is unlimited password guessing"
+
+
+@pytest.mark.asyncio
+async def test_rotating_the_api_key_header_does_not_reset_the_login_limit(client, user):
+    """
+    The general rate_limit() buckets by X-Api-Key, because on the routes it
+    guards that key IS the caller's identity. On login there is no key yet, so
+    the header is attacker-controlled text: if login used that limiter, a fresh
+    random value per request would put every attempt in its own bucket and make
+    the limit vacuous. Found by review, not by the original tests.
+    """
+    async with client:
+        codes = []
+        for i in range(rate_limit_mod.LOGIN_MAX_ATTEMPTS + 2):
+            r = await client.post(
+                "/api/auth/login",
+                json={"email": "trader@example.com", "password": "wrong password"},
+                headers={"X-Api-Key": f"rotating-value-{i}"},
+            )
+            codes.append(r.status_code)
+    assert 429 in codes, "login throttling must not be keyed on a header the client picks"
 
 
 # ── protected routes ─────────────────────────────────────────────────────────
@@ -337,6 +359,29 @@ async def test_logout_without_a_session_is_not_an_error(client, user):
     async with client:
         r = await client.post("/api/auth/logout")
     assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_logout_does_not_claim_success_when_revocation_failed(client, user, store, monkeypatch):
+    """
+    The cookie still gets cleared — that needs no database and the person asked
+    to log out. But the session row is still live, so a copied token starts
+    working again as soon as the database does, and reporting {"ok": true}
+    would be a lie the caller cannot detect. Raised in review.
+    """
+    async with client:
+        await _login(client)
+
+        def _boom():
+            raise RuntimeError("database is down")
+
+        monkeypatch.setattr(db_mod, "AsyncSessionLocal", _boom)
+        r = await client.post("/api/auth/logout")
+
+    assert r.status_code == 503
+    assert r.json()["ok"] is False
+    assert store.sessions[0].revoked_at is None          # it genuinely did not revoke
+    assert SESSION_COOKIE_NAME not in r.cookies          # but the cookie is gone
 
 
 @pytest.mark.asyncio

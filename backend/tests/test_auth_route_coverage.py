@@ -20,11 +20,29 @@ from app.api.auth_deps import PUBLIC_EXACT, PUBLIC_PREFIXES, is_public_path
 
 
 def _registered_paths() -> list[str]:
+    """
+    Every route, HTTP and WebSocket alike.
+
+    This originally filtered on hasattr(r, "methods"), which quietly dropped
+    WebSocket routes — and that blind spot hid a real break: the app-level
+    dependency was annotated Request, which FastAPI cannot supply in a
+    WebSocket scope, so /api/ibkr/live raised TypeError on every connection
+    even with auth disabled. The test could not see the route, so CI stayed
+    green. Do not narrow this filter again.
+    """
     import app.main as main_mod
     return sorted({
         r.path for r in main_mod.app.routes
-        if hasattr(r, "methods") and getattr(r, "path", "").startswith(("/api", "/health", "/ws"))
+        if getattr(r, "path", "").startswith(("/api", "/health", "/ws"))
     })
+
+
+def test_websocket_routes_are_enumerated():
+    """Guards the filter above against being narrowed back to HTTP-only."""
+    assert "/api/ibkr/live" in _registered_paths(), (
+        "WebSocket routes must be covered — they are as capable of leaking "
+        "data as any GET, and they were invisible to this test once already"
+    )
 
 
 def test_the_app_carries_a_global_auth_dependency():
