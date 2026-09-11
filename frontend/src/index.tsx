@@ -2,6 +2,8 @@ import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
+import { AuthProvider } from "./auth/AuthContext";
+import AuthGate from "./auth/AuthGate";
 
 // Route-level code splitting: the public landing page and the terminal
 // (recharts, every page module) are large and mutually exclusive on first
@@ -17,18 +19,31 @@ function RouteFallback() {
   );
 }
 
-// The terminal (App.tsx) keeps its existing internal page-switching
-// behavior unchanged — it is only mounted at /terminal/* instead of at the
-// site root. There is no authentication system in this repository (see
-// CHANGELOG), so this split does not gate access to trading data; it only
-// separates the public marketing surface from the operator terminal.
+// The terminal (App.tsx) keeps its existing internal page-switching behaviour
+// unchanged — it is only mounted at /terminal/* instead of at the site root.
+//
+// AuthGate wraps the terminal, not the landing page: the marketing surface is
+// public by design. When AUTH_ENABLED is false on the backend (the default)
+// the gate renders the terminal straight through, so a single-operator install
+// sees no change at all.
+//
+// The gate is UX, not a security boundary — the server authenticates every
+// route itself and would 401 a browser that skipped this entirely.
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<Landing />} />
-          <Route path="/terminal/*" element={<App />} />
+          {/* AuthProvider sits INSIDE this route, not above the switch. Above
+              it, its mount effect called /api/auth/status and installed the
+              fetch interceptor on every visit to the public landing page,
+              which has no authenticated work to do — a wasted request on the
+              most-visited page of a default auth-disabled install. */}
+          <Route
+            path="/terminal/*"
+            element={<AuthProvider><AuthGate><App /></AuthGate></AuthProvider>}
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

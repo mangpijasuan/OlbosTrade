@@ -147,6 +147,51 @@ async def logout(request: Request, response: Response) -> dict:
     return {"ok": True}
 
 
+@router.get("/status")
+async def status(request: Request) -> dict:
+    """
+    What the frontend needs at boot, in one public call.
+
+    Public on purpose, and it has to be: with auth DISABLED every route is
+    open, so a client asking /me gets a 401 that means "no session" — which is
+    indistinguishable from "auth is on and you are logged out". A frontend that
+    cannot tell those apart shows a login page on an instance where login
+    returns 404. This endpoint answers the actual question.
+
+    It leaks only whether auth is switched on. The user block is filled in from
+    the caller's own session, so an unauthenticated request learns nothing
+    about who else exists.
+    """
+    if not settings.auth_enabled:
+        return {"auth_enabled": False, "authenticated": False, "user": None}
+
+    # Resolved here rather than read off request.state: this path is in the
+    # public allowlist, so require_session returned early without loading it.
+    #
+    # resolve_session_user, NOT load_session_user: the latter turns an
+    # unreadable session store into None, which is right for a protected route
+    # (fail closed) and wrong here. A database outage would answer
+    # "authenticated: false" with a 200, the client would show the login form,
+    # and the operator would retype credentials into a login that cannot
+    # succeed either. This is a status probe, so it reports the outage.
+    from app.api.auth_deps import SessionLookupError, resolve_session_user
+
+    try:
+        user = await resolve_session_user(request)
+    except SessionLookupError as exc:
+        logger.warning("Auth status could not read the session store: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot determine session state right now",
+        ) from exc
+
+    return {
+        "auth_enabled": True,
+        "authenticated": user is not None,
+        "user": {k: user[k] for k in ("id", "email", "tier") if k in user} if user else None,
+    }
+
+
 @router.get("/me")
 async def me(request: Request) -> dict:
     user = current_user(request)
