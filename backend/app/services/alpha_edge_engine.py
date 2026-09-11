@@ -28,6 +28,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 NEW = "new"
 CONFIRMED = "confirmed"
 DECAYING = "decaying"
@@ -337,7 +341,13 @@ async def compute_equity_hold_score(ticker: str, position_direction: str) -> Opt
             "low": float(b.low), "close": float(b.close), "volume": b.volume,
         } for b in bars])
         ind = compute_indicators(df)
-    except Exception:
+    except Exception as exc:
+        # Was a bare `return None`, which blanked the hold score with no
+        # trace of why. compute_indicators() returns empty when the `ta`
+        # library is missing — a real, observed condition — so a silent None
+        # here reads as "no score available" when the truth is "indicators
+        # never computed".
+        logger.warning("Alpha Edge: indicator computation failed for %s: %s", ticker, exc)
         return None
 
     current_action, current_confidence, _reasons = score_equity_signal(ind)
