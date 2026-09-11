@@ -745,7 +745,7 @@ def _equity_confluence_reason(
     return None
 
 
-def _record_options_rejection(
+async def _record_options_rejection(
     symbol: str, reason: str, strategy_name: Optional[str] = None, evidence: Optional[dict] = None,
 ) -> None:
     """
@@ -783,6 +783,28 @@ def _record_options_rejection(
         "evidence":     evidence,
     })
     del _recent_options_signals[200:]
+
+    # Persist alongside the in-memory store. The list above is capped at 200 and
+    # dies on restart, which is why "why has nothing fired in a month" has never
+    # had data behind it. Best-effort: record_rejection never raises, and a
+    # diagnostic write must not break the scan it is diagnosing.
+    from app.services.options_rejection_log import record_rejection
+
+    # A rejection profile is only interpretable against which strategies the
+    # regime allowed at the time, so stamp it. None when the regime has never
+    # classified or has been reset to UNKNOWN — an honest absence.
+    regime_name = None
+    regime_type = getattr(_current_regime, "regime_type", None)
+    if regime_type is not None:
+        regime_name = str(getattr(regime_type, "value", regime_type))
+
+    await record_rejection(
+        ticker=symbol,
+        reason=reason,
+        strategy=strategy_name,
+        regime=regime_name,
+        evidence=evidence,
+    )
 
 
 async def _run_equity_scan() -> None:
@@ -1255,7 +1277,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         # leaves headroom for the leading NaN run its rolling windows produce.
         underlying_bars = await _yf_bars(symbol, limit=60)
         if len(underlying_bars) < 30:
-            _record_options_rejection(symbol, "insufficient price history")
+            await _record_options_rejection(symbol, "insufficient price history")
             return None
 
         closes = [float(b.close) for b in underlying_bars]
@@ -1390,7 +1412,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "Options scan %s: no regime-allowed strategy qualified — %s",
                 symbol, _reason,
             )
-            _record_options_rejection(symbol, _reason)
+            await _record_options_rejection(symbol, _reason)
             return None
 
         from app.api.routes.equity import _recent_signals as _equity_signals
@@ -1400,7 +1422,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         if _confluence_reject:
             logger.info("Options scan %s: %s %s — skipping",
                         symbol, strategy_name, _confluence_reject)
-            _record_options_rejection(symbol, _confluence_reject, strategy_name)
+            await _record_options_rejection(symbol, _confluence_reject, strategy_name)
             return None
 
         is_debit = strategy_name == "bull_call_debit_spread"
@@ -1476,20 +1498,20 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
 
         if spread_width <= 0:
             logger.info("Options scan: no usable spread width — skipping")
-            _record_options_rejection(symbol, "no usable spread width", strategy_name)
+            await _record_options_rejection(symbol, "no usable spread width", strategy_name)
             return None
         if is_debit:
             net_debit = -net_amount
             if net_debit <= 0.05:
                 logger.info("Options scan: debit too small ($%.2f) — skipping", net_debit)
-                _record_options_rejection(
+                await _record_options_rejection(
                     symbol, f"debit too small (${net_debit:.2f})", strategy_name,
                 )
                 return None
         elif net_amount <= 0.05:
             logger.info("Options scan: no usable spread (width=%.1f credit=%.2f) — skipping",
                         spread_width, net_amount)
-            _record_options_rejection(
+            await _record_options_rejection(
                 symbol,
                 f"no usable spread (width={spread_width:.1f}, credit=${net_amount:.2f})",
                 strategy_name,
@@ -1539,7 +1561,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "Options signal rejected by AI scorer: %s %s score=%.3f — %s",
                 symbol, strategy_name, signal_score, score_result.rejection_reason,
             )
-            _record_options_rejection(
+            await _record_options_rejection(
                 symbol,
                 f"AI scorer: {score_result.rejection_reason or f'score {signal_score:.3f}'}",
                 strategy_name,
@@ -1580,7 +1602,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                 "(portfolio=$%.0f max_loss=$%.0f risk_pct=%.3f mult=%.2f)",
                 portfolio_value, max_loss_dollars, risk_pct, size_mult,
             )
-            _record_options_rejection(
+            await _record_options_rejection(
                 symbol, f"sized to 0 contracts (max loss ${max_loss_dollars:.0f})", strategy_name,
             )
             return None
@@ -1613,7 +1635,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                     "of portfolio (max %.0f%%)",
                     symbol, underlying_pct * 100, RiskManager.MAX_SINGLE_UNDERLYING * 100,
                 )
-                _record_options_rejection(
+                await _record_options_rejection(
                     symbol,
                     f"{symbol} concentration would be {underlying_pct * 100:.1f}% of portfolio "
                     f"(max {RiskManager.MAX_SINGLE_UNDERLYING * 100:.0f}%)",
@@ -1633,7 +1655,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
                     "%.1f%% of portfolio (max %.0f%%)",
                     trade_sector, symbol, sector_pct * 100, RiskManager.MAX_SECTOR_CONCENTRATION * 100,
                 )
-                _record_options_rejection(
+                await _record_options_rejection(
                     symbol,
                     f"sector {trade_sector!r} concentration would be {sector_pct * 100:.1f}% "
                     f"of portfolio (max {RiskManager.MAX_SECTOR_CONCENTRATION * 100:.0f}%)",
@@ -1787,7 +1809,7 @@ async def _run_options_scan(symbol: str = "SPY", execute: bool = True) -> Option
         logger.warning("Options scan failed: %s", exc)
         # Generic, user-facing reason — the real exception (which may include
         # internals not worth surfacing) stays in the server log above.
-        _record_options_rejection(symbol, "scan error — see server log")
+        await _record_options_rejection(symbol, "scan error — see server log")
         return None
 
 
