@@ -14,7 +14,7 @@ import { useAuth } from "../auth/AuthContext";
 import { LoginError } from "../auth/authApi";
 
 export default function Login() {
-  const { signIn, expiredNotice } = useAuth();
+  const { signIn, expiredNotice, logoutWarning } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +75,17 @@ export default function Login() {
         </header>
 
         {expiredNotice && (
-          <div role="status" style={noticeStyle("var(--amber)")}>{expiredNotice}</div>
+          <div role="status" style={noticeStyle(AMBER)}>{expiredNotice}</div>
+        )}
+
+        {/* Shown here because this is where the operator lands after signing
+            out. It used to be set on the context and rendered nowhere: the
+            only component that displayed it was UserMenu, which returns null
+            the instant the phase leaves "signed-in". A warning that server-side
+            revocation may have failed was therefore unreachable by exactly the
+            person who needs it. */}
+        {logoutWarning && (
+          <div role="status" style={noticeStyle(AMBER)}>{logoutWarning}</div>
         )}
 
         <Field label="Email">
@@ -110,7 +120,7 @@ export default function Login() {
         {/* aria-live so a screen reader announces a failure that appears after
             submit, rather than leaving the user waiting on a silent form. */}
         <div aria-live="polite" style={{ minHeight: error ? undefined : 0 }}>
-          {error && <div role="alert" style={noticeStyle("var(--red)")}>{error}</div>}
+          {error && <div role="alert" style={noticeStyle(RED)}>{error}</div>}
         </div>
 
         <button
@@ -170,11 +180,26 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
 };
 
+/**
+ * Notice tones as literal hex, NOT `var(--amber)`.
+ *
+ * These used to be built as `${tone}55` on top of a var() reference, matching a
+ * pattern already in the codebase. It does not work: var() substitutes at the
+ * token level, so `var(--amber)55` is two tokens rather than an 8-digit colour,
+ * and the whole declaration is dropped. Verified in Chromium — the border came
+ * back `border-style: none` and the background fully transparent, so the error
+ * notice rendered as bare text with no tint at all.
+ *
+ * Same values as --amber and --red in index.css; keep them in step.
+ */
+const AMBER = "#f59e0b";
+const RED = "#ef4444";
+
 function noticeStyle(tone: string): React.CSSProperties {
   return {
     padding: "9px 11px",
     borderRadius: "var(--radius-control)",
-    border: `1px solid ${tone}55`,
+    border: `1px solid ${tone}55`,   // valid: tone is a literal hex
     background: `${tone}14`,
     color: tone,
     fontSize: 12,

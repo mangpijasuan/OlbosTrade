@@ -33,13 +33,19 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <Suspense fallback={<RouteFallback />}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/terminal/*" element={<AuthGate><App /></AuthGate>} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </AuthProvider>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          {/* AuthProvider sits INSIDE this route, not above the switch. Above
+              it, its mount effect called /api/auth/status and installed the
+              fetch interceptor on every visit to the public landing page,
+              which has no authenticated work to do — a wasted request on the
+              most-visited page of a default auth-disabled install. */}
+          <Route
+            path="/terminal/*"
+            element={<AuthProvider><AuthGate><App /></AuthGate></AuthProvider>}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </Suspense>
     </BrowserRouter>
   </React.StrictMode>

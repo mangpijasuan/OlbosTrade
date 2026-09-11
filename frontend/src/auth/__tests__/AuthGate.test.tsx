@@ -13,13 +13,19 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AuthGate from "../AuthGate";
-import { AuthProvider } from "../AuthContext";
+import { AuthProvider, useAuth } from "../AuthContext";
 import { uninstallSessionExpiryInterceptor } from "../sessionExpiry";
 
 const TERMINAL = "terminal-content";
 
 function Terminal() {
   return <div data-testid={TERMINAL}>trading terminal</div>;
+}
+
+/** Stands in for UserMenu's sign-out, without pulling in its layout. */
+function SignOutButton() {
+  const { signOut } = useAuth();
+  return <button onClick={() => { void signOut(); }}>sign out</button>;
 }
 
 function renderGate() {
@@ -219,6 +225,51 @@ describe("a session that ends mid-use", () => {
       expect(screen.getByRole("status")).toHaveTextContent(/session ended/i);
     });
     expect(screen.queryByTestId(TERMINAL)).not.toBeInTheDocument();
+  });
+});
+
+describe("logout that could not revoke server-side", () => {
+  it("warns on the login screen the operator lands on", async () => {
+    // The warning used to be set on the context and rendered nowhere: only
+    // UserMenu displayed it, and that unmounts the instant the phase leaves
+    // "signed-in". The person who needs to know was the one person who could
+    // not see it. Raised in review.
+    routeFetch({
+      "/api/auth/status": json(STATUS_SIGNED_IN),
+      "/api/auth/logout": json({ ok: false }, 503),
+    });
+    render(
+      <AuthProvider>
+        <AuthGate><Terminal /></AuthGate>
+        <SignOutButton />
+      </AuthProvider>
+    );
+
+    fireEvent.click(await screen.findByText("sign out"));
+
+    await waitFor(() => {
+      const notices = screen.getAllByRole("status").map(n => n.textContent).join(" ");
+      expect(notices).toMatch(/could not revoke/i);
+    });
+  });
+
+  it("says nothing extra when revocation succeeded", async () => {
+    routeFetch({
+      "/api/auth/status": json(STATUS_SIGNED_IN),
+      "/api/auth/logout": json({ ok: true }),
+    });
+    render(
+      <AuthProvider>
+        <AuthGate><Terminal /></AuthGate>
+        <SignOutButton />
+      </AuthProvider>
+    );
+
+    fireEvent.click(await screen.findByText("sign out"));
+
+    await screen.findByRole("button", { name: /sign in/i });
+    const notices = screen.queryAllByRole("status").map(n => n.textContent).join(" ");
+    expect(notices).not.toMatch(/could not revoke/i);
   });
 });
 

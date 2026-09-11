@@ -89,6 +89,48 @@ describe("signed in", () => {
     await waitFor(() => expect(container).toBeEmptyDOMElement());
   });
 
+  it("renders the menu outside the status bar so it is not clipped", async () => {
+    /**
+     * On mobile .instrument-status is a horizontal scroller (overflow-x: auto,
+     * overflow-y: hidden) and this menu opens above it, outside that box — so
+     * the ancestor clipped it completely and Sign out became unreachable on a
+     * phone. Verified in Chromium at 390px before the fix: the menu painted
+     * nothing at all.
+     *
+     * The fix portals it to <body>, so the test asserts the structural
+     * property that makes clipping impossible rather than a pixel measurement
+     * jsdom cannot produce.
+     */
+    stubStatus({ auth_enabled: true, authenticated: true, user: USER });
+    const { container } = render(
+      <div className="instrument-status" style={{ overflowX: "auto", overflowY: "hidden" }}>
+        <AuthProvider><UserMenu /></AuthProvider>
+      </div>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /trader@example\.com/i }));
+
+    const menu = screen.getByRole("menu");
+    expect(container.contains(menu)).toBe(false);      // escaped the scroller
+    expect(document.body.contains(menu)).toBe(true);
+    expect(menu).toHaveStyle({ position: "fixed" });   // not clipped by an ancestor
+  });
+
+  it("still closes on a click outside, now that the menu is portalled", async () => {
+    // The menu is no longer a DOM descendant of the wrapper, so naive
+    // click-away logic would treat a click INSIDE it as a click-away and close
+    // it before Sign out ran.
+    stubStatus({ auth_enabled: true, authenticated: true, user: USER });
+    render(<AuthProvider><UserMenu /></AuthProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /trader@example\.com/i }));
+    fireEvent.mouseDown(screen.getByRole("menu"));
+    expect(screen.getByRole("menu")).toBeInTheDocument();   // a click inside keeps it open
+
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  });
+
   it("does not render the tier chip for a free account", async () => {
     // "free" next to someone's name is noise, not information.
     stubStatus({ auth_enabled: true, authenticated: true, user: { ...USER, tier: "free" } });

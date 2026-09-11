@@ -319,6 +319,45 @@ async def test_status_tells_an_anonymous_caller_nothing_about_anyone(client, use
 
 
 @pytest.mark.asyncio
+async def test_status_reports_an_outage_instead_of_reading_as_logged_out(client, user, monkeypatch):
+    """
+    load_session_user turns an unreadable session store into None, which is
+    right for a protected route (fail closed) and wrong here: a database outage
+    would answer 200 authenticated:false, the client would show the login form,
+    and the operator would retype credentials into a login that cannot succeed
+    either. Raised in review.
+    """
+    async with client:
+        await _login(client)          # so a session cookie is actually present
+
+        def _boom():
+            raise RuntimeError("database is down")
+
+        monkeypatch.setattr(db_mod, "AsyncSessionLocal", _boom)
+        r = await client.get("/api/auth/status")
+
+    assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_protected_routes_still_fail_closed_during_the_same_outage(client, user, monkeypatch):
+    """
+    The other half. Making /status honest must not make anything else lenient —
+    a route that cannot verify a session still refuses it.
+    """
+    async with client:
+        await _login(client)
+
+        def _boom():
+            raise RuntimeError("database is down")
+
+        monkeypatch.setattr(db_mod, "AsyncSessionLocal", _boom)
+        r = await client.get("/api/portfolio/positions")
+
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_status_does_not_leak_the_password_hash(client, user):
     async with client:
         await _login(client)

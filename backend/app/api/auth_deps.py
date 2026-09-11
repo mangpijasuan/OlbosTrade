@@ -83,9 +83,34 @@ def _should_touch(last_seen, now: datetime) -> bool:
     return (now - last_seen).total_seconds() >= LAST_SEEN_REFRESH_S
 
 
+class SessionLookupError(Exception):
+    """The session store could not be read. Distinct from "no valid session"."""
+
+
 async def load_session_user(conn: HTTPConnection) -> Optional[dict]:
     """
     Resolve the caller from the session cookie, or None.
+
+    Swallows a lookup failure and returns None, because the caller that matters
+    — require_session, on every protected route — must fail CLOSED: an
+    unreadable session is not an authenticated one.
+
+    A caller that needs to tell "no session" from "could not check" (the
+    /api/auth/status boot probe, where the difference decides between showing a
+    login form and showing an outage notice) must use resolve_session_user
+    instead and handle SessionLookupError.
+    """
+    try:
+        return await resolve_session_user(conn)
+    except SessionLookupError as exc:
+        logger.warning("Session lookup failed (treating as unauthenticated): %s", exc)
+        return None
+
+
+async def resolve_session_user(conn: HTTPConnection) -> Optional[dict]:
+    """
+    Same resolution, but raises SessionLookupError instead of hiding an
+    unreadable session store behind a None that reads as "logged out".
 
     Takes an HTTPConnection — the shared base of Request and WebSocket — because
     this runs on both, and asking for a Request would make it uncallable on a
@@ -146,9 +171,10 @@ async def load_session_user(conn: HTTPConnection) -> Optional[dict]:
 
             return resolved
     except Exception as exc:
-        # Fail closed: an unreadable session is not an authenticated one.
-        logger.warning("Session lookup failed (treating as unauthenticated): %s", exc)
-        return None
+        # Raised, not swallowed. load_session_user turns this back into None so
+        # protected routes still fail closed; only callers that can act on the
+        # difference see it.
+        raise SessionLookupError(str(exc)) from exc
 
 
 async def require_session(conn: HTTPConnection) -> dict:

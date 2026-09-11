@@ -6,9 +6,14 @@
  * nothing is worse than no affordance.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useAuthOptional } from "../auth/AuthContext";
+
+/** Same value as --amber in index.css. See noticeStyle in pages/Login.tsx for
+ *  why this is a literal rather than a var() reference. */
+const AMBER = "#f59e0b";
 
 export default function UserMenu() {
   // Optional on purpose: this is chrome inside TerminalLayout, and a missing
@@ -18,20 +23,52 @@ export default function UserMenu() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<{ bottom: number; right: number } | null>(null);
+
+  /**
+   * The menu is portalled to <body> and positioned from the button's rect,
+   * rather than absolutely positioned inside the status bar.
+   *
+   * On mobile .instrument-status is a horizontal scroller — overflow-x: auto,
+   * overflow-y: hidden — and the menu opens ABOVE it, outside that box. The
+   * ancestor clipped it completely: verified in Chromium at 390px, the menu
+   * painted nothing at all, which made Sign out unreachable on a phone. Since
+   * that is the only way to sign out, the control has to escape the scroller.
+   */
+  const place = useCallback(() => {
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setAnchor({ bottom: window.innerHeight - r.top + 6, right: window.innerWidth - r.right });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [open, place]);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      // The menu is no longer a DOM descendant of the wrapper, so a click
+      // inside it would otherwise read as a click-away and close it before the
+      // Sign out handler ran.
+      if (!wrapRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", place);
+    // The status bar scrolls sideways on mobile; capture:true catches that
+    // scroll too, so the menu tracks its button instead of detaching from it.
+    window.addEventListener("scroll", place, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
     };
-  }, [open]);
+  }, [open, place]);
 
   if (!auth || auth.phase !== "signed-in" || !auth.user) return null;
   const { user, signOut, logoutWarning } = auth;
@@ -66,15 +103,17 @@ export default function UserMenu() {
         )}
       </button>
 
-      {open && (
+      {open && anchor && createPortal(
         <div
+          ref={menuRef}
           role="menu"
           style={{
-            position: "absolute", bottom: "calc(100% + 6px)", right: 0,
+            // Fixed, positioned from the button's rect — see place().
+            position: "fixed", bottom: anchor.bottom, right: anchor.right,
             minWidth: 220, maxWidth: "min(300px, calc(100vw - 32px))",
             background: "var(--bg-2)", border: "1px solid var(--line-dim)",
             borderRadius: "var(--radius-control)", boxShadow: "var(--raised-bezel)",
-            padding: 10, zIndex: 60,
+            padding: 10, zIndex: 200,
             display: "flex", flexDirection: "column", gap: 8,
           }}
         >
@@ -90,10 +129,14 @@ export default function UserMenu() {
             {user.tier} tier
           </div>
 
+          {/* Kept for a warning left over from an earlier failed sign-out that
+              the operator then signed back in over. The live case — the warning
+              raised by the sign-out just performed — is shown on the login
+              screen, since this menu unmounts the moment the phase changes. */}
           {logoutWarning && (
             <div style={{
-              fontSize: 10, lineHeight: 1.4, color: "var(--amber)",
-              border: "1px solid var(--amber)55", background: "var(--amber)14",
+              fontSize: 10, lineHeight: 1.4, color: AMBER,
+              border: `1px solid ${AMBER}55`, background: `${AMBER}14`,
               borderRadius: 4, padding: "6px 8px",
             }}>
               {logoutWarning}
@@ -123,7 +166,8 @@ export default function UserMenu() {
           >
             {busy ? "Signing out…" : "Sign out"}
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

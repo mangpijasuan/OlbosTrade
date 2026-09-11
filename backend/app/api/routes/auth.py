@@ -167,9 +167,24 @@ async def status(request: Request) -> dict:
 
     # Resolved here rather than read off request.state: this path is in the
     # public allowlist, so require_session returned early without loading it.
-    from app.api.auth_deps import load_session_user
+    #
+    # resolve_session_user, NOT load_session_user: the latter turns an
+    # unreadable session store into None, which is right for a protected route
+    # (fail closed) and wrong here. A database outage would answer
+    # "authenticated: false" with a 200, the client would show the login form,
+    # and the operator would retype credentials into a login that cannot
+    # succeed either. This is a status probe, so it reports the outage.
+    from app.api.auth_deps import SessionLookupError, resolve_session_user
 
-    user = await load_session_user(request)
+    try:
+        user = await resolve_session_user(request)
+    except SessionLookupError as exc:
+        logger.warning("Auth status could not read the session store: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot determine session state right now",
+        ) from exc
+
     return {
         "auth_enabled": True,
         "authenticated": user is not None,
