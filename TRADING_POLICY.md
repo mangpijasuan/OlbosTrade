@@ -69,11 +69,24 @@ the current active roadmap — additive, IBKR stays the default.
 | Max weekly loss | 8% | **5%** (tighter) | `max_weekly_loss_pct` |
 | Max monthly drawdown | 10% | 10% | `max_monthly_loss_pct` |
 | Max concurrent positions | 5 | 5 | `max_concurrent_positions` |
+| Max trades / day | 3 | **6** (looser) | `max_trades_per_day` |
 | Max exposure | 30% | (via sizing/heat) | — |
 
 > Current daily/weekly caps are **tighter** than the charter (more
 > conservative). They are configurable to the charter values; we keep the
 > tighter defaults unless deliberately changed.
+
+> **Trades/day is the one limit that is looser than the charter**, which
+> called it a hard cap of 3 "no exceptions." The enforcement mechanism is
+> unchanged — `guardrails.py` still hard-stops at the configured number — only
+> the number differs, and it has been 6 for as far back as this repo's history
+> goes. The plausible reason is that the charter's 3 was written for four
+> spread strategies on a single underlying, whereas equity signals, options
+> spreads and the CSP/covered-call screener can now each independently propose
+> a trade on the same day; 6 caps blast radius without starving a
+> multi-strategy desk. That rationale is reconstructed, not recorded — no
+> commit or note states it. **Owner decision needed:** confirm 6 and let this
+> paragraph stand as the record, or set it back to 3.
 
 ## Paper trading before live capital
 The charter requires paper trading for **3 months minimum before any live

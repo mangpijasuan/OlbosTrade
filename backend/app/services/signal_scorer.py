@@ -424,9 +424,23 @@ class SignalScorer:
 
     def _heuristic_score(self, features: SignalFeatures) -> tuple[float, list[FeatureImpact]]:
         """
-        Rule-based heuristic score when model is not trained yet.
-        FIX #6: Heuristic uses a higher effective threshold internally
-        (0.72 instead of 0.65) to compensate for lack of probabilistic calibration.
+        Rule-based heuristic score used whenever no model is loaded — which,
+        per /api/health/detail's `signal_model`, is the live configuration.
+
+        This docstring previously claimed the heuristic applied "a higher
+        effective threshold internally (0.72 instead of 0.65) to compensate for
+        lack of probabilistic calibration." It does not, and never did: 0.72
+        appears nowhere in this module. score() compares whatever this returns
+        against settings.effective_signal_score_threshold — 0.65 normally, and
+        0.35 under paper-visibility mode. The claim is removed rather than
+        implemented because inventing a margin now would silently change live
+        gating; if a wider margin is wanted it should be a deliberate,
+        configured change. Recorded here because a safety claim that isn't true
+        is worse than no claim at all.
+
+        Returns an unweighted-sum quality score in 0..1 — note this is a
+        different unit from the regressor's predicted return-on-risk, which is
+        thresholded at 0.12. score() picks the matching threshold by model_type.
         """
         score = 0.0
 

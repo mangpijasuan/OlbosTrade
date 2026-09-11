@@ -41,6 +41,27 @@ def _row(action="BUY", entry=100.0, stop=96.0, target=108.0, generated="2026-01-
     )
 
 
+def _mock_session(existing_id=None):
+    """
+    A mocked AsyncSession for record_signal().
+
+    `existing_id` is what the dedup lookup finds: None means no signal has been
+    recorded for this (ticker, action, day) yet, so the insert should proceed.
+    """
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    begin = AsyncMock()
+    begin.__aenter__ = AsyncMock(return_value=session)
+    begin.__aexit__ = AsyncMock(return_value=False)
+    session.begin = MagicMock(return_value=begin)
+    session.add = MagicMock()
+    lookup = MagicMock()
+    lookup.scalar_one_or_none = MagicMock(return_value=existing_id)
+    session.execute = AsyncMock(return_value=lookup)
+    return session
+
+
 # ── record_signal ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -57,14 +78,7 @@ async def test_record_signal_noop_without_trade_plan():
 
 @pytest.mark.asyncio
 async def test_record_signal_inserts_row():
-    session = AsyncMock()
-    session.__aenter__ = AsyncMock(return_value=session)
-    session.__aexit__ = AsyncMock(return_value=False)
-    begin = AsyncMock()
-    begin.__aenter__ = AsyncMock(return_value=session)
-    begin.__aexit__ = AsyncMock(return_value=False)
-    session.begin = MagicMock(return_value=begin)
-    session.add = MagicMock()
+    session = _mock_session()
 
     signal = {
         "id": "sig-1", "ticker": "NVDA", "action": "BUY", "confidence": 0.71,
@@ -86,14 +100,7 @@ async def test_record_signal_inserts_row():
 
 @pytest.mark.asyncio
 async def test_record_signal_stamps_regime_and_engine_version():
-    session = AsyncMock()
-    session.__aenter__ = AsyncMock(return_value=session)
-    session.__aexit__ = AsyncMock(return_value=False)
-    begin = AsyncMock()
-    begin.__aenter__ = AsyncMock(return_value=session)
-    begin.__aexit__ = AsyncMock(return_value=False)
-    session.begin = MagicMock(return_value=begin)
-    session.add = MagicMock()
+    session = _mock_session()
 
     signal = {
         "id": "sig-2", "ticker": "AMD", "action": "SELL", "confidence": 0.75,
@@ -111,14 +118,7 @@ async def test_record_signal_stamps_regime_and_engine_version():
 
 @pytest.mark.asyncio
 async def test_record_signal_regime_none_when_absent_from_signal():
-    session = AsyncMock()
-    session.__aenter__ = AsyncMock(return_value=session)
-    session.__aexit__ = AsyncMock(return_value=False)
-    begin = AsyncMock()
-    begin.__aenter__ = AsyncMock(return_value=session)
-    begin.__aexit__ = AsyncMock(return_value=False)
-    session.begin = MagicMock(return_value=begin)
-    session.add = MagicMock()
+    session = _mock_session()
 
     signal = {
         "id": "sig-3", "ticker": "MSFT", "action": "BUY", "confidence": 0.75,
@@ -132,6 +132,76 @@ async def test_record_signal_regime_none_when_absent_from_signal():
     assert inserted.regime is None
     # signal_engine_version is stamped unconditionally, regardless of regime.
     assert inserted.signal_engine_version == EQUITY_SCORING_VERSION
+
+
+@pytest.mark.asyncio
+async def test_record_signal_skips_duplicate_same_ticker_action_day():
+    """The scanner re-emits the same setup every tick — only the first is kept."""
+    session = _mock_session(existing_id="already-there")
+    signal = {
+        "id": "sig-dupe", "ticker": "NVDA", "action": "BUY", "confidence": 0.71,
+        "generated_at": "2026-01-05T19:45:00+00:00",
+        "trade_plan": {"entry_price": 101.0, "stop_price": 97.0, "target_price": 109.0},
+    }
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        result = await record_signal(signal)
+
+    session.add.assert_not_called()
+    # Returns the row that already exists rather than None, so a caller can
+    # still tie the re-emission back to the tracked signal.
+    assert result == "already-there"
+
+
+@pytest.mark.asyncio
+async def test_record_signal_dedup_window_is_one_utc_day():
+    """The lookup must bound a single UTC day, not scan the whole table."""
+    session = _mock_session()
+    signal = {
+        "id": "sig-window", "ticker": "AMD", "action": "BUY", "confidence": 0.7,
+        "generated_at": "2026-01-05T23:30:00+00:00",
+        "trade_plan": {"entry_price": 100.0, "stop_price": 96.0, "target_price": 108.0},
+    }
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        await record_signal(signal)
+
+    # Render the emitted SELECT and confirm it bounds generated_at on both sides.
+    stmt = str(session.execute.call_args.args[0])
+    assert "generated_at >=" in stmt and "generated_at <" in stmt
+    assert "ticker" in stmt and "action" in stmt
+    session.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_record_signal_naive_generated_at_treated_as_utc():
+    """An offset-less timestamp must not land the dedup window on the wrong day."""
+    session = _mock_session()
+    signal = {
+        "id": "sig-naive", "ticker": "MSFT", "action": "BUY", "confidence": 0.7,
+        "generated_at": "2026-01-05T00:30:00",          # no offset
+        "trade_plan": {"entry_price": 100.0, "stop_price": 96.0, "target_price": 108.0},
+    }
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        await record_signal(signal)
+
+    inserted = session.add.call_args.args[0]
+    assert inserted.generated_at.tzinfo is not None
+    assert inserted.generated_at.date().isoformat() == "2026-01-05"
+
+
+@pytest.mark.asyncio
+async def test_record_signal_different_action_same_day_is_not_a_duplicate():
+    """BUY and SELL on one ticker are distinct signals, not duplicates."""
+    session = _mock_session()          # lookup finds nothing for this action
+    signal = {
+        "id": "sig-sell", "ticker": "NVDA", "action": "SELL", "confidence": 0.7,
+        "generated_at": "2026-01-05T19:45:00+00:00",
+        "trade_plan": {"entry_price": 100.0, "stop_price": 104.0, "target_price": 92.0},
+    }
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        result = await record_signal(signal)
+
+    session.add.assert_called_once()
+    assert result is not None
 
 
 @pytest.mark.asyncio
