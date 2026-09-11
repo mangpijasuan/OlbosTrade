@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from app.services.risk_manager import RiskManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,13 +31,20 @@ class PortfolioGreeksTracker:
     Maintains net delta/vega/theta across the entire portfolio.
     Thread-safe via Python's GIL for single-process usage.
 
-    Limits (from RiskManager spec):
-      max |delta| = 0.30
-      max |vega|  = 0.15
+    Limits are imported from RiskManager rather than restated here. They used
+    to be copied (0.30 / 0.15 written out in both modules), which meant raising
+    a limit in the module that actually gates trades left this module quietly
+    reporting against the old one. One source of truth; RiskManager owns it.
     """
 
-    MAX_DELTA = 0.30
-    MAX_VEGA  = 0.15
+    MAX_DELTA = RiskManager.MAX_PORTFOLIO_DELTA
+    MAX_VEGA = RiskManager.MAX_VEGA_EXPOSURE
+
+    # A "flat enough" band for reporting, NOT a risk limit — it is deliberately
+    # tighter than MAX_DELTA. It previously appeared as a bare 0.15 inline,
+    # which read as if it were tied to the vega limit; the two are equal today
+    # only by coincidence, and nothing should keep them in step.
+    DELTA_NEUTRAL_BAND = 0.15
 
     def __init__(self) -> None:
         self._positions: dict[str, PositionGreeks] = {}
@@ -123,15 +132,15 @@ class PortfolioGreeksTracker:
         return round(sum(p.theta for p in self._positions.values()), 6)
 
     def is_delta_neutral(self) -> bool:
-        """True when |net_delta| < 0.15."""
-        return abs(self.net_delta()) < 0.15
+        """True when |net_delta| is inside the neutrality band."""
+        return abs(self.net_delta()) < self.DELTA_NEUTRAL_BAND
 
     def needs_hedge(self) -> bool:
-        """True when |net_delta| exceeds the 0.30 limit."""
+        """True when |net_delta| exceeds RiskManager's delta limit."""
         return abs(self.net_delta()) > self.MAX_DELTA
 
     def vega_at_limit(self) -> bool:
-        """True when |net_vega| exceeds the 0.15 limit."""
+        """True when |net_vega| exceeds RiskManager's vega limit."""
         return abs(self.net_vega()) > self.MAX_VEGA
 
     def snapshot(self) -> dict:

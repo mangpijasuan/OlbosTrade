@@ -15,12 +15,37 @@ check_pending_outcomes() runs on a schedule (main.py's background loop)
 and walks forward daily bars for each still-pending signal to see whether
 price reached its target before its stop, or neither within the hold
 window.
+
+One signal per (ticker, action, day)
+------------------------------------
+The scanner re-evaluates the whole watchlist every tick, so without a guard
+the *same* setup is recorded again on each pass. Measured in the 2026-08-28
+assessment: 70,798 rows representing roughly 1,568 real (ticker, action, day)
+signals — about 45x duplication. That is not merely wasted rows:
+
+  - it made the dataset look ~45x larger than it is, which is how a
+    ~1,568-signal sample reads as 70k;
+  - it blew the resolver's time budget (~65k rows against a 120s scheduler
+    limit), so check_pending_outcomes() was killed mid-pass every run and
+    left a labelled subset selected by DB iteration order — which, as that
+    investigation noted, "reads exactly like real data."
+
+record_signal() therefore keeps the FIRST signal per (ticker, action, day)
+and returns that row's id for later re-emissions. First is the right one to
+keep: it is the moment the setup actually became actionable, before the day's
+price action moved the entry/stop/target under it.
+
+There is deliberately no UNIQUE constraint backing this yet — ~69k historical
+duplicates still exist, so adding one would make the next `alembic upgrade
+head` (and therefore deploy/hetzner/update.sh) fail. Run
+scripts/dedupe_signal_outcomes.py first; the index can follow once history is
+clean.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -70,6 +95,8 @@ async def record_signal(signal: dict) -> Optional[str]:
         return None
 
     try:
+        from sqlalchemy import select
+
         from app.core.database import AsyncSessionLocal
         from app.models.signal_outcome import SignalOutcome
         from app.services.equity_signal_engine import EQUITY_SCORING_VERSION
@@ -103,13 +130,45 @@ async def record_signal(signal: dict) -> Optional[str]:
         except ValueError:
             generated_at = datetime.now(timezone.utc)
 
+        # Normalize to UTC before deriving the day boundary — a `generated_at`
+        # parsed from an offset-less string comes back naive, and treating that
+        # as local time would put the window on the wrong day.
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=timezone.utc)
+        else:
+            generated_at = generated_at.astimezone(timezone.utc)
+
+        ticker = signal.get("ticker", "")
         row_id = uuid.uuid4()
         async with AsyncSessionLocal() as session:
+            # One row per (ticker, action, UTC day) — see the module docstring.
+            # Expressed as a half-open range rather than date(generated_at) so
+            # it uses idx_signal_outcomes_generated_at and carries no dependence
+            # on the session's timezone setting.
+            day_start = generated_at.replace(hour=0, minute=0, second=0, microsecond=0)
+            existing_id = (await session.execute(
+                select(SignalOutcome.id)
+                .where(
+                    SignalOutcome.ticker == ticker,
+                    SignalOutcome.asset_type == "equity",
+                    SignalOutcome.action == action,
+                    SignalOutcome.generated_at >= day_start,
+                    SignalOutcome.generated_at < day_start + timedelta(days=1),
+                )
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing_id is not None:
+                logger.debug(
+                    "record_signal: %s %s already recorded for %s — keeping the first",
+                    ticker, action, day_start.date(),
+                )
+                return str(existing_id)
+
             async with session.begin():
                 session.add(SignalOutcome(
                     id=row_id,
                     signal_id=signal.get("id"),
-                    ticker=signal.get("ticker", ""),
+                    ticker=ticker,
                     asset_type="equity",
                     action=action,
                     confidence=Decimal(str(round(signal.get("confidence", 0.0), 4))),

@@ -50,6 +50,11 @@ def _signal(**over):
     return s
 
 
+class _NoDuplicate:
+    """record_signal()'s dedup lookup finding no row for this (ticker, action, day)."""
+    def scalar_one_or_none(self): return None
+
+
 class _Session:
     """Captures the SignalOutcome handed to session.add()."""
     added = None
@@ -58,6 +63,7 @@ class _Session:
     async def __aexit__(self, *a): return False
     def begin(self): return self
     def add(self, obj): type(self).added = obj
+    async def execute(self, *a, **k): return _NoDuplicate()
 
 
 async def _record(sig):
