@@ -18,6 +18,7 @@ import KillSwitchButton from "./KillSwitchButton";
 import { api } from "../api/client";
 import { statusLabelForPage, filterNavForDisplay, type NavGroup } from "../utils/navLabels";
 import { NAV_MODEL_LEGACY, NAV_MODEL_V2, groupIdForKey } from "../utils/navModels";
+import BottomSheet from "./BottomSheet";
 import MobileBottomNav from "./MobileBottomNav";
 import { isTradeDeskV2Enabled } from "../trade-desk/featureFlags";
 import { TerminalNavProvider } from "./TerminalNavContext";
@@ -119,11 +120,17 @@ function ExecutionModeControl({
   busy = false,
   error = null,
   pending = null,
+  size = "compact",
 }: {
   mode: "manual" | "copilot" | "autopilot";
   onChange: (m: "manual" | "copilot" | "autopilot") => void;
   busy?: boolean;
   error?: string | null;
+  /** "compact" is the desktop header's 18px-tall row. "touch" meets the 44px
+   *  iOS minimum for the mobile sheet — this control decides whether the desk
+   *  places real orders unattended, so a mis-tap between MANUAL and AUTOPILOT
+   *  is the one fat-finger this UI must not allow. */
+  size?: "compact" | "touch";
   /** Mode requested but not yet confirmed by the server. Rendered distinctly
    *  from `mode` — never as selected — so an in-flight request can never be
    *  mistaken for an applied one. */
@@ -134,15 +141,27 @@ function ExecutionModeControl({
     { key: "copilot", label: "COPILOT", onColor: "var(--cyan)" },
     { key: "autopilot", label: "AUTOPILOT", onColor: "var(--amber)" },
   ];
+  const touch = size === "touch";
+  const geo = touch
+    ? { group: 52, btn: 44, radius: 26, btnRadius: 22, pad: 4, gap: 6, font: 12, px: 14 }
+    : { group: 22, btn: 18, radius: 11, btnRadius: 9, pad: 2, gap: 2, font: 9, px: 8 };
+
   return (
-    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+    <div style={{
+      display: touch ? "flex" : "inline-flex",
+      flexDirection: "column",
+      alignItems: touch ? "stretch" : "flex-end",
+      gap: touch ? 8 : 2,
+      width: touch ? "100%" : undefined,
+    }}>
       <div
         role="group"
         aria-label="Execution mode"
         title="Execution mode: Manual (signals only) → Copilot (approve each trade) → Autopilot (auto within guardrails). Leaving Autopilot returns to Copilot; choose Manual to stop approvals."
         style={{
-          display: "inline-flex", alignItems: "center", gap: 2,
-          height: 22, padding: 2, borderRadius: 11,
+          display: touch ? "flex" : "inline-flex", alignItems: "center", gap: geo.gap,
+          height: geo.group, padding: geo.pad, borderRadius: geo.radius,
+          width: touch ? "100%" : undefined,
           border: `1px solid ${error ? "rgba(239,68,68,0.55)" : "var(--line-dim)"}`,
           background: "var(--bg-3)",
           opacity: busy ? 0.7 : 1,
@@ -164,14 +183,16 @@ function ExecutionModeControl({
               aria-busy={isPending || undefined}
               disabled={busy}
               style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                height: 18, padding: "0 8px", borderRadius: 9,
+                display: touch ? "flex" : "inline-flex",
+                alignItems: "center", justifyContent: touch ? "center" : undefined, gap: 4,
+                flex: touch ? 1 : undefined,
+                height: geo.btn, padding: `0 ${geo.px}px`, borderRadius: geo.btnRadius,
                 background: on ? "var(--cyan-dim)" : "transparent",
                 border: isPending
                   ? "1px dashed var(--ink-dim)"
                   : `1px solid ${on ? opt.onColor : "transparent"}`,
                 color: on ? opt.onColor : "var(--ink-faint)",
-                fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em",
+                fontFamily: "var(--mono)", fontSize: geo.font, letterSpacing: "0.08em",
                 cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap", transition: "all 0.12s",
               }}
             >
@@ -234,6 +255,8 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
   // Execution mode (manual / copilot / autopilot) — the real backend tri-state.
   // Header shows a single three-way control so the state machine is visible.
   const [execMode, setExecMode] = useState<"manual" | "copilot" | "autopilot">("manual");
+  // Mobile-only: the sheet that hosts the execution-mode control at touch size.
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [execBusy, setExecBusy] = useState(false);
   const [execError, setExecError] = useState<string | null>(null);
 
@@ -435,6 +458,121 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
       {sep}
     </span>
   );
+
+  // ── Mobile header ────────────────────────────────────────────────────────
+  // The desktop header packs hamburger + wordmark + an 8-symbol marquee + the
+  // execution-mode control + two clocks into ONE overflow-x:hidden row. At
+  // 390px that is ~568px of content in a 390px viewport, and because the
+  // overflow is hidden rather than auto, everything past the fold is
+  // unreachable — including AUTOPILOT on the control that decides whether the
+  // desk trades unattended, whose buttons were also 18px tall against a 44px
+  // touch minimum.
+  //
+  // Phone gets its own layout rather than a squeezed desktop one: a 48px row
+  // of real tap targets, the marquee on its own line (a marquee is meant to
+  // scroll, so clipping it costs nothing), and the mode control moved into a
+  // sheet at 44px where a mis-tap between MANUAL and AUTOPILOT is not one
+  // stray thumb away. State stays here so there is still a single owner of
+  // execMode — no parallel mobile component holding its own copy.
+  if (isMobile) {
+    const modeTone =
+      execMode === "autopilot" ? "var(--amber)"
+      : execMode === "copilot" ? "var(--cyan)"
+      : "var(--ink-dim)";
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          height: 48, padding: "0 4px 0 0",
+          background: "var(--bg-2)", borderBottom: "1px solid var(--line-dim)",
+          fontFamily: "var(--mono)", fontSize: 11,
+        }}>
+          <button
+            onClick={onToggle}
+            aria-label="Toggle navigation"
+            style={{
+              width: 48, height: 48, flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "transparent", border: "none", color: "var(--ink-dim)", cursor: "pointer",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="3.5"  width="12" height="1.5" rx="0.75" fill="currentColor"/>
+              <rect x="2" y="7.25" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+              <rect x="2" y="11"   width="12" height="1.5" rx="0.75" fill="currentColor"/>
+            </svg>
+          </button>
+
+          <img src="/favicon-32x32.png" alt="" width={20} height={20} style={{ flexShrink: 0 }} />
+          <span className="brand-wordmark" style={{ fontSize: 15, lineHeight: 1, whiteSpace: "nowrap" }}>
+            OLBOS
+          </span>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Current mode, tappable. Shows state at a glance and is the only
+              way into the control on phone — so it carries the live tone
+              rather than a neutral chip that would hide AUTOPILOT being on. */}
+          <button
+            type="button"
+            onClick={() => setMobileSheetOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={mobileSheetOpen}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              height: 44, padding: "0 14px", marginRight: 2, borderRadius: 22,
+              background: "var(--bg-3)", border: `1px solid ${modeTone}66`,
+              color: modeTone, fontFamily: "var(--mono)", fontSize: 10,
+              letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >
+            <span className={`dot ${mktOpen() ? "live" : "dead"}`} style={{ background: modeTone }} />
+            {execMode.toUpperCase()}
+          </button>
+        </div>
+
+        <div style={{
+          height: 26, overflow: "hidden", position: "relative",
+          background: "var(--bg-2)", borderBottom: "1px solid var(--line-dim)",
+          fontFamily: "var(--mono)", fontSize: 10, display: "flex", alignItems: "center",
+        }}>
+          <div className="ticker-strip-marquee" style={{ display: "inline-flex", animation: "ticker-scroll 55s linear infinite" }}>
+            {marqueeContent}{marqueeContent}
+          </div>
+        </div>
+
+        <BottomSheet
+          open={mobileSheetOpen}
+          onClose={() => setMobileSheetOpen(false)}
+          title="Execution mode"
+          subtitle={mktOpen() ? `Market open · ${etTime} ET` : `Market closed · ${etTime} ET`}
+        >
+          {/* BottomSheet deliberately ships no horizontal padding — the gutter
+              is the caller's, so content can go full-bleed where it wants to. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "2px 16px 12px" }}>
+            <ExecutionModeControl
+              mode={execMode}
+              onChange={setExec}
+              busy={execBusy}
+              error={execError}
+              pending={execPending}
+              size="touch"
+            />
+            <p style={{
+              margin: 0, fontFamily: "var(--sans)", fontSize: 12.5,
+              lineHeight: 1.6, color: "var(--ink-dim)",
+            }}>
+              <strong style={{ color: "var(--ink)" }}>Manual</strong> generates signals only.{" "}
+              <strong style={{ color: "var(--ink)" }}>Copilot</strong> waits for your approval on
+              every trade. <strong style={{ color: "var(--ink)" }}>Autopilot</strong> executes
+              without asking, within the guardrails.
+            </p>
+          </div>
+        </BottomSheet>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -835,15 +973,22 @@ function StatusLamp({
   label,
   on,
   warn,
+  unknown,
 }: {
   label: string;
   on: boolean;
   warn?: boolean;
+  /** The read failed or returned nothing. Rendered as amber "?" rather than
+   *  as "off": a dim lamp is indistinguishable from a successful read saying
+   *  the thing is off, which is the one reading this row must never imply
+   *  about a kill switch or a live account. Mirrors GlobalRiskStatus, whose
+   *  chips already treat unknown as attention-worthy. */
+  unknown?: boolean;
 }) {
-  const color = warn ? "var(--amber)" : on ? "var(--green)" : "var(--ink-faint)";
+  const color = unknown ? "var(--amber)" : warn ? "var(--amber)" : on ? "var(--green)" : "var(--ink-faint)";
   return (
     <span
-      title={`${label}: ${warn ? "warn" : on ? "on" : "off"}`}
+      title={`${label}: ${unknown ? "could not be read" : warn ? "warn" : on ? "on" : "off"}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -853,21 +998,29 @@ function StatusLamp({
       }}
     >
       <span
-        className={`dot ${on || warn ? "live" : "dead"}`}
+        className={`dot ${on || warn || unknown ? "live" : "dead"}`}
         style={{ background: color, width: 6, height: 6 }}
       />
-      {label}
+      {unknown ? `${label} ?` : label}
     </span>
   );
 }
 
 function StatusBar({ page }: { page: string }) {
   const label = statusLabelForPage(page, activeNavModel());
-  const [killOn, setKillOn] = useState(false);
-  const [execMode, setExecMode] = useState("manual");
+  // null = not read yet, or the read failed. These three answer "is the desk
+  // about to move real money unattended", so each defaulted to its reassuring
+  // value on failure: killOn=false rendered a failed read as NOT ARMED,
+  // paper=true rendered an unreadable broker as green PAPER even on a live
+  // account, and execMode="manual" rendered a failed read as not auto-trading.
+  // GlobalRiskStatus already refuses exactly this ("a missing kill-switch read
+  // never renders as 'not armed'"); the two rows could therefore disagree,
+  // with this one being the optimistic of the pair.
+  const [killOn, setKillOn] = useState<boolean | null>(null);
+  const [execMode, setExecMode] = useState<string | null>(null);
   const [styleMode, setStyleMode] = useState("balanced");
   const [rotationOn, setRotationOn] = useState(false);
-  const [paper, setPaper] = useState(true);
+  const [paper, setPaper] = useState<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -882,15 +1035,22 @@ function StatusBar({ page }: { page: string }) {
         fetch("/api/market/broker").then((r) => r.json()).catch(() => ({})),
       ]).then(([kill, exec, mode, guard, broker]) => {
         if (!alive) return;
-        setKillOn(!!(kill as any).engaged || !!(kill as any).is_engaged);
-        setExecMode(((exec as any).mode || "manual").toLowerCase());
+        // Only assert a value the payload actually carried; a failed fetch
+        // resolves to {} above, which must read as unknown, not as safe.
+        const engaged = (kill as any).engaged ?? (kill as any).is_engaged;
+        setKillOn(typeof engaged === "boolean" ? engaged : null);
+
+        const em = (exec as any).mode;
+        setExecMode(typeof em === "string" && em ? em.toLowerCase() : null);
+
         setStyleMode(((mode as any).mode || "balanced").toLowerCase());
         setRotationOn(!!(guard as any).position_rotation_on_max);
+
         if ((broker as any).paper_mode === false) setPaper(false);
         else if ((broker as any).paper_mode === true) setPaper(true);
         else if (typeof (guard as any).paper_mode === "boolean") {
           setPaper(!!(guard as any).paper_mode);
-        }
+        } else setPaper(null);
       });
     };
     load();
@@ -917,16 +1077,25 @@ function StatusBar({ page }: { page: string }) {
       <span style={{ color: "var(--brand)", textTransform: "uppercase" }}>{label}</span>
       <span
         style={{
-          color: paper ? "var(--green)" : "var(--red)",
+          color: paper === null ? "var(--amber)" : paper ? "var(--green)" : "var(--red)",
           fontWeight: 700,
           textTransform: "uppercase",
         }}
-        title={paper ? "Paper trading" : "Live trading — real capital"}
+        title={
+          paper === null
+            ? "Paper/live state could not be read from the broker or guardrails"
+            : paper ? "Paper trading" : "Live trading — real capital"
+        }
       >
-        {paper ? "PAPER" : "LIVE"}
+        {paper === null ? "ENV ?" : paper ? "PAPER" : "LIVE"}
       </span>
-      <StatusLamp label="Kill" on={killOn} warn={killOn} />
-      <StatusLamp label={`Exec ${execMode}`} on={execMode !== "manual"} warn={execMode === "autopilot"} />
+      <StatusLamp label="Kill" on={killOn === true} warn={killOn === true} unknown={killOn === null} />
+      <StatusLamp
+        label={execMode ? `Exec ${execMode}` : "Exec"}
+        on={execMode !== null && execMode !== "manual"}
+        warn={execMode === "autopilot"}
+        unknown={execMode === null}
+      />
       <StatusLamp label={`Style ${styleMode}`} on />
       <StatusLamp label="Rotation" on={rotationOn} />
       <div style={{ flex: 1 }} />

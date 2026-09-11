@@ -330,7 +330,19 @@
   }
   .landing-nav-links.open { display: flex; }
   .landing-nav-links a { padding: 8px 0; }
-  .landing-nav-toggle { display: flex; }
+  .landing-nav-toggle { display: flex; width: 44px; height: 44px; }
+
+  /* The nav row overflowed the viewport on a phone: hiding .landing-nav-links
+     and showing the hamburger still left BOTH "Sign In" and the full CTA
+     inline, so .landing-nav-actions measured 290px and pushed the document to
+     454px against a 390px screen — the page scrolled sideways and the CTA was
+     clipped. "Sign In" and "Start Paper Trading" both route to /terminal, so
+     dropping the text link on phone loses no destination; the CTA is the one
+     worth keeping visible. */
+  .landing-signin { display: none; }
+  .landing-nav-actions { gap: 8px; min-width: 0; }
+  .landing-cta-btn { padding: 9px 14px; }
+  .landing-nav-row { gap: 12px; }
   .landing-h1 { font-size: 26px; }
   .pipeline, .landing-grid-4 { grid-template-columns: 1fr; }
   .pricing-grid { grid-template-columns: 1fr; }
