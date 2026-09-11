@@ -71,6 +71,19 @@ class Settings(BaseSettings):
     # placed two trades, so require a minimum number of *finished* trades too.
     live_min_paper_closed_trades: int = Field(default=20)
 
+    # ── Deployment capability ─────────────────────────────────────────────
+    # False makes this instance structurally incapable of placing an order:
+    # get_broker() returns a ReadOnlyBroker whose place_order/place_equity_order
+    # raise. This is the shared tier of the hybrid tenancy model — signals,
+    # research and backtests for many accounts, with execution living in a
+    # separate per-tenant stack.
+    #
+    # Deliberately NOT the same thing as execution_mode=manual or an armed kill
+    # switch: those are runtime state a request can change. This is a property
+    # of the deployment, settable only in the environment. Defaults True so
+    # existing single-operator installs are unaffected.
+    execution_enabled: bool = Field(default=True)
+
     # ── Paper visibility mode ─────────────────────────────────────────────
     # Lets the app generate more activity in paper mode so the operator can
     # confirm scans, execution, and trade history without weakening live rules.

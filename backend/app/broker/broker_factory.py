@@ -42,6 +42,20 @@ def get_broker() -> BrokerInterface:
             f"Unknown broker '{name}'. Set BROKER=ibkr or BROKER=alpaca in .env."
         )
 
+    # A read-only deployment wraps the broker rather than trusting every call
+    # site to check a flag. Orders are placed from _execute_signal, from
+    # position_rotation's entry and close paths, from the manual-close path and
+    # from the kill switch's flattening — all of them reach the broker through
+    # this factory, so the wrapper is the one place that cannot be bypassed or
+    # forgotten by a new call site.
+    if not settings.execution_enabled:
+        from app.broker.read_only_broker import ReadOnlyBroker
+        _broker_instance = ReadOnlyBroker(_broker_instance)
+        logger.critical(
+            "EXECUTION_ENABLED=false — broker wrapped read-only. This instance "
+            "serves signals and research only and cannot place orders."
+        )
+
     return _broker_instance
 
 
