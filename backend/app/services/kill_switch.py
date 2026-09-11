@@ -26,6 +26,12 @@ from decimal import Decimal
 
 logger = get_logger(__name__)
 
+# rehydrate() runs at start-up, when the database is the most likely component
+# to not be ready yet. Retry before concluding the state is unreadable, so a
+# slow boot does not halt trading; only a genuinely unreadable state does.
+_REHYDRATE_ATTEMPTS = 3
+_REHYDRATE_BACKOFF_SECONDS = 1.5
+
 
 class KillSwitchError(Exception):
     """Raised when kill switch encounters a non-recoverable error."""
@@ -44,6 +50,10 @@ class KillSwitch:
         self._engaged = False
         self._engaged_at: Optional[datetime] = None
         self._reason: Optional[str] = None
+        # True when engaged only because startup could not read the real state.
+        # Surfaced in status() so an operator can tell a fail-closed halt apart
+        # from one something actually triggered.
+        self._rehydrate_unverified = False
         self._lock = asyncio.Lock()
         self._broker: Optional[BrokerInterface] = None
         self._scheduler = None  # injected after startup
@@ -63,6 +73,7 @@ class KillSwitch:
             "engaged": self._engaged,
             "engaged_at": self._engaged_at.isoformat() if self._engaged_at else None,
             "reason": self._reason,
+            "rehydrate_unverified": self._rehydrate_unverified,
         }
 
     async def engage(self, reason: str = "manual") -> dict:
@@ -323,13 +334,34 @@ class KillSwitch:
         """
         try:
             from sqlalchemy import select
-            async with AsyncSessionLocal() as session:
-                row = (await session.execute(
-                    select(GuardrailEvent)
-                    .where(GuardrailEvent.event_type.in_(("kill_switch", "kill_switch_reset")))
-                    .order_by(GuardrailEvent.timestamp.desc())
-                    .limit(1)
-                )).scalar_one_or_none()
+
+            # Retry before concluding the state is unreadable. rehydrate() runs
+            # during start-up, where the database is the single most likely
+            # thing to not be ready yet; failing closed on the first blip would
+            # halt trading every slow boot.
+            row = None
+            last_exc: Optional[Exception] = None
+            for attempt in range(_REHYDRATE_ATTEMPTS):
+                try:
+                    async with AsyncSessionLocal() as session:
+                        row = (await session.execute(
+                            select(GuardrailEvent)
+                            .where(GuardrailEvent.event_type.in_(("kill_switch", "kill_switch_reset")))
+                            .order_by(GuardrailEvent.timestamp.desc())
+                            .limit(1)
+                        )).scalar_one_or_none()
+                    last_exc = None
+                    break
+                except Exception as exc:  # noqa: PERF203 - retry is the point
+                    last_exc = exc
+                    if attempt < _REHYDRATE_ATTEMPTS - 1:
+                        logger.warning(
+                            "Kill switch rehydrate attempt %d/%d failed, retrying: %s",
+                            attempt + 1, _REHYDRATE_ATTEMPTS, exc,
+                        )
+                        await asyncio.sleep(_REHYDRATE_BACKOFF_SECONDS * (attempt + 1))
+            if last_exc is not None:
+                raise last_exc
             if row is not None and row.event_type == "kill_switch":
                 async with self._lock:
                     self._engaged = True
@@ -341,8 +373,31 @@ class KillSwitch:
                     row.timestamp.isoformat() if row.timestamp else "unknown",
                 )
         except Exception as exc:
-            logger.error(
-                "Kill switch rehydrate failed (defaulting to NOT engaged): %s", exc
+            # Fail CLOSED. The docstring above states the contract this used to
+            # break: "if it was engaged when the process died/restarted, it MUST
+            # come back engaged, or a restart would silently re-enable trading."
+            # The previous behaviour here was to log and leave _engaged False —
+            # which is exactly that silent re-enable, reached by nothing more
+            # exotic than the DB not accepting connections yet during container
+            # start-up ordering.
+            #
+            # An unreadable state is not evidence of a clear switch, so it is
+            # treated as engaged. The asymmetry is deliberate and cheap: a
+            # spurious halt costs an operator one deliberate reset, while a
+            # spurious resume re-enables trading after a halt that something
+            # thought was necessary. The app cannot trade without the DB
+            # anyway — guardrails, trade recording and the portfolio gate all
+            # read it — so halting on an unreadable DB forbids nothing that
+            # would otherwise have worked.
+            async with self._lock:
+                self._engaged = True
+                self._engaged_at = datetime.now(timezone.utc)
+                self._reason = "engaged state could not be read at startup — failing closed"
+                self._rehydrate_unverified = True
+            logger.critical(
+                "🛑 Kill switch state UNREADABLE at startup (%s) — failing closed, "
+                "trading halted until a manual reset. This is not necessarily a real "
+                "engage: the DB read failed after %d attempts.", exc, _REHYDRATE_ATTEMPTS,
             )
 
 

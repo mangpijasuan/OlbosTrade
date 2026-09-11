@@ -31,6 +31,13 @@ export default function KillSwitchButton({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [engaged, setEngaged] = useState(false);
+  // The read failed entirely. Distinct from engaged=false, which asserts the
+  // switch IS clear. The control used to render "Kill switch / Halt" in both
+  // cases, so an unreadable state looked exactly like a confirmed-clear one —
+  // an operator could read "Halt available" and conclude trading is live while
+  // the desk was in fact halted. Same class as the backend rehydrate default
+  // and the status bar's lamps.
+  const [unknown, setUnknown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -41,11 +48,14 @@ export default function KillSwitchButton({
     try {
       const status: any = await api.getTradeDeskKillSwitch();
       setEngaged(readEngaged(status));
+      setUnknown(false);
     } catch {
       try {
         const status: any = await api.getKillSwitchStatus();
         setEngaged(readEngaged(status));
+        setUnknown(false);
       } catch {
+        setUnknown(true);
         setMessage("Kill switch status unavailable.");
       }
     }
@@ -73,8 +83,10 @@ export default function KillSwitchButton({
     }
   };
 
-  const label = engaged ? "Trading halted" : busy ? "Engaging…" : "Kill switch";
-  const badge = engaged ? "Active" : "Halt";
+  const label = unknown
+    ? "Kill switch state unknown"
+    : engaged ? "Trading halted" : busy ? "Engaging…" : "Kill switch";
+  const badge = unknown ? "?" : engaged ? "Active" : "Halt";
   const showCopy = variant === "panel" || expanded;
   const disabled = variant === "sidebar" ? busy : engaged || busy;
 
@@ -83,9 +95,16 @@ export default function KillSwitchButton({
       <button
         type="button"
         onClick={() => !engaged && setConfirming(true)}
-        aria-label={engaged ? "Kill switch engaged" : "Engage kill switch"}
+        aria-label={
+          unknown ? "Kill switch state unknown"
+          : engaged ? "Kill switch engaged" : "Engage kill switch"
+        }
         disabled={disabled}
-        title={engaged ? "Kill switch is engaged" : "Engage kill switch"}
+        title={
+          unknown
+            ? "Kill switch state could not be read — this is not a confirmation that trading is running"
+            : engaged ? "Kill switch is engaged" : "Engage kill switch"
+        }
         className={`instrument-halt${engaged ? " is-engaged" : ""}`}
         style={{
           width: "100%",

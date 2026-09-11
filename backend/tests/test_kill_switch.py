@@ -246,3 +246,85 @@ async def test_kill_switch_reports_rejected_flatten_as_error(ks, mock_scheduler)
 
     assert result["positions_flattened"] == 0
     assert any("flatten_" in e for e in result["errors"])
+
+
+# ── rehydrate: unknown state must not read as "clear" ─────────────────────────
+#
+# rehydrate()'s own docstring states the contract: "if it was engaged when the
+# process died/restarted, it MUST come back engaged, or a restart would
+# silently re-enable trading." Its except block used to log and leave _engaged
+# False — exactly that silent re-enable, reached by nothing more exotic than
+# the DB not accepting connections yet during container start-up ordering.
+
+@pytest.mark.asyncio
+async def test_rehydrate_fails_closed_when_the_db_cannot_be_read(ks, monkeypatch):
+    """An unreadable state is not evidence of a clear switch."""
+    monkeypatch.setattr("app.services.kill_switch._REHYDRATE_BACKOFF_SECONDS", 0)
+    with patch("app.services.kill_switch.AsyncSessionLocal", side_effect=Exception("db down")):
+        await ks.rehydrate()
+
+    assert ks.is_engaged is True, "an unreadable kill-switch state must halt, not resume"
+    assert ks.status["rehydrate_unverified"] is True
+    assert "could not be read" in (ks.status["reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_retries_before_giving_up(ks, monkeypatch):
+    """
+    A slow boot must not halt trading. The DB is the most likely thing to be
+    unready at start-up, so a transient failure is retried; only a genuinely
+    unreadable state fails closed.
+    """
+    monkeypatch.setattr("app.services.kill_switch._REHYDRATE_BACKOFF_SECONDS", 0)
+    calls = {"n": 0}
+
+    class _Ctx:
+        async def __aenter__(self):
+            calls["n"] += 1
+            if calls["n"] < 3:           # first two attempts fail
+                raise Exception("db not ready")
+            session = AsyncMock()
+            result = MagicMock()
+            result.scalar_one_or_none = MagicMock(return_value=None)  # no events
+            session.execute = AsyncMock(return_value=result)
+            return session
+
+        async def __aexit__(self, *a):
+            return False
+
+    with patch("app.services.kill_switch.AsyncSessionLocal", lambda: _Ctx()):
+        await ks.rehydrate()
+
+    assert calls["n"] == 3, "should have retried past the transient failures"
+    # Succeeded on the third attempt and found no engage event -> genuinely clear.
+    assert ks.is_engaged is False
+    assert ks.status["rehydrate_unverified"] is False
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_restores_a_real_engage(ks, monkeypatch):
+    """The original purpose still works: a prior engage comes back engaged."""
+    from datetime import datetime, timezone
+    monkeypatch.setattr("app.services.kill_switch._REHYDRATE_BACKOFF_SECONDS", 0)
+    row = MagicMock()
+    row.event_type = "kill_switch"
+    row.timestamp = datetime(2026, 9, 11, tzinfo=timezone.utc)
+
+    class _Ctx:
+        async def __aenter__(self):
+            session = AsyncMock()
+            result = MagicMock()
+            result.scalar_one_or_none = MagicMock(return_value=row)
+            session.execute = AsyncMock(return_value=result)
+            return session
+
+        async def __aexit__(self, *a):
+            return False
+
+    with patch("app.services.kill_switch.AsyncSessionLocal", lambda: _Ctx()):
+        await ks.rehydrate()
+
+    assert ks.is_engaged is True
+    # A real restore is distinguishable from a fail-closed halt.
+    assert ks.status["rehydrate_unverified"] is False
+    assert "restored" in (ks.status["reason"] or "")

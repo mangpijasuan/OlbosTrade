@@ -129,11 +129,24 @@ async def test_rehydrate_stays_disarmed_after_reset_event():
 
 
 @pytest.mark.asyncio
-async def test_rehydrate_handles_db_error():
+async def test_rehydrate_fails_closed_on_db_error(monkeypatch):
+    """
+    This test previously asserted `not ks.is_engaged` with the comment
+    "defaults to not engaged" — it locked in the behaviour rehydrate()'s own
+    docstring forbids: "if it was engaged when the process died/restarted, it
+    MUST come back engaged, or a restart would silently re-enable trading."
+
+    An unreadable state is not evidence of a clear switch. rehydrate() runs at
+    start-up, where a DB that is not accepting connections yet is the ordinary
+    case, so the old default re-enabled trading after a halt on nothing worse
+    than a slow boot.
+    """
+    monkeypatch.setattr("app.services.kill_switch._REHYDRATE_BACKOFF_SECONDS", 0)
     ks = KillSwitch()
     with patch("app.services.kill_switch.AsyncSessionLocal", side_effect=Exception("down")):
         await ks.rehydrate()
-    assert not ks.is_engaged   # defaults to not engaged
+    assert ks.is_engaged
+    assert ks.status["rehydrate_unverified"] is True
 
 
 @pytest.mark.asyncio
