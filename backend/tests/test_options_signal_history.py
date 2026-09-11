@@ -29,7 +29,13 @@ def _signal(**overrides) -> dict:
     return base
 
 
-def _session():
+def _session(existing_id=None):
+    """
+    A mocked AsyncSession for record_options_signal().
+
+    `existing_id` is what the dedup lookup finds: None means nothing has been
+    recorded yet for this (ticker, strategy, action, day), so the insert runs.
+    """
     session = AsyncMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
@@ -38,7 +44,48 @@ def _session():
     begin.__aexit__ = AsyncMock(return_value=False)
     session.begin = MagicMock(return_value=begin)
     session.add = MagicMock()
+    lookup = MagicMock()
+    lookup.scalar_one_or_none = MagicMock(return_value=existing_id)
+    session.execute = AsyncMock(return_value=lookup)
     return session
+
+
+@pytest.mark.asyncio
+async def test_record_options_signal_skips_duplicate_same_strategy_day():
+    """The 30-minute scan re-emits a still-qualifying spread — keep only the first."""
+    session = _session(existing_id="already-there")
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        result = await record_options_signal(_signal())
+
+    session.add.assert_not_called()
+    assert result == "already-there"
+
+
+@pytest.mark.asyncio
+async def test_record_options_signal_different_strategy_same_day_is_not_a_duplicate():
+    """A bull put and an iron condor on SPY the same day are distinct signals."""
+    session = _session()
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        result = await record_options_signal(_signal(strategy="iron_condor"))
+
+    session.add.assert_called_once()
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_record_options_signal_dedup_ignores_strikes():
+    """
+    Strikes drift with spot between ticks. If they were part of the identity
+    the dedup would match almost nothing, so the lookup must not reference them.
+    """
+    session = _session()
+    with patch("app.core.database.AsyncSessionLocal", return_value=session):
+        await record_options_signal(_signal())
+
+    stmt = str(session.execute.call_args.args[0])
+    assert "short_strike" not in stmt and "long_strike" not in stmt
+    assert "ticker" in stmt and "strategy" in stmt and "action" in stmt
+    assert "generated_at >=" in stmt and "generated_at <" in stmt
 
 
 @pytest.mark.asyncio

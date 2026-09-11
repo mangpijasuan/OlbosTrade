@@ -235,7 +235,12 @@ async def _yf_options_quote(
                 "long_strike": l_strike,
                 "expiration": chosen,
             }
-        except Exception:
+        except Exception as exc:
+            # Was a bare `return None`: a candidate that failed to build
+            # vanished with no record, which is exactly how "options signals
+            # almost never fire" (44f7073) stays invisible. Debug rather than
+            # warning — a chain that cannot form a spread is ordinary.
+            logger.debug("Spread build failed for %s: %s", symbol, exc)
             return None
 
     return await loop.run_in_executor(None, _fetch)
