@@ -7,6 +7,7 @@ import MarketBiasPanel from "../../components/MarketBiasPanel";
 import TimeframeAlignmentPanel from "../../components/TimeframeAlignmentPanel";
 import MarketStructurePanel from "../../components/MarketStructurePanel";
 import { api } from "../../api/client";
+import { tint } from "../../utils/tint";
 
 export interface EligibilitySnapshot {
   final_status: string;
@@ -61,7 +62,7 @@ export default function EquityIntelligenceRail({
     <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 8, overflow: "auto", height: "100%" }}>
       <div
         className="instrument-card"
-        style={{ border: `1px solid ${statusColor}55`, padding: "10px 12px" }}
+        style={{ border: `1px solid ${tint(statusColor, 0.333)}`, padding: "10px 12px" }}
       >
         <div
           style={{

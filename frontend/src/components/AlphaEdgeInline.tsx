@@ -5,6 +5,7 @@
  */
 import React, { useState } from "react";
 import { api } from "../api/client";
+import { tint } from "../utils/tint";
 
 interface AlphaEdgeResponse {
   entry_score: number | null;
@@ -40,7 +41,7 @@ export function OpportunityScorePill({ value }: { value: number }) {
   const color = value >= 70 ? "var(--green)" : value >= 45 ? "var(--amber)" : "var(--red)";
   return (
     <div style={{
-      background: "var(--bg-3)", border: `1px solid ${color}40`, borderRadius: 3, padding: "3px 8px",
+      background: "var(--bg-3)", border: `1px solid ${tint(color, 0.251)}`, borderRadius: 3, padding: "3px 8px",
       fontFamily: "var(--mono)", fontSize: 9, display: "flex", gap: 5, alignItems: "center",
     }}>
       <span style={{ color: "var(--ink-dim)", letterSpacing: "0.08em" }}>OPPORTUNITY</span>

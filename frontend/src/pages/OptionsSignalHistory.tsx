@@ -105,7 +105,7 @@ export default function OptionsSignalHistory() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+      <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid color-mix(in srgb, var(--cyan) 19%, transparent)", borderLeft: "2px solid var(--cyan)" }}>
         <span className="panel-title" style={{ marginRight: 12 }}>OPTIONS SIGNAL HISTORY</span>
         <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink)" }}>
           Every qualifying options spread signal is persisted here permanently, {total} tracked so far.

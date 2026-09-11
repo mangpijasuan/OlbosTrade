@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Button } from "./ui";
+import { tint } from "../utils/tint";
 
 interface ModeInfo {
   display_name: string; description: string; dte_range: string;
@@ -69,7 +70,7 @@ export default function TradingModeSelector() {
                 </span>
                 {active && (
                   <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 3,
-                    background: `${color}20`, color, border: `1px solid ${color}40` }}>
+                    background: tint(color, 0.125), color, border: `1px solid ${tint(color, 0.251)}` }}>
                     Active
                   </span>
                 )}

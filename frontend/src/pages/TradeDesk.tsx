@@ -17,6 +17,7 @@ import { useTerminalNav } from "../components/TerminalNavContext";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
 import { Button } from "../components/ui";
 import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
+import { tint } from "../utils/tint";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -31,7 +32,7 @@ type Tab = "overview" | "signals" | "positions" | "approvals" | "execution" | "p
 const Badge = ({ text, color }: { text: string; color: string }) => (
   <span style={{
     fontFamily: "var(--mono)", fontSize: 10, padding: "2px 8px",
-    border: `1px solid ${color}40`, background: `${color}15`,
+    border: `1px solid ${tint(color, 0.251)}`, background: tint(color, 0.082),
     color, letterSpacing: "0.08em",
   }}>{text}</span>
 );
@@ -83,7 +84,7 @@ function ExecModeBar() {
           active={mode === m.key}
           style={{
             fontSize: 12,
-            ...(mode === m.key ? { borderColor: m.color, color: m.color, background: `${m.color}15` } : {}),
+            ...(mode === m.key ? { borderColor: m.color, color: m.color, background: tint(m.color, 0.082) } : {}),
           }}
           onClick={() => select(m.key)}
           disabled={saving}

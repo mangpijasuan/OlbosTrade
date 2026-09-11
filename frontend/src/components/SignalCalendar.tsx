@@ -15,6 +15,7 @@ import React, { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Panel } from "./ui";
+import { tint } from "../utils/tint";
 
 interface Pick {
   rank: number;
@@ -86,7 +87,7 @@ function PickRow({ p }: { p: Pick }) {
         className="mono"
         style={{
           fontSize: 9, padding: "2px 7px", borderRadius: 3,
-          color: tone, border: `1px solid ${tone}55`, whiteSpace: "nowrap",
+          color: tone, border: `1px solid ${tint(tone, 0.333)}`, whiteSpace: "nowrap",
         }}
       >
         {outcomeLabel(p.outcome)}

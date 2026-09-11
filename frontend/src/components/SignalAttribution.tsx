@@ -12,6 +12,7 @@
 import React from "react";
 
 import type { SignalAttributionData, SignalAuthority } from "../types/signal";
+import { tint } from "../utils/tint";
 
 const DEFAULT_STALE_AFTER_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -143,7 +144,7 @@ export default function SignalAttribution({
           gap: 6,
           cursor: "pointer",
           listStyle: "none",
-          border: `1px solid ${tone}66`,
+          border: `1px solid ${tint(tone, 0.4)}`,
           borderRadius: 3,
           padding: "2px 8px",
           fontFamily: "var(--mono)",

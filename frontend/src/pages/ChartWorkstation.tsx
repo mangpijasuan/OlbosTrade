@@ -18,6 +18,7 @@ import {
 import MetricHint, { resolveMetricHint } from "../components/MetricHint";
 import { Panel, StatTile, Badge, Button } from "../components/ui";
 import CandlestickChart from "../components/CandlestickChart";
+import { tint } from "../utils/tint";
 
 type Timeframe = "5m" | "15m" | "1h" | "1d";
 
@@ -163,7 +164,7 @@ function UpcomingCatalysts({ events }: { events: CatalystEvent[] }) {
               gap: 6,
               padding: "2px 8px",
               background: "rgba(6,11,23,0.82)",
-              border: `1px solid ${color}55`,
+              border: `1px solid ${tint(color, 0.333)}`,
               pointerEvents: "auto",
             }}
           >
