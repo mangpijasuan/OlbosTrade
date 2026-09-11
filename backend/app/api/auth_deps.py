@@ -38,6 +38,10 @@ PUBLIC_EXACT = {
     "/health",
     "/",
 }
+# Each entry matches itself or a path segment beneath it — "/static" covers
+# "/static" and "/static/app.css", NOT "/staticfiles/secrets". See
+# is_public_path: a bare startswith made every entry here an open-ended
+# wildcard, which is the opposite of what an allowlist is for.
 PUBLIC_PREFIXES = (
     "/docs",
     "/redoc",
@@ -48,9 +52,30 @@ PUBLIC_PREFIXES = (
 
 
 def is_public_path(path: str) -> bool:
+    """
+    Exact match, or a path SEGMENT beneath an allowlisted prefix.
+
+    The obvious implementation is `path.startswith(p)`, and it was wrong: it
+    made "/staticfiles/secrets", "/docs-internal" and "/openapi.json.bak"
+    public, because none of those are beneath the prefix — they merely begin
+    with the same characters. An allowlist whose entries silently extend to
+    arbitrary sibling paths is not a boundary. Found in review.
+    """
     if path in PUBLIC_EXACT:
         return True
-    return any(path.startswith(p) for p in PUBLIC_PREFIXES)
+    return any(path == p or path.startswith(p + "/") for p in PUBLIC_PREFIXES)
+
+
+# How stale last_seen_at may get before it is worth a write.
+LAST_SEEN_REFRESH_S = 60.0
+
+
+def _should_touch(last_seen, now: datetime) -> bool:
+    if last_seen is None:
+        return True
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    return (now - last_seen).total_seconds() >= LAST_SEEN_REFRESH_S
 
 
 async def load_session_user(conn: HTTPConnection) -> Optional[dict]:
@@ -91,15 +116,30 @@ async def load_session_user(conn: HTTPConnection) -> Optional[dict]:
                 # the next session expiry.
                 return None
 
-            session.last_seen_at = datetime.now(timezone.utc)
-            await db.commit()
-
-            return {
+            resolved = {
                 "id": str(user.id),
                 "email": user.email,
                 "tier": user.tier,
                 "session_id": str(session.id),
             }
+
+            # Authentication is decided above. last_seen_at is bookkeeping, and
+            # it used to share the outer try — so a failed UPDATE fell into the
+            # fail-closed handler and denied a request that had already proved
+            # it held a valid session. A write problem must not deny a read.
+            #
+            # It is also throttled: this ran an UPDATE plus a commit on every
+            # authenticated request, polling included. A "last seen" accurate to
+            # the minute is worth no more than that.
+            now = datetime.now(timezone.utc)
+            if _should_touch(session.last_seen_at, now):
+                try:
+                    session.last_seen_at = now
+                    await db.commit()
+                except Exception as exc:      # noqa: BLE001 - never blocks auth
+                    logger.warning("Could not update last_seen_at: %s", exc)
+
+            return resolved
     except Exception as exc:
         # Fail closed: an unreadable session is not an authenticated one.
         logger.warning("Session lookup failed (treating as unauthenticated): %s", exc)

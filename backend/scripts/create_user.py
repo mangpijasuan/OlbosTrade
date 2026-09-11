@@ -31,6 +31,11 @@ from app.models.user import TIERS, User  # noqa: E402
 from app.services.auth_service import hash_password, normalize_email  # noqa: E402
 
 MIN_PASSWORD_LEN = 12
+# Must match LoginRequest.password's max_length in app/api/routes/auth.py.
+# Without the cap here an operator could provision an account with a password
+# longer than the login route accepts — valid in the database, impossible to
+# log in with, and no error explaining why.
+MAX_PASSWORD_LEN = 1024
 
 
 async def main() -> int:
@@ -70,6 +75,10 @@ async def main() -> int:
         password = getpass.getpass("Password (min 12 chars): ")
         if len(password) < MIN_PASSWORD_LEN:
             print(f"Too short — {MIN_PASSWORD_LEN} characters minimum.")
+            return 2
+        if len(password) > MAX_PASSWORD_LEN:
+            print(f"Too long — {MAX_PASSWORD_LEN} characters maximum, "
+                  "which is what the login route accepts.")
             return 2
         if password != getpass.getpass("Confirm: "):
             print("Passwords do not match.")

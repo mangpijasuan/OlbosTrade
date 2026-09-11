@@ -121,3 +121,32 @@ def test_allowlist_prefixes_cannot_swallow_the_api():
 def test_exact_allowlist_contains_no_api_wildcards():
     for path in PUBLIC_EXACT:
         assert not path.endswith("*"), f"wildcards are not matched literally: {path!r}"
+
+
+@pytest.mark.parametrize("path", [
+    "/docs-internal",
+    "/assets-private",
+    "/openapi.json.bak",
+    "/staticfiles/secrets",
+    "/healthz-admin",
+])
+def test_a_prefix_does_not_extend_to_sibling_paths(path):
+    """
+    is_public_path used a bare startswith, so every allowlist entry was an
+    open-ended wildcard: "/static" made "/staticfiles/secrets" public, because
+    it merely begins with the same characters. Raised in review.
+    """
+    assert not is_public_path(path), (
+        f"{path} is not beneath any allowlisted prefix and must require a session"
+    )
+
+
+@pytest.mark.parametrize("path", [
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/static/app.css",
+    "/assets/logo.svg",
+])
+def test_real_children_of_a_prefix_stay_public(path):
+    """The other half — tightening the match must not break what it allows."""
+    assert is_public_path(path)

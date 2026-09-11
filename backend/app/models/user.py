@@ -48,7 +48,11 @@ class User(Base):
     )
     # Stored lower-cased and matched lower-cased. Case-sensitive emails let the
     # same person register twice and lock themselves out of the first account.
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    # Uniqueness comes from the named unique index in __table_args__, not from
+    # unique=True here. Declaring both made metadata-based creation build a
+    # UNIQUE constraint AND a unique index for the same column, and neither
+    # matched migration 0030, which creates only the index.
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     tier: Mapped[str] = mapped_column(String(20), nullable=False, default=TIER_FREE)
@@ -84,7 +88,8 @@ class UserSession(Base):
     # SHA-256 rather than Argon2 here on purpose: this value is 32 bytes of
     # CSPRNG output, not a guessable secret, so it needs no work factor — and
     # it is verified on every single request.
-    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # Uniqueness via the named index in __table_args__ — see User.email.
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Set on logout / revoke. Kept rather than deleted so "when did that session

@@ -115,6 +115,29 @@ def test_session_expiry_is_in_the_future():
     assert session_expiry(12) > datetime.now(timezone.utc)
 
 
+# ── configuration that would lock everyone out ───────────────────────────────
+
+@pytest.mark.parametrize("hours", [0, -1, -12])
+def test_non_positive_session_hours_is_refused_at_startup(hours):
+    """
+    AUTH_SESSION_HOURS=0 was accepted, and then login returned 200 while
+    storing an already-expired session and sending Max-Age=0 — the browser
+    dropped the cookie and every account was locked out, with no error to
+    explain it. Refusing to start is the kinder failure. Raised in review.
+    """
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(auth_session_hours=hours)
+
+
+def test_a_normal_session_length_is_accepted():
+    from app.core.config import Settings
+    assert Settings(auth_session_hours=12).auth_session_hours == 12
+
+
 # ── email normalisation ──────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("raw,expected", [

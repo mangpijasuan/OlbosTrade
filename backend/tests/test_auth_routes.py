@@ -400,6 +400,40 @@ async def test_a_db_failure_denies_rather_than_admits(client, user, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_a_failed_last_seen_write_does_not_deny_a_valid_session(client, user, store):
+    """
+    last_seen_at is bookkeeping. It used to share the fail-closed try block, so
+    a failed UPDATE denied a request that had already proved it held a valid
+    session — a write problem rejecting a read. Raised in review.
+    """
+    class _CommitFails(_FakeSession):
+        async def commit(self):
+            raise RuntimeError("disk full")
+
+    async with client:
+        await _login(client)
+        store.sessions[0].last_seen_at = None          # force a touch attempt
+        db_mod.AsyncSessionLocal = lambda: _CommitFails(store)
+        r = await client.get("/api/portfolio/positions")
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_last_seen_is_not_written_on_every_request(client, user, store):
+    """
+    This ran an UPDATE plus a commit on every authenticated request, polling
+    included. A "last seen" accurate to the minute is not worth that write load.
+    """
+    async with client:
+        await _login(client)
+        before = store.commits
+        for _ in range(5):
+            await client.get("/api/portfolio/positions")
+        after = store.commits
+    assert after - before <= 1, f"{after - before} commits for 5 reads"
+
+
+@pytest.mark.asyncio
 async def test_everything_stays_open_while_auth_is_disabled(client, user, monkeypatch):
     """
     Default-off has to be genuinely off: existing single-operator installs run

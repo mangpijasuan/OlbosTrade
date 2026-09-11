@@ -96,7 +96,11 @@ class Settings(BaseSettings):
     # first makes app auth the only thing between the internet and a trading
     # API on its first day in production.
     auth_enabled: bool = Field(default=False)
-    auth_session_hours: int = Field(default=12)
+    # ge=1 is not pedantry: AUTH_SESSION_HOURS=0 made login return 200 while
+    # storing an already-expired session and sending Max-Age=0, so the browser
+    # dropped the cookie and every account was locked out with no error
+    # anywhere. Refusing to start is the kinder failure.
+    auth_session_hours: int = Field(default=12, ge=1, le=720)
     # Set false only for local HTTP development; the session cookie must carry
     # Secure in any deployment reachable over a network.
     auth_cookie_secure: bool = Field(default=True)
