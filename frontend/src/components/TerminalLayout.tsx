@@ -973,15 +973,22 @@ function StatusLamp({
   label,
   on,
   warn,
+  unknown,
 }: {
   label: string;
   on: boolean;
   warn?: boolean;
+  /** The read failed or returned nothing. Rendered as amber "?" rather than
+   *  as "off": a dim lamp is indistinguishable from a successful read saying
+   *  the thing is off, which is the one reading this row must never imply
+   *  about a kill switch or a live account. Mirrors GlobalRiskStatus, whose
+   *  chips already treat unknown as attention-worthy. */
+  unknown?: boolean;
 }) {
-  const color = warn ? "var(--amber)" : on ? "var(--green)" : "var(--ink-faint)";
+  const color = unknown ? "var(--amber)" : warn ? "var(--amber)" : on ? "var(--green)" : "var(--ink-faint)";
   return (
     <span
-      title={`${label}: ${warn ? "warn" : on ? "on" : "off"}`}
+      title={`${label}: ${unknown ? "could not be read" : warn ? "warn" : on ? "on" : "off"}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -991,21 +998,29 @@ function StatusLamp({
       }}
     >
       <span
-        className={`dot ${on || warn ? "live" : "dead"}`}
+        className={`dot ${on || warn || unknown ? "live" : "dead"}`}
         style={{ background: color, width: 6, height: 6 }}
       />
-      {label}
+      {unknown ? `${label} ?` : label}
     </span>
   );
 }
 
 function StatusBar({ page }: { page: string }) {
   const label = statusLabelForPage(page, activeNavModel());
-  const [killOn, setKillOn] = useState(false);
-  const [execMode, setExecMode] = useState("manual");
+  // null = not read yet, or the read failed. These three answer "is the desk
+  // about to move real money unattended", so each defaulted to its reassuring
+  // value on failure: killOn=false rendered a failed read as NOT ARMED,
+  // paper=true rendered an unreadable broker as green PAPER even on a live
+  // account, and execMode="manual" rendered a failed read as not auto-trading.
+  // GlobalRiskStatus already refuses exactly this ("a missing kill-switch read
+  // never renders as 'not armed'"); the two rows could therefore disagree,
+  // with this one being the optimistic of the pair.
+  const [killOn, setKillOn] = useState<boolean | null>(null);
+  const [execMode, setExecMode] = useState<string | null>(null);
   const [styleMode, setStyleMode] = useState("balanced");
   const [rotationOn, setRotationOn] = useState(false);
-  const [paper, setPaper] = useState(true);
+  const [paper, setPaper] = useState<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -1020,15 +1035,22 @@ function StatusBar({ page }: { page: string }) {
         fetch("/api/market/broker").then((r) => r.json()).catch(() => ({})),
       ]).then(([kill, exec, mode, guard, broker]) => {
         if (!alive) return;
-        setKillOn(!!(kill as any).engaged || !!(kill as any).is_engaged);
-        setExecMode(((exec as any).mode || "manual").toLowerCase());
+        // Only assert a value the payload actually carried; a failed fetch
+        // resolves to {} above, which must read as unknown, not as safe.
+        const engaged = (kill as any).engaged ?? (kill as any).is_engaged;
+        setKillOn(typeof engaged === "boolean" ? engaged : null);
+
+        const em = (exec as any).mode;
+        setExecMode(typeof em === "string" && em ? em.toLowerCase() : null);
+
         setStyleMode(((mode as any).mode || "balanced").toLowerCase());
         setRotationOn(!!(guard as any).position_rotation_on_max);
+
         if ((broker as any).paper_mode === false) setPaper(false);
         else if ((broker as any).paper_mode === true) setPaper(true);
         else if (typeof (guard as any).paper_mode === "boolean") {
           setPaper(!!(guard as any).paper_mode);
-        }
+        } else setPaper(null);
       });
     };
     load();
@@ -1055,16 +1077,25 @@ function StatusBar({ page }: { page: string }) {
       <span style={{ color: "var(--brand)", textTransform: "uppercase" }}>{label}</span>
       <span
         style={{
-          color: paper ? "var(--green)" : "var(--red)",
+          color: paper === null ? "var(--amber)" : paper ? "var(--green)" : "var(--red)",
           fontWeight: 700,
           textTransform: "uppercase",
         }}
-        title={paper ? "Paper trading" : "Live trading — real capital"}
+        title={
+          paper === null
+            ? "Paper/live state could not be read from the broker or guardrails"
+            : paper ? "Paper trading" : "Live trading — real capital"
+        }
       >
-        {paper ? "PAPER" : "LIVE"}
+        {paper === null ? "ENV ?" : paper ? "PAPER" : "LIVE"}
       </span>
-      <StatusLamp label="Kill" on={killOn} warn={killOn} />
-      <StatusLamp label={`Exec ${execMode}`} on={execMode !== "manual"} warn={execMode === "autopilot"} />
+      <StatusLamp label="Kill" on={killOn === true} warn={killOn === true} unknown={killOn === null} />
+      <StatusLamp
+        label={execMode ? `Exec ${execMode}` : "Exec"}
+        on={execMode !== null && execMode !== "manual"}
+        warn={execMode === "autopilot"}
+        unknown={execMode === null}
+      />
       <StatusLamp label={`Style ${styleMode}`} on />
       <StatusLamp label="Rotation" on={rotationOn} />
       <div style={{ flex: 1 }} />
