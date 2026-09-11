@@ -64,7 +64,7 @@ async def _yf_bars(ticker: str, limit: int = 60) -> list:
 
     return await loop.run_in_executor(None, _fetch)
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
@@ -100,10 +100,22 @@ from app.core.config import settings
 
 logger = get_logger(__name__)
 
+# Default-deny: the session check is a dependency on the APP, not on individual
+# routes. 144 route decorators exist and 15 carried the operator-key dependency;
+# adding the rest one at a time guarantees one gets missed, and the missed one is
+# found by an incident. Routes opt OUT by path via auth_deps.PUBLIC_*, and
+# test_auth_route_coverage.py fails CI if a new route is neither protected nor
+# deliberately allowlisted.
+#
+# Inert while AUTH_ENABLED is false (the default) — require_session returns
+# immediately, so existing installs are unchanged.
+from app.api.auth_deps import require_session  # noqa: E402
+
 app = FastAPI(
     title="OlbosTrade",
     version="4.0.0",
     description="Blessed prosperity through disciplined, rules-based quantitative trading.",
+    dependencies=[Depends(require_session)],
 )
 
 _ALLOWED_ORIGINS = [
@@ -186,6 +198,9 @@ SIGNAL_OUTCOMES_DEADLINE_S = 240.0
 SIGNAL_OUTCOMES_GUARD_S = 600
 
 # ── Route registration ─────────────────────────────────────────────────────
+from app.api.routes import auth as auth_routes  # noqa: E402
+app.include_router(auth_routes.router)
+
 app.include_router(backtest.router,    prefix="/api/backtest",    tags=["Backtest"])
 app.include_router(strategy.router,    prefix="/api/strategy",    tags=["Strategy"])
 app.include_router(alpha_edge.router,  prefix="/api/alpha-edge",  tags=["Alpha Edge"])
