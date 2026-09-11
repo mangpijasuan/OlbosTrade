@@ -14,6 +14,7 @@ import React, { useState, useEffect } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import GlobalRiskStatus from "./GlobalRiskStatus";
 import UserMenu from "./UserMenu";
+import { tint } from "../utils/tint";
 import ErrorBoundary from "./ErrorBoundary";
 import KillSwitchButton from "./KillSwitchButton";
 import { api } from "../api/client";
@@ -523,7 +524,10 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
             style={{
               display: "flex", alignItems: "center", gap: 6,
               height: 44, padding: "0 14px", marginRight: 2, borderRadius: 22,
-              background: "var(--bg-3)", border: `1px solid ${modeTone}66`,
+              // tint(), not `${modeTone}66` — modeTone is a var() reference, and
+              // concatenating an alpha onto one drops the whole declaration, so
+              // this border has never rendered. See utils/tint.ts.
+              background: "var(--bg-3)", border: `1px solid ${tint(modeTone, 0.4)}`,
               color: modeTone, fontFamily: "var(--mono)", fontSize: 10,
               letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
             }}
