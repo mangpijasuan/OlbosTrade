@@ -29,6 +29,45 @@ def _client_key(request: Request, x_api_key: str) -> str:
     return x_api_key or (request.client.host if request.client else "unknown")
 
 
+LOGIN_WINDOW_S = 300.0
+LOGIN_MAX_ATTEMPTS = 10
+
+_login_log: dict[str, list[float]] = {}
+
+
+def login_rate_limit(request: Request) -> None:
+    """
+    Throttle login attempts by source IP, deliberately ignoring X-Api-Key.
+
+    rate_limit() below keys on the API key because on the routes it guards the
+    key IS the caller's identity — a shared secret they had to already possess.
+    On /api/auth/login there is no such key yet, so that header is nothing but
+    attacker-controlled text: sending a fresh random value per request would put
+    every attempt in its own bucket and make the limit vacuous. Password
+    guessing has to be limited by something the client cannot choose.
+
+    Tighter than the operator limit (10 per 5 minutes, not 20 per minute)
+    because a human logging in types a password once or twice, not twenty times.
+
+    Caveat worth knowing: behind a reverse proxy request.client.host is the
+    proxy unless it is configured to forward the real address and the app is run
+    with --proxy-headers. Without that every client shares one bucket, which
+    errs toward refusing logins rather than allowing unlimited guesses, but it
+    also means one attacker can lock out everyone. Check the deployment before
+    relying on this as the only brake.
+    """
+    key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    recent = [t for t in _login_log.get(key, []) if now - t < LOGIN_WINDOW_S]
+    if len(recent) >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts — try again shortly",
+        )
+    recent.append(now)
+    _login_log[key] = recent
+
+
 def rate_limit(request: Request, x_api_key: str = Header(default="", alias="X-Api-Key")) -> None:
     """20 requests / 60s per client on order-placement/kill-switch-adjacent
     routes — generous for a human operator clicking approve/manual-trade/

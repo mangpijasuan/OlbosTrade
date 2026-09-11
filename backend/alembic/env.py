@@ -17,6 +17,7 @@ from app.models import (  # noqa: F401
     research_experiment,
     risk_state,
     trade,
+    user,
 )
 
 config = context.config

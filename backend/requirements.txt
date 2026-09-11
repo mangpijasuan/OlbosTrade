@@ -36,6 +36,9 @@ python-dotenv==1.0.1
 ta==0.11.0
 greenlet==3.5.5
 
+# Auth — Argon2id password hashing (Phase 1 identity)
+argon2-cffi==23.1.0
+
 # AI Research Assistant (provider-agnostic — Gemini default/free tier, Claude optional)
 google-genai==1.2.0
 anthropic==0.122.0

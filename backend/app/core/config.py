@@ -84,6 +84,27 @@ class Settings(BaseSettings):
     # existing single-operator installs are unaffected.
     execution_enabled: bool = Field(default=True)
 
+    # ── Authentication (Phase 1) ──────────────────────────────────────────
+    # Defaults FALSE so existing single-operator installs keep working exactly
+    # as they do today (nginx Basic Auth via DASH_USER/DASH_PASS, plus the
+    # X-Api-Key operator key on mutate routes). Turning it on switches the API
+    # to default-deny: every route requires a logged-in session except an
+    # explicit allowlist.
+    #
+    # Sequence this deliberately — ship app auth, verify it with Basic Auth
+    # still in front, and only then remove Basic Auth. Removing the outer wall
+    # first makes app auth the only thing between the internet and a trading
+    # API on its first day in production.
+    auth_enabled: bool = Field(default=False)
+    # ge=1 is not pedantry: AUTH_SESSION_HOURS=0 made login return 200 while
+    # storing an already-expired session and sending Max-Age=0, so the browser
+    # dropped the cookie and every account was locked out with no error
+    # anywhere. Refusing to start is the kinder failure.
+    auth_session_hours: int = Field(default=12, ge=1, le=720)
+    # Set false only for local HTTP development; the session cookie must carry
+    # Secure in any deployment reachable over a network.
+    auth_cookie_secure: bool = Field(default=True)
+
     # ── Paper visibility mode ─────────────────────────────────────────────
     # Lets the app generate more activity in paper mode so the operator can
     # confirm scans, execution, and trade history without weakening live rules.
