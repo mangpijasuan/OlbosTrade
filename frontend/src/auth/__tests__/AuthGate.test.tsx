@@ -24,8 +24,13 @@ function Terminal() {
 
 /** Stands in for UserMenu's sign-out, without pulling in its layout. */
 function SignOutButton() {
-  const { signOut } = useAuth();
-  return <button onClick={() => { void signOut(); }}>sign out</button>;
+  const { signOut, logoutWarning } = useAuth();
+  return (
+    <>
+      <button onClick={() => { void signOut(); }}>sign out</button>
+      {logoutWarning && <div role="status">{logoutWarning}</div>}
+    </>
+  );
 }
 
 function renderGate() {
@@ -225,6 +230,94 @@ describe("a session that ends mid-use", () => {
       expect(screen.getByRole("status")).toHaveTextContent(/session ended/i);
     });
     expect(screen.queryByTestId(TERMINAL)).not.toBeInTheDocument();
+  });
+});
+
+describe("logout when the server cannot be reached", () => {
+  /**
+   * The dangerous case. If the request never lands, NOTHING happened: the
+   * session row is live and the cookie is still in the browser. The cookie is
+   * httpOnly, so script cannot remove it — this app cannot sign anyone out
+   * without the server.
+   *
+   * Showing "signed out" here would be a lie with consequences. Someone on a
+   * borrowed machine walks away believing they are signed out while a valid
+   * session sits in the browser, and the next page load puts them back into a
+   * trading terminal.
+   */
+  function renderSignedInWithFailingLogout() {
+    window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/auth/status") {
+        return new Response(JSON.stringify(STATUS_SIGNED_IN), { status: 200 });
+      }
+      if (path === "/api/auth/logout") throw new TypeError("network down");
+      return new Response("{}", { status: 200 });
+    }) as never;
+
+    return render(
+      <AuthProvider>
+        <AuthGate><Terminal /></AuthGate>
+        <SignOutButton />
+      </AuthProvider>
+    );
+  }
+
+  it("keeps the user signed in rather than claiming otherwise", async () => {
+    renderSignedInWithFailingLogout();
+    await screen.findByTestId(TERMINAL);
+
+    fireEvent.click(screen.getByText("sign out"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(/still signed in/i);
+    });
+    // The terminal is still showing, because the session really is still live.
+    expect(screen.getByTestId(TERMINAL)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
+  });
+
+  it("says the server could not be reached, not that revocation failed", async () => {
+    // Two different failures with two different consequences. Conflating them
+    // tells someone their cookie is gone when it is not.
+    renderSignedInWithFailingLogout();
+    await screen.findByTestId(TERMINAL);
+
+    fireEvent.click(screen.getByText("sign out"));
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent(/could not reach the server/i);
+    expect(notice.textContent).not.toMatch(/signed out here/i);
+  });
+
+  it("still signs out once the server comes back", async () => {
+    let up = false;
+    window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/auth/status") {
+        return new Response(JSON.stringify(STATUS_SIGNED_IN), { status: 200 });
+      }
+      if (path === "/api/auth/logout") {
+        if (!up) throw new TypeError("network down");
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as never;
+
+    render(
+      <AuthProvider>
+        <AuthGate><Terminal /></AuthGate>
+        <SignOutButton />
+      </AuthProvider>
+    );
+    await screen.findByTestId(TERMINAL);
+
+    fireEvent.click(screen.getByText("sign out"));
+    await screen.findByRole("status");          // the failure notice
+
+    up = true;
+    fireEvent.click(screen.getByText("sign out"));
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
   });
 });
 

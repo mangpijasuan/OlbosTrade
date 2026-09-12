@@ -135,7 +135,7 @@ export default function UserMenu() {
               raised by the sign-out just performed — is shown on the login
               screen, since this menu unmounts the moment the phase changes. */}
           {logoutWarning && (
-            <div style={{
+            <div role="status" style={{
               fontSize: 10, lineHeight: 1.4, color: AMBER,
               border: `1px solid ${tint(AMBER, 0.333)}`, background: tint(AMBER, 0.08),
               borderRadius: 4, padding: "6px 8px",
@@ -151,10 +151,14 @@ export default function UserMenu() {
             onClick={async () => {
               setBusy(true);
               try {
-                await signOut();
+                // Closing unconditionally would hide the warning explaining
+                // that sign-out FAILED and the session is still live — the
+                // same "built it, then made it unreachable" mistake the
+                // logout warning already suffered once. Stay open on false so
+                // the message is visible and Sign out can be tried again.
+                if (await signOut()) setOpen(false);
               } finally {
                 setBusy(false);
-                setOpen(false);
               }
             }}
             style={{

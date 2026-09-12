@@ -34,7 +34,12 @@ export interface AuthContextValue {
   /** Set when logout could not revoke server-side — worth telling the user. */
   logoutWarning: string | null;
   signIn: (email: string, password: string) => Promise<void>;
-  signOut: () => Promise<void>;
+  /**
+   * Resolves true when the session actually ended. False means the server
+   * could not be reached and the caller is STILL SIGNED IN — callers must not
+   * dismiss their UI on a false, or the warning explaining why goes with it.
+   */
+  signOut: () => Promise<boolean>;
   retry: () => void;
 }
 
@@ -131,19 +136,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPhase("signed-in");
   }, []);
 
-  const signOut = useCallback(async () => {
-    const { revoked } = await apiLogout();
+  const signOut = useCallback(async (): Promise<boolean> => {
+    const { outcome, cookieCleared } = await apiLogout();
+
+    if (!cookieCleared) {
+      // The request never landed, so nothing happened: the session row is live
+      // and the cookie is still in the browser. The cookie is httpOnly, so
+      // script cannot remove it — this app cannot sign anyone out without the
+      // server, and pretending otherwise is the dangerous option. Someone on a
+      // borrowed machine would walk away believing they were signed out while
+      // a valid session sat in the browser, and the next load would drop them
+      // back into the terminal.
+      //
+      // So: stay signed in, say plainly that it failed, and let them retry.
+      setLogoutWarning(
+        "Could not reach the server, so you are still signed in. " +
+        "Try again — or close the browser if you cannot."
+      );
+      return false;
+    }
+
     setUser(null);
     setExpiredNotice(null);
-    // The cookie is gone either way, so this screen is signed out. But if the
-    // server could not revoke, the session row is still live and the operator
-    // should know rather than assume it was torn down.
+    // The cookie is gone. If the server could not revoke the row, a copied
+    // token starts working again once the database recovers, which the
+    // operator should hear about rather than assume away.
     setLogoutWarning(
-      revoked
+      outcome === "revoked"
         ? null
         : "Signed out here, but the server could not revoke the session. Sign out again when it recovers."
     );
     setPhase("anonymous");
+    return true;
   }, []);
 
   const value = useMemo<AuthContextValue>(() => ({

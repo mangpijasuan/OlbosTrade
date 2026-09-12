@@ -67,9 +67,30 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   throw new LoginError(detail, res.status);
 }
 
+/**
+ * Three outcomes, not two — and the third is the one that matters.
+ *
+ *   "revoked"      the server cleared the cookie and killed the session row.
+ *   "not-revoked"  the server answered 503: it cleared the cookie, but the
+ *                  session row is still live and will work again when the
+ *                  database recovers. Bounded by AUTH_SESSION_HOURS.
+ *   "unreachable"  the request never arrived. NOTHING happened: the row is
+ *                  live and the cookie is still in the browser.
+ *
+ * The last case cannot be papered over on the client. The session cookie is
+ * httpOnly — deliberately, so XSS cannot lift it — which means script cannot
+ * delete it either. If the request does not land, this app genuinely cannot
+ * sign anyone out, and saying otherwise is a lie with consequences: on a
+ * borrowed or shared machine someone walks away believing they are signed out
+ * while a valid session cookie sits in the browser, and the next page load
+ * puts them straight back into a trading terminal.
+ */
+export type LogoutOutcome = "revoked" | "not-revoked" | "unreachable";
+
 export interface LogoutResult {
-  /** False when the server could not revoke the session (it returns 503). */
-  revoked: boolean;
+  outcome: LogoutOutcome;
+  /** Whether the browser's session cookie is actually gone. */
+  cookieCleared: boolean;
 }
 
 export async function logout(): Promise<LogoutResult> {
@@ -78,11 +99,10 @@ export async function logout(): Promise<LogoutResult> {
       method: "POST",
       credentials: CREDENTIALS,
     });
-    // 503 means the cookie was cleared but the session row is still live. The
-    // person is logged out here either way; what they must not get is a silent
-    // success when the server could not revoke.
-    return { revoked: res.ok };
+    // Either status carries the cookie-deletion header — the route clears it
+    // before reporting a revocation failure — so the browser is clean here.
+    return { outcome: res.ok ? "revoked" : "not-revoked", cookieCleared: true };
   } catch {
-    return { revoked: false };
+    return { outcome: "unreachable", cookieCleared: false };
   }
 }
