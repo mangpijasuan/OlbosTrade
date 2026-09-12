@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Panel, StatTile } from "../components/ui";
+import { tint } from "../utils/tint";
 
 interface ConfidenceBucket { count: number; hit_rate: number | null }
 interface TickerRow { ticker: string; total: number; hit_rate: number | null }
@@ -52,8 +53,8 @@ function StatusPill({ status }: { status: string }) {
   return (
     <span style={{
       fontFamily: "var(--mono)", fontSize: 10, fontWeight: 600,
-      padding: "2px 8px", color, background: `${color}15`,
-      border: `1px solid ${color}40`,
+      padding: "2px 8px", color, background: tint(color, 0.082),
+      border: `1px solid ${tint(color, 0.251)}`,
     }}>
       {STATUS_LABEL[status] || status.toUpperCase()}
     </span>
@@ -131,7 +132,7 @@ export default function SignalResearch() {
     <div style={{ overflowY: "auto", height: "100%", padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
 
       {/* Header / explainer */}
-      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid color-mix(in srgb, var(--cyan) 19%, transparent)", borderLeft: "2px solid var(--cyan)" }}>
         <span className="panel-title" style={{ marginRight: 12 }}>SIGNAL RESEARCH</span>
         <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink)" }}>
           Every routable equity signal is tracked from generation to real forward outcome — target hit, stop hit,

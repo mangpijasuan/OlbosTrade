@@ -11,6 +11,7 @@ import type { SignalAttributionData } from "../types/signal";
 import { useAlphaEdgeWatchlist } from "../hooks/useAlphaEdgeWatchlist";
 import type { AlphaEdgeCandidate } from "../utils/alphaEdgeCandidates";
 import MissionCard, { MissionCardSkeleton } from "../components/MissionCard";
+import { tint } from "../utils/tint";
 
 interface AlphaEdgeResponse {
   ticker: string;
@@ -175,8 +176,8 @@ function AlphaEdgeDetail({ data }: { data: AlphaEdgeResponse }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span className="pill" style={{
             color: LIFECYCLE_COLOR[data.lifecycle_state],
-            border: `1px solid ${LIFECYCLE_COLOR[data.lifecycle_state]}60`,
-            background: `${LIFECYCLE_COLOR[data.lifecycle_state]}15`,
+            border: `1px solid ${tint(LIFECYCLE_COLOR[data.lifecycle_state], 0.376)}`,
+            background: `${tint(LIFECYCLE_COLOR[data.lifecycle_state], 0.082)}`,
           }}>
             {LIFECYCLE_LABEL[data.lifecycle_state] || data.lifecycle_state.toUpperCase()}
           </span>

@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 
 import { useAuthOptional } from "../auth/AuthContext";
+import { tint } from "../utils/tint";
 
 /** Same value as --amber in index.css. See noticeStyle in pages/Login.tsx for
  *  why this is a literal rather than a var() reference. */
@@ -136,7 +137,7 @@ export default function UserMenu() {
           {logoutWarning && (
             <div style={{
               fontSize: 10, lineHeight: 1.4, color: AMBER,
-              border: `1px solid ${AMBER}55`, background: `${AMBER}14`,
+              border: `1px solid ${tint(AMBER, 0.333)}`, background: tint(AMBER, 0.08),
               borderRadius: 4, padding: "6px 8px",
             }}>
               {logoutWarning}

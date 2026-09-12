@@ -4,6 +4,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { Panel } from "../../components/ui";
+import { tint } from "../../utils/tint";
 
 interface ObsEvent {
   ts: number;
@@ -111,7 +112,7 @@ function EventRow({ e, now }: { e: ObsEvent; now: number }) {
     }}>
       <span style={{ color: "var(--ink-faint)", minWidth: 56, flexShrink: 0 }}>{relativeTime(ts, now)}</span>
       <span style={{
-        color: eventTone(name), border: `1px solid ${eventTone(name)}66`, padding: "0 6px",
+        color: eventTone(name), border: `1px solid ${tint(eventTone(name), 0.4)}`, padding: "0 6px",
         textTransform: "uppercase", fontSize: 9.5, flexShrink: 0,
       }}>
         {name}

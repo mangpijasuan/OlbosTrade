@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Panel } from "./ui";
+import { tint } from "../utils/tint";
 
 interface Structure {
   symbol?: string;
@@ -112,7 +113,7 @@ function LevelStack({ label, tone, levels }: { label: string; tone: string; leve
       {levels.length ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {levels.slice(0, 3).map((level) => (
-            <span key={level} className="mode-badge" style={{ color: tone, borderColor: `${tone}55` }}>
+            <span key={level} className="mode-badge" style={{ color: tone, borderColor: tint(tone, 0.333) }}>
               {fmtLevel(level)}
             </span>
           ))}

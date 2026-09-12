@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api } from "../api/client";
 import { Panel, Button } from "../components/ui";
+import { tint } from "../utils/tint";
 
 // daily_loss_pct/weekly_loss_pct from the API are signed P&L ratios (positive
 // on a gain day, negative on a loss day) — not always a loss despite the field
@@ -288,7 +289,7 @@ export default function Guardrails() {
             >
               <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
                 <div style={{
-                  border: `1px solid ${reconColor}55`,
+                  border: `1px solid ${tint(reconColor, 0.333)}`,
                   background: "var(--bg-1)",
                   padding: 14,
                 }}>

@@ -23,6 +23,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useIsMobile } from "../hooks/useIsMobile";
 import type { Availability } from "../types/signal";
+import { tint } from "../utils/tint";
 
 interface ExecMode {
   mode: "manual" | "copilot" | "autopilot" | string;
@@ -99,7 +100,7 @@ function Chip({
         alignItems: "center",
         gap: 6,
         padding: "3px 9px",
-        border: `1px solid ${tone}55`,
+        border: `1px solid ${tint(tone, 0.333)}`,
         borderRadius: 3,
         background: "var(--bg-3)",
         whiteSpace: "nowrap",

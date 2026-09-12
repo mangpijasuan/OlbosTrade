@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Panel, Sparkline } from "../components/ui";
+import { tint } from "../utils/tint";
 
 interface ModeStats {
   display_name: string; trade_count: number; win_rate: number;
@@ -29,8 +30,8 @@ function ModeCard({ modeKey, s, isBest }: { modeKey: string; s: ModeStats; isBes
   const color = MODE_COLOR[modeKey] || "var(--cyan)";
   return (
     <div style={{
-      border: `1px solid ${isBest ? color + "60" : "var(--line-dim)"}`,
-      background: isBest ? `${color}08` : "var(--bg-2)",
+      border: `1px solid ${isBest ? tint(color, 0.376) : "var(--line-dim)"}`,
+      background: isBest ? tint(color, 0.031) : "var(--bg-2)",
       display: "flex", flexDirection: "column",
     }}>
       {/* Header */}
@@ -46,7 +47,7 @@ function ModeCard({ modeKey, s, isBest }: { modeKey: string; s: ModeStats; isBes
           </span>
           {isBest && (
             <span style={{ fontFamily: "var(--mono)", fontSize: 9, padding: "1px 6px",
-              background: `${color}20`, color, border: `1px solid ${color}40` }}>
+              background: tint(color, 0.125), color, border: `1px solid ${tint(color, 0.251)}` }}>
               BEST SHARPE
             </span>
           )}
@@ -171,7 +172,7 @@ export default function ModeAnalytics() {
 
       {/* Portfolio rec */}
       {data.recommendation && (
-        <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+        <div style={{ padding: "10px 14px", background: "var(--bg-2)", border: "1px solid color-mix(in srgb, var(--cyan) 19%, transparent)", borderLeft: "2px solid var(--cyan)" }}>
           <span className="panel-title" style={{ marginRight: 12 }}>SYSTEM RECOMMENDATION</span>
           <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink)" }}>{data.recommendation}</span>
         </div>

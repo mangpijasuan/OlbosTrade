@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Panel } from "../components/ui";
+import { tint } from "../utils/tint";
 
 interface StrategyHealthRow {
   strategy: string;
@@ -75,7 +76,7 @@ function StrategyHealthRowView({ row }: { row: StrategyHealthRow }) {
 
   return (
     <div className="instrument-card" style={{
-      border: `1px solid ${color}40`, borderLeft: `2px solid ${color}`,
+      border: `1px solid ${tint(color, 0.251)}`, borderLeft: `2px solid ${color}`,
       padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -84,7 +85,7 @@ function StrategyHealthRowView({ row }: { row: StrategyHealthRow }) {
         </span>
         <span style={{
           fontFamily: "var(--mono)", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-          padding: "2px 8px", color, border: `1px solid ${color}60`,
+          padding: "2px 8px", color, border: `1px solid ${tint(color, 0.376)}`,
         }}>
           {STATUS_LABEL[row.status] || row.status.toUpperCase()}
         </span>
@@ -110,7 +111,7 @@ function StrategyHealthRowView({ row }: { row: StrategyHealthRow }) {
         <div style={{
           fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
           color: row.action === "suspend" ? "var(--red)" : "var(--amber)",
-          border: `1px solid ${row.action === "suspend" ? "var(--red)" : "var(--amber)"}60`,
+          border: `1px solid ${tint(row.action === "suspend" ? "var(--red)" : "var(--amber)", 0.376)}`,
           padding: "6px 10px", width: "fit-content",
         }}>
           ACTION: {ACTION_LABEL[row.action] || row.action.toUpperCase()}
@@ -166,7 +167,7 @@ export default function StrategyHealthPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
-      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid var(--cyan)30", borderLeft: "2px solid var(--cyan)" }}>
+      <div className="instrument-card" style={{ padding: "10px 14px", border: "1px solid color-mix(in srgb, var(--cyan) 19%, transparent)", borderLeft: "2px solid var(--cyan)" }}>
         <span className="panel-title" style={{ marginRight: 12 }}>STRATEGY HEALTH</span>
         <span className="mono" style={{ fontSize: 11, color: suspended.length === 0 ? "var(--green)" : "var(--red)" }}>
           {data?.total_strategies ?? strategies.length} tracked

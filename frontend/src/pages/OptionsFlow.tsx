@@ -13,6 +13,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { Badge, Button } from "../components/ui";
+import { tint } from "../utils/tint";
 
 interface FlowRow {
   ticker: string; type: "CALL" | "PUT"; strike: number; expiry: string;
@@ -77,7 +78,7 @@ function FlowCard({ row, onPickTicker }: { row: FlowRow; onPickTicker: (t: strin
             fontFamily: "var(--sans)", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
             padding: "2px 7px", borderRadius: 3, color: tone,
             background: isCall ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
-            border: `1px solid ${tone}55`,
+            border: `1px solid ${tint(tone, 0.333)}`,
           }}>
             {row.type}
           </span>

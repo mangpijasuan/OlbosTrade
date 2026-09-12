@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Panel, Button } from "./ui";
+import { tint } from "../utils/tint";
 
 interface Bias {
   symbol: string; price: number | null; bias: "bullish" | "neutral" | "bearish";
@@ -140,7 +141,7 @@ export default function MarketBiasPanel({ symbol }: { symbol: string }) {
             {(() => {
               const status = setupStatus(bias, conf?.score);
               return (
-                <div className="instrument-card--flat" style={{ border: `1px solid ${status.tone}66`, padding: 10, marginBottom: 10 }}>
+                <div className="instrument-card--flat" style={{ border: `1px solid ${tint(status.tone, 0.4)}`, padding: 10, marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                     <span className="kicker">Setup Status</span>
                     <span style={{ color: status.tone, fontWeight: 700, textTransform: "uppercase" }}>{status.label}</span>

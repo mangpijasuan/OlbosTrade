@@ -5,6 +5,7 @@
  * SignalAttribution stays for source/confidence disclosure.
  */
 import React from "react";
+import { tint } from "../utils/tint";
 import {
   actionTone,
   formatSignalAction,
@@ -55,8 +56,8 @@ export default function SignalDirectionBadge({
         padding: pad,
         borderRadius: 3,
         color,
-        border: `1px solid ${color}${muted ? "55" : "88"}`,
-        background: muted ? "transparent" : `${color}18`,
+        border: `1px solid ${tint(color, muted ? 0.333 : 0.533)}`,
+        background: muted ? "transparent" : tint(color, 0.094),
         whiteSpace: "nowrap",
       }}
     >

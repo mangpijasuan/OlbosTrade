@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { api, apiAuthHeaders } from "../../api/client";
 import PortfolioGreeks from "../../components/PortfolioGreeks";
+import { tint } from "../../utils/tint";
 
 export interface OptionsEligibility {
   final_status: string;
@@ -87,7 +88,7 @@ export default function OptionsIntelligenceRail({
         </div>
       </div>
 
-      <div className="instrument-card" style={{ border: `1px solid ${statusColor}55`, padding: "10px 12px" }}>
+      <div className="instrument-card" style={{ border: `1px solid ${tint(statusColor, 0.333)}`, padding: "10px 12px" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.1em", color: "var(--ink-faint)" }}>
           ELIGIBILITY (BACKEND)
         </div>
