@@ -277,6 +277,28 @@ describe("logout when the server cannot be reached", () => {
     expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
   });
 
+  it("never suggests closing the browser as a way to be safe", async () => {
+    /**
+     * Raised in review, and worse than the bug this change fixes. The session
+     * cookie is set with max_age = AUTH_SESSION_HOURS * 3600, so it is
+     * PERSISTENT: closing and reopening the browser keeps it, and the next
+     * person to open the app on that machine walks into the terminal.
+     *
+     * A false reassurance with a specific action attached is worse than no
+     * advice, so this pins the wording rather than trusting it to stay right.
+     */
+    renderSignedInWithFailingLogout();
+    await screen.findByTestId(TERMINAL);
+
+    fireEvent.click(screen.getByText("sign out"));
+
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toMatch(/will NOT sign you out/i);
+    // Must not read as "close the browser and you're fine".
+    expect(notice.textContent).not.toMatch(/close the browser if/i);
+    expect(notice.textContent).not.toMatch(/or close the browser\b(?!.*NOT)/i);
+  });
+
   it("says the server could not be reached, not that revocation failed", async () => {
     // Two different failures with two different consequences. Conflating them
     // tells someone their cookie is gone when it is not.
@@ -362,6 +384,14 @@ describe("logout when the server cannot be reached", () => {
     const notices = screen.getAllByRole("status").map(n => n.textContent).join(" ");
     expect(notices).toMatch(/could not revoke/i);
     expect(notices).not.toMatch(/still signed in/i);
+
+    // "Sign out again when it recovers" was not actionable: the phase is
+    // anonymous by now, the login screen has no sign-out control, and a later
+    // sign-out would revoke a NEW session. Raised in review. The message must
+    // point at something that actually works — deactivating the account, which
+    // require_session rechecks per request.
+    expect(notices).not.toMatch(/sign out again/i);
+    expect(notices).toMatch(/deactivate the account/i);
   });
 
   it("still signs out once the server comes back", async () => {
