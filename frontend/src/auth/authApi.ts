@@ -67,22 +67,68 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   throw new LoginError(detail, res.status);
 }
 
+/**
+ * Three outcomes, not two — and the third is the one that matters.
+ *
+ *   "revoked"      the server cleared the cookie and killed the session row.
+ *   "not-revoked"  the server answered 503: it cleared the cookie, but the
+ *                  session row is still live and will work again when the
+ *                  database recovers. Bounded by AUTH_SESSION_HOURS.
+ *   "unreachable"  the request never arrived. NOTHING happened: the row is
+ *                  live and the cookie is still in the browser.
+ *
+ * The last case cannot be papered over on the client. The session cookie is
+ * httpOnly — deliberately, so XSS cannot lift it — which means script cannot
+ * delete it either. If the request does not land, this app genuinely cannot
+ * sign anyone out, and saying otherwise is a lie with consequences: on a
+ * borrowed or shared machine someone walks away believing they are signed out
+ * while a valid session cookie sits in the browser, and the next page load
+ * puts them straight back into a trading terminal.
+ */
+export type LogoutOutcome = "revoked" | "not-revoked" | "unreachable";
+
 export interface LogoutResult {
-  /** False when the server could not revoke the session (it returns 503). */
-  revoked: boolean;
+  outcome: LogoutOutcome;
+  /** Whether the browser's session cookie is actually gone. */
+  cookieCleared: boolean;
 }
 
+/** Unreachable is the safe answer: it keeps the caller signed in. */
+const UNREACHABLE: LogoutResult = { outcome: "unreachable", cookieCleared: false };
+
 export async function logout(): Promise<LogoutResult> {
+  let res: Response;
   try {
-    const res = await fetch("/api/auth/logout", {
+    res = await fetch("/api/auth/logout", {
       method: "POST",
       credentials: CREDENTIALS,
     });
-    // 503 means the cookie was cleared but the session row is still live. The
-    // person is logged out here either way; what they must not get is a silent
-    // success when the server could not revoke.
-    return { revoked: res.ok };
   } catch {
-    return { revoked: false };
+    return UNREACHABLE;                  // never left the browser
   }
+
+  // Deliberately NOT `res.ok ? … : …`, and deliberately not a check on 503.
+  //
+  // The cookie is only gone if the logout ROUTE ran, because delete_cookie
+  // lives there. A status code does not prove that: nginx answers 502/504 when
+  // the backend is down, and an unhandled error can produce a 500 raised before
+  // the route reaches its cookie clearing. Trusting the status would report
+  // cookieCleared on a response that never touched the cookie, sign the user
+  // out in the UI, and leave a live httpOnly session in the browser — which is
+  // precisely the bug this module was just changed to stop telling.
+  //
+  // So the route identifies itself: only its own JSON envelope, {ok: boolean},
+  // counts as proof it ran. A proxy error page cannot forge that. Anything
+  // unrecognised falls through to unreachable, which keeps the caller signed
+  // in — the fail-safe direction, since a spurious "still signed in" costs a
+  // retry and a spurious "signed out" costs a live session on a shared machine.
+  try {
+    const body = await res.json();
+    if (body && typeof body.ok === "boolean") {
+      return { outcome: body.ok ? "revoked" : "not-revoked", cookieCleared: true };
+    }
+  } catch {
+    /* not JSON — a proxy error page, an empty body, a truncated response */
+  }
+  return UNREACHABLE;
 }
