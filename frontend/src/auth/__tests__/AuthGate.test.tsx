@@ -470,6 +470,76 @@ describe("logout that could not revoke server-side", () => {
   });
 });
 
+describe("the three ways the status check can fail", () => {
+  /**
+   * The backend returns 503 from /api/auth/status when it cannot read the
+   * session store — added in #52 precisely so the client could tell that apart
+   * from "logged out". fetchAuthStatus then threw a bare Error and the gate
+   * said "can't reach the server" about a server that had just replied, which
+   * sends an operator to check the network instead of the database.
+   */
+  function bootWith(respond: () => Response | never) {
+    window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/auth/status") return respond();
+      return new Response("{}", { status: 200 });
+    }) as never;
+    return renderGate();
+  }
+
+  it("names the session store ONLY for the route's own 503", async () => {
+    bootWith(() => new Response(
+      JSON.stringify({ detail: "Cannot determine session state right now" }),
+      { status: 503 }
+    ));
+
+    expect(await screen.findByText(/can't read its session store/i)).toBeInTheDocument();
+    // Must not blame the network: the server answered.
+    expect(screen.queryByText(/can't reach the server/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["502 from a gateway", 502, "<html>Bad Gateway</html>"],
+    ["504 from a gateway", 504, "<html>Gateway Timeout</html>"],
+    ["500 from the app", 500, JSON.stringify({ detail: "Internal Server Error" })],
+    ["a gateway 503, not the route's", 503, "<html>Service Unavailable</html>"],
+  ])("does NOT blame the database for %s", async (_label, status, body) => {
+    /**
+     * Raised by both reviewers, and the third time this codebase has inferred
+     * meaning from a status code a proxy can also produce. Telling an operator
+     * to check the database for a gateway failure sends them to the one
+     * component that is working.
+     *
+     * Note the last case: 503 is the route's own signal, but a gateway can
+     * return it too — so the status alone is not enough, and the route has to
+     * identify itself by its JSON envelope.
+     */
+    bootWith(() => new Response(body, { status }));
+
+    expect(await screen.findByText(/returned an error/i)).toBeInTheDocument();
+    expect(screen.queryByText(/session store/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/can't reach the server/i)).not.toBeInTheDocument();
+  });
+
+  it("blames the network only when nothing answered", async () => {
+    bootWith(() => { throw new TypeError("network down"); });
+
+    expect(await screen.findByText(/can't reach the server/i)).toBeInTheDocument();
+    expect(screen.queryByText(/session store/i)).not.toBeInTheDocument();
+  });
+
+  it("neither failure signs the user out", async () => {
+    // Both keep the gate on the error screen rather than guessing, which is the
+    // property the distinction must not break.
+    bootWith(() => new Response("{}", { status: 503 }));
+
+    await screen.findByRole("button", { name: /retry/i });
+    expect(screen.queryByTestId(TERMINAL)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("server unreachable at boot", () => {
   it("offers a retry instead of guessing", async () => {
     // Neither "logged out" nor "auth is off" is knowable here, and picking

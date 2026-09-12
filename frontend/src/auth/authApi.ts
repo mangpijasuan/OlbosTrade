@@ -36,10 +36,50 @@ export class LoginError extends Error {
   }
 }
 
+/**
+ * The server answered, but could not say what the session state is.
+ *
+ * Distinct from a network failure, and the distinction is one the backend
+ * goes out of its way to provide: /api/auth/status returns 503 when the
+ * session store is unreadable rather than a 200 that would read as "logged
+ * out" (see routes/auth.py). Throwing a bare Error here discarded that on
+ * arrival and left the UI saying "can't reach the server" about a server that
+ * had just replied.
+ */
+export class AuthStatusError extends Error {
+  constructor(
+    readonly status: number,
+    /**
+     * Whether the response came from the route rather than something in front
+     * of it. Only the route's own 503 means "the session store is unreadable";
+     * an nginx 502/504, or a 500 raised before the route ran, is a different
+     * problem pointing at a different place. Carrying the status alone was not
+     * enough — a gateway can return 503 too.
+     */
+    readonly fromRoute: boolean,
+  ) {
+    super(`auth status ${status}`);
+    this.name = "AuthStatusError";
+  }
+}
+
 export async function fetchAuthStatus(): Promise<AuthStatus> {
+  // A fetch rejection here propagates as-is — that is the genuinely
+  // unreachable case, and the caller tells the cases apart by error type.
   const res = await fetch("/api/auth/status", { credentials: CREDENTIALS });
-  if (!res.ok) throw new Error(`auth status ${res.status}`);
-  return res.json();
+  if (res.ok) return res.json();
+
+  // Same rule as logout(): a status code is not proof the route ran, because a
+  // proxy can produce any of them. FastAPI's error envelope carries `detail`;
+  // a gateway error page is HTML and fails to parse.
+  let fromRoute = false;
+  try {
+    const body = await res.json();
+    fromRoute = typeof body?.detail === "string";
+  } catch {
+    /* HTML, empty, or truncated — not this app talking */
+  }
+  throw new AuthStatusError(res.status, fromRoute);
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {

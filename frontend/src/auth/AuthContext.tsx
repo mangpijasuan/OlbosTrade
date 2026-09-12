@@ -11,8 +11,8 @@
  *               identity to display
  *   anonymous — auth is on, nobody is signed in
  *   signed-in — auth is on, we know who
- *   error     — the server could not be reached; say so rather than picking
- *               one of the above and hoping
+ *   error     — the check failed; say so rather than picking one of the above
+ *               and hoping. See AuthErrorKind for the two ways it can fail.
  */
 
 import React, {
@@ -20,11 +20,30 @@ import React, {
 } from "react";
 
 import {
-  AuthUser, fetchAuthStatus, login as apiLogin, logout as apiLogout,
+  AuthStatusError, AuthUser, fetchAuthStatus, login as apiLogin,
+  logout as apiLogout,
 } from "./authApi";
 import { installSessionExpiryInterceptor, onSessionExpired } from "./sessionExpiry";
 
 export type AuthPhase = "checking" | "disabled" | "anonymous" | "signed-in" | "error";
+
+/**
+ * Why the check failed, when phase is "error". Each sends an operator to look
+ * at a different place, which is the only reason to distinguish them.
+ *
+ *   "unreachable"   nothing answered. Network, DNS, offline, backend down.
+ *   "session-store" the ROUTE answered 503: the app is running and cannot read
+ *                   its session store. Look at the database.
+ *   "server"        something answered with an error that is not the route's
+ *                   503 — a gateway 502/504, a 500 raised before the route
+ *                   ran. Look at the proxy or the app logs, NOT the database.
+ *
+ * The third kind exists because of a mistake made twice in this codebase:
+ * inferring meaning from a status code a proxy can also produce. Treating any
+ * non-2xx as the session-store outage told the operator to check the database
+ * for failures that never reached the database.
+ */
+export type AuthErrorKind = "unreachable" | "session-store" | "server";
 
 export interface AuthContextValue {
   phase: AuthPhase;
@@ -33,6 +52,8 @@ export interface AuthContextValue {
   expiredNotice: string | null;
   /** Set when logout could not revoke server-side — worth telling the user. */
   logoutWarning: string | null;
+  /** Only meaningful while phase is "error". */
+  errorKind: AuthErrorKind;
   signIn: (email: string, password: string) => Promise<void>;
   /**
    * Resolves true when the session actually ended. False means the server
@@ -68,24 +89,52 @@ export function useAuthOptional(): AuthContextValue | null {
   return useContext(AuthContext);
 }
 
+/**
+ * Only the route's own 503 means the session store is unreadable. Anything
+ * else that answered is a generic server error, and anything that did not
+ * answer at all is unreachable.
+ */
+function classifyStatusFailure(err: unknown): AuthErrorKind {
+  if (!(err instanceof AuthStatusError)) return "unreachable";
+  return err.status === 503 && err.fromRoute ? "session-store" : "server";
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<AuthPhase>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [expiredNotice, setExpiredNotice] = useState<string | null>(null);
   const [logoutWarning, setLogoutWarning] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<AuthErrorKind>("unreachable");
 
-  // Guards against a slow status call resolving after unmount, and against the
-  // expiry interceptor firing once per in-flight request during a page's worth
-  // of parallel polls.
-  const alive = useRef(true);
+  /**
+   * Monotonic token identifying the newest status check.
+   *
+   * This replaces a single `alive` boolean, which could not tell "the provider
+   * unmounted" from "a newer check started" and so let a STALE response write
+   * state. Two ways that bit:
+   *
+   *   StrictMode — React 18 mounts, unmounts and remounts in development. The
+   *   cleanup set alive=false and the remount set it straight back to true, so
+   *   the first mount's in-flight response found alive===true and applied.
+   *
+   *   retry() — it is exposed on the context and a person can click it twice.
+   *   With two requests in flight, whichever RESOLVES last wins, which may be
+   *   the older one. On a recovering server that means the failure result can
+   *   land after the success and put the app back on the error screen.
+   *
+   * A per-call token fixes both: a response applies only if its check is still
+   * the latest. Bumping the token on unmount subsumes what `alive` did.
+   */
+  const checkGen = useRef(0);
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
 
   const check = useCallback(async () => {
+    const gen = ++checkGen.current;
     setPhase("checking");
     try {
       const status = await fetchAuthStatus();
-      if (!alive.current) return;
+      if (gen !== checkGen.current) return;      // superseded
       if (!status.auth_enabled) {
         setUser(null);
         setPhase("disabled");
@@ -96,18 +145,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
         setPhase("anonymous");
       }
-    } catch {
-      if (!alive.current) return;
-      // Unreachable server. Not "logged out" and not "auth is off" — both
-      // would be guesses, and one of them silently drops the identity display
-      // on an instance that does have auth on.
+    } catch (err) {
+      if (gen !== checkGen.current) return;      // superseded
+      // Not "logged out" and not "auth is off" — both would be guesses, and
+      // one of them silently drops the identity display on an instance that
+      // does have auth on.
+      //
+      // But which failure it is changes what to tell the operator, so they
+      // are kept apart — see AuthErrorKind and classifyStatusFailure.
       setUser(null);
+      setErrorKind(classifyStatusFailure(err));
       setPhase("error");
     }
   }, []);
 
   useEffect(() => {
-    alive.current = true;
     const uninstall = installSessionExpiryInterceptor();
 
     const off = onSessionExpired(() => {
@@ -122,7 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     check();
     return () => {
-      alive.current = false;
+      checkGen.current++;          // invalidate anything in flight
       off();
       uninstall();
     };
@@ -193,8 +245,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AuthContextValue>(() => ({
-    phase, user, expiredNotice, logoutWarning, signIn, signOut, retry: check,
-  }), [phase, user, expiredNotice, logoutWarning, signIn, signOut, check]);
+    phase, user, expiredNotice, logoutWarning, errorKind,
+    signIn, signOut, retry: check,
+  }), [phase, user, expiredNotice, logoutWarning, errorKind, signIn, signOut, check]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

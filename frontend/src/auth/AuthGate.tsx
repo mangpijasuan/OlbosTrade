@@ -10,10 +10,29 @@
 import React from "react";
 
 import Login from "../pages/Login";
-import { useAuth } from "./AuthContext";
+import { AuthErrorKind, useAuth } from "./AuthContext";
+
+const HEADLINE: Record<AuthErrorKind, string> = {
+  unreachable: "Can't reach the server.",
+  "session-store": "The server can't read its session store.",
+  server: "The server returned an error.",
+};
+
+const DETAIL: Record<AuthErrorKind, string> = {
+  unreachable:
+    "Not signing you out — this machine cannot tell whether the session is " +
+    "still good, and guessing either way would be wrong.",
+  "session-store":
+    "The app is running but answered that it cannot determine your session — " +
+    "usually its database. Not signing you out; check the backend.",
+  server:
+    "Something answered, but not with a session state — a gateway or an " +
+    "unhandled error rather than the database. Not signing you out; check the " +
+    "proxy and the app logs.",
+};
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const { phase, retry } = useAuth();
+  const { phase, retry, errorKind } = useAuth();
 
   if (phase === "checking") return <Splash>Checking session…</Splash>;
 
@@ -21,10 +40,13 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <Splash>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-          <div style={{ color: "var(--amber)" }}>Can't reach the server.</div>
+          {/* Each failure points at a different place, which is the only
+              reason to distinguish them. Naming the database for a gateway
+              error would send an operator to the one component that is fine —
+              that was the bug here, caught in review. */}
+          <div style={{ color: "var(--amber)" }}>{HEADLINE[errorKind]}</div>
           <div style={{ fontSize: 11, color: "var(--ink-faint)", maxWidth: 300, textAlign: "center", lineHeight: 1.5 }}>
-            Not signing you out — this machine cannot tell whether the session
-            is still good, and guessing either way would be wrong.
+            {DETAIL[errorKind]}
           </div>
           <button type="button" onClick={retry} style={{
             height: 40, padding: "0 20px",
