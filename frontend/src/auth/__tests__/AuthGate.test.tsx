@@ -470,6 +470,53 @@ describe("logout that could not revoke server-side", () => {
   });
 });
 
+describe("the two ways the status check can fail", () => {
+  /**
+   * The backend returns 503 from /api/auth/status when it cannot read the
+   * session store — added in #52 precisely so the client could tell that apart
+   * from "logged out". fetchAuthStatus then threw a bare Error and the gate
+   * said "can't reach the server" about a server that had just replied, which
+   * sends an operator to check the network instead of the database.
+   */
+  function bootWith(respond: () => Response | never) {
+    window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/auth/status") return respond();
+      return new Response("{}", { status: 200 });
+    }) as never;
+    return renderGate();
+  }
+
+  it("names the session store when the server answers 503", async () => {
+    bootWith(() => new Response(
+      JSON.stringify({ detail: "Cannot determine session state right now" }),
+      { status: 503 }
+    ));
+
+    expect(await screen.findByText(/can't read its session store/i)).toBeInTheDocument();
+    // Must not blame the network: the server answered.
+    expect(screen.queryByText(/can't reach the server/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it("blames the network only when nothing answered", async () => {
+    bootWith(() => { throw new TypeError("network down"); });
+
+    expect(await screen.findByText(/can't reach the server/i)).toBeInTheDocument();
+    expect(screen.queryByText(/session store/i)).not.toBeInTheDocument();
+  });
+
+  it("neither failure signs the user out", async () => {
+    // Both keep the gate on the error screen rather than guessing, which is the
+    // property the distinction must not break.
+    bootWith(() => new Response("{}", { status: 503 }));
+
+    await screen.findByRole("button", { name: /retry/i });
+    expect(screen.queryByTestId(TERMINAL)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("server unreachable at boot", () => {
   it("offers a retry instead of guessing", async () => {
     // Neither "logged out" nor "auth is off" is knowable here, and picking

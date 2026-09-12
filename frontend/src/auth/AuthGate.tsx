@@ -13,7 +13,7 @@ import Login from "../pages/Login";
 import { useAuth } from "./AuthContext";
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const { phase, retry } = useAuth();
+  const { phase, retry, errorKind } = useAuth();
 
   if (phase === "checking") return <Splash>Checking session…</Splash>;
 
@@ -21,10 +21,20 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <Splash>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-          <div style={{ color: "var(--amber)" }}>Can't reach the server.</div>
+          {/* The two failures send an operator to look at different things, so
+              they say different things. "server" means the app replied and
+              could not read its session store — the process is up, the
+              database behind it is the thing to check. Saying "can't reach the
+              server" there points at the network, which is working. */}
+          <div style={{ color: "var(--amber)" }}>
+            {errorKind === "server"
+              ? "The server can't read its session store."
+              : "Can't reach the server."}
+          </div>
           <div style={{ fontSize: 11, color: "var(--ink-faint)", maxWidth: 300, textAlign: "center", lineHeight: 1.5 }}>
-            Not signing you out — this machine cannot tell whether the session
-            is still good, and guessing either way would be wrong.
+            {errorKind === "server"
+              ? "The app is running but answered that it cannot determine your session — usually its database. Not signing you out; check the backend."
+              : "Not signing you out — this machine cannot tell whether the session is still good, and guessing either way would be wrong."}
           </div>
           <button type="button" onClick={retry} style={{
             height: 40, padding: "0 20px",

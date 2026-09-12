@@ -36,9 +36,28 @@ export class LoginError extends Error {
   }
 }
 
+/**
+ * The server answered, but could not say what the session state is.
+ *
+ * Distinct from a network failure, and the distinction is one the backend
+ * goes out of its way to provide: /api/auth/status returns 503 when the
+ * session store is unreadable rather than a 200 that would read as "logged
+ * out" (see routes/auth.py). Throwing a bare Error here discarded that on
+ * arrival and left the UI saying "can't reach the server" about a server that
+ * had just replied.
+ */
+export class AuthStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`auth status ${status}`);
+    this.name = "AuthStatusError";
+  }
+}
+
 export async function fetchAuthStatus(): Promise<AuthStatus> {
+  // A fetch rejection here propagates as-is — that is the genuinely
+  // unreachable case, and the caller tells the two apart by error type.
   const res = await fetch("/api/auth/status", { credentials: CREDENTIALS });
-  if (!res.ok) throw new Error(`auth status ${res.status}`);
+  if (!res.ok) throw new AuthStatusError(res.status);
   return res.json();
 }
 
