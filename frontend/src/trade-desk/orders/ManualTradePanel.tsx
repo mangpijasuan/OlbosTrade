@@ -10,6 +10,7 @@
 import React, { useState } from "react";
 import { apiAuthHeaders } from "../../api/client";
 import HoldToConfirmButton from "../../components/HoldToConfirmButton";
+import { tint } from "../../utils/tint";
 import {
   lifecycleFromExecution,
   lifecycleLabel,
@@ -189,7 +190,7 @@ export default function ManualTradePanel() {
       {result && lifecycle && (
         <div className="instrument-card" style={{
           padding: "10px 12px",
-          border: `1px solid ${lifecycleColor(lifecycle)}40`, borderLeft: `2px solid ${lifecycleColor(lifecycle)}`,
+          border: `1px solid ${tint(lifecycleColor(lifecycle), 0.251)}`, borderLeft: `2px solid ${lifecycleColor(lifecycle)}`,
           fontFamily: "var(--mono)", fontSize: 11,
         }}>
           <div style={{ color: lifecycleColor(lifecycle), fontWeight: 600, marginBottom: 4 }}>

@@ -157,36 +157,85 @@ def _duplicate_simulation() -> None:
     """
     n, rate = 4000, 0.07
     trials = 300
+    TARGET_DUP = 0.15          # overall duplication rate, held equal across arms
+    ODDS = 3.5                 # how much likelier the favoured outcome duplicates
 
-    def one(bias: str) -> float:
+    def biased_rates(favour_targets: bool) -> tuple[float, float]:
+        """
+        Per-outcome duplication probabilities whose WEIGHTED MEAN is TARGET_DUP.
+
+        Raised in review: the first version used 0.35/0.10 directly, which at a
+        7% base rate gives overall duplication of 11.75% one way and 33.25% the
+        other — so the three arms compared different duplicate burdens while the
+        writeup claimed 15% for all of them. Solving for the rate keeps the
+        burden fixed and isolates the thing under test, which is the BIAS.
+        """
+        # p_hi * ODDS-weighted share + p_lo * rest == TARGET_DUP
+        share = rate if favour_targets else (1 - rate)
+        p_lo = TARGET_DUP / (share * ODDS + (1 - share))
+        return (p_lo * ODDS, p_lo) if favour_targets else (p_lo, p_lo * ODDS)
+
+    def one(bias: str, jitter: float = 0.0, survivor: bool = False) -> float:
         lab = (RNG.random(n) < rate).astype(int)
         # A genuinely mildly-skilful scorer: separation of 0.25 sd.
         conf = RNG.normal(lab * 0.25, 1.0)
+
         if bias == "none":
-            dup = RNG.random(n) < 0.15
-        elif bias == "targets":       # winners logged twice more often
-            dup = RNG.random(n) < np.where(lab == 1, 0.35, 0.10)
-        else:                          # stops logged twice more often
-            dup = RNG.random(n) < np.where(lab == 1, 0.10, 0.35)
-        conf2 = np.concatenate([conf, conf[dup]])
-        lab2 = np.concatenate([lab, lab[dup]])
-        return _auc(conf2, lab2) - _auc(conf, lab)
+            p = np.full(n, TARGET_DUP)
+        elif bias == "targets":
+            hi, lo = biased_rates(True)
+            p = np.where(lab == 1, hi, lo)
+        else:
+            hi, lo = biased_rates(False)
+            p = np.where(lab == 1, lo, hi)
+        dup = RNG.random(n) < p
+
+        # Real duplicates were separate scan emissions, so the twin's score was
+        # captured at its own scan and need not equal the original's.
+        twin = conf[dup] + RNG.normal(0.0, jitter, dup.sum())
+
+        if survivor:
+            # The cleanup keeps the RESOLVED row over an earlier pending one, so
+            # deduping can change which score represents a signal-day rather
+            # than merely removing a copy. Model that as: the survivor is the
+            # twin, not the original.
+            kept = conf.copy()
+            kept[dup] = twin
+            return _auc(kept, lab) - _auc(conf, lab)
+
+        return (_auc(np.concatenate([conf, twin]), np.concatenate([lab, lab[dup]]))
+                - _auc(conf, lab))
 
     worst = 0.0
+    print("  identical-score copies, overall duplication held at 15%:")
     for bias, label in (("none", "duplicated at random"),
                         ("targets", "target_hit duplicated more"),
                         ("stops", "stop_hit duplicated more")):
         deltas = np.array([one(bias) for _ in range(trials)])
         worst = max(worst, abs(deltas.mean()))
-        print(f"  {label:<30} AUC shift {deltas.mean():+.4f} "
+        print(f"    {label:<28} AUC shift {deltas.mean():+.4f} "
               f"(sd {deltas.std():.4f})")
 
-    print(f"\n  All three shifts are ~{worst:.4f} — an order of magnitude below the")
-    print("  0.044 interval half-width. This was NOT the expected answer, and it")
-    print("  is worth stating why it comes out this way: AUC is a RANK statistic,")
-    print("  and a duplicated row carries the identical confidence score, so it")
-    print("  lands at the same rank and the ordering barely changes. Even")
-    print("  outcome-correlated duplication mostly cancels.")
+    # The harder case, also raised in review: twins with their OWN scores, and a
+    # survivor rule that can swap which score represents the signal-day.
+    print("\n  twins carrying their own score, survivor rule applied:")
+    for jitter in (0.10, 0.25, 0.50):
+        deltas = np.array([one("targets", jitter=jitter, survivor=True)
+                           for _ in range(trials)])
+        worst = max(worst, abs(deltas.mean()))
+        print(f"    score jitter {jitter:.2f} sd{'':<14} AUC shift {deltas.mean():+.4f} "
+              f"(sd {deltas.std():.4f})")
+
+    print(f"\n  Largest shift across every arm: {worst:.4f} — still more than an")
+    print("  order of magnitude below the 0.044 interval half-width.")
+    print()
+    print("  This was NOT the expected answer. Why it comes out this way: AUC is")
+    print("  a RANK statistic. Duplicating a row inserts it at the same place in")
+    print("  the ordering, so the pair probability the metric estimates barely")
+    print("  moves. Outcome-correlated duplication mostly cancels, and even")
+    print("  swapping in a twin's own score only bites once that score differs")
+    print("  by a substantial fraction of a standard deviation — and even at")
+    print("  0.50 sd it is an order of magnitude too small to matter here.")
     print()
     print("  So the practical conclusion is the opposite of the obvious one:")
     print("  deduplication will NOT meaningfully move the 0.5412 point estimate.")

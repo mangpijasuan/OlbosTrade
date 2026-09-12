@@ -111,7 +111,7 @@ function StrategyHealthRowView({ row }: { row: StrategyHealthRow }) {
         <div style={{
           fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
           color: row.action === "suspend" ? "var(--red)" : "var(--amber)",
-          border: `1px solid ${row.action === "suspend" ? "var(--red)" : "var(--amber)"}60`,
+          border: `1px solid ${tint(row.action === "suspend" ? "var(--red)" : "var(--amber)", 0.376)}`,
           padding: "6px 10px", width: "fit-content",
         }}>
           ACTION: {ACTION_LABEL[row.action] || row.action.toUpperCase()}

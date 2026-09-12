@@ -3,6 +3,7 @@
  * Inspired by mobile earn/task UIs; reused across Alpha Edge and Copilot Queue.
  */
 import React from "react";
+import { tint } from "../utils/tint";
 
 export interface MissionReward {
   prefix?: string;
@@ -76,7 +77,7 @@ export default function MissionCard({
         {reward && (
           <div
             className="mission-card__reward"
-            style={reward.tone ? { borderColor: `${reward.tone}88`, color: reward.tone } : undefined}
+            style={reward.tone ? { borderColor: tint(reward.tone, 0.533), color: reward.tone } : undefined}
           >
             {reward.prefix && <span className="mission-card__reward-prefix">{reward.prefix}</span>}
             <span className="mission-card__reward-value">{reward.value}</span>
@@ -89,7 +90,7 @@ export default function MissionCard({
         {meta && (
           <div
             className="mission-card__meta"
-            style={meta.tone ? { borderColor: `${meta.tone}55`, color: meta.tone } : undefined}
+            style={meta.tone ? { borderColor: tint(meta.tone, 0.333), color: meta.tone } : undefined}
           >
             {meta.icon && <span className="mission-card__meta-icon">{meta.icon}</span>}
             <span>{meta.label}</span>

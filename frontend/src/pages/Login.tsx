@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
 import { LoginError } from "../auth/authApi";
+import { tint } from "../utils/tint";
 
 export default function Login() {
   const { signIn, expiredNotice, logoutWarning } = useAuth();
@@ -199,8 +200,8 @@ function noticeStyle(tone: string): React.CSSProperties {
   return {
     padding: "9px 11px",
     borderRadius: "var(--radius-control)",
-    border: `1px solid ${tone}55`,   // valid: tone is a literal hex
-    background: `${tone}14`,
+    border: `1px solid ${tint(tone, 0.333)}`,
+    background: tint(tone, 0.08),
     color: tone,
     fontSize: 12,
     lineHeight: 1.45,
