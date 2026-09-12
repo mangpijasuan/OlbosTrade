@@ -28,17 +28,22 @@ import { installSessionExpiryInterceptor, onSessionExpired } from "./sessionExpi
 export type AuthPhase = "checking" | "disabled" | "anonymous" | "signed-in" | "error";
 
 /**
- * Why the check failed, when phase is "error".
+ * Why the check failed, when phase is "error". Each sends an operator to look
+ * at a different place, which is the only reason to distinguish them.
  *
- *   "unreachable" — the request never got an answer. Network, DNS, offline.
- *   "server"      — the server ANSWERED and could not determine the session
- *                   state (it returns 503 when the session store is
- *                   unreadable). The app is up; something behind it is not.
+ *   "unreachable"   nothing answered. Network, DNS, offline, backend down.
+ *   "session-store" the ROUTE answered 503: the app is running and cannot read
+ *                   its session store. Look at the database.
+ *   "server"        something answered with an error that is not the route's
+ *                   503 — a gateway 502/504, a 500 raised before the route
+ *                   ran. Look at the proxy or the app logs, NOT the database.
  *
- * Collapsing these told the operator "can't reach the server" about a server
- * that had just replied, which sends them to look at the wrong thing.
+ * The third kind exists because of a mistake made twice in this codebase:
+ * inferring meaning from a status code a proxy can also produce. Treating any
+ * non-2xx as the session-store outage told the operator to check the database
+ * for failures that never reached the database.
  */
-export type AuthErrorKind = "unreachable" | "server";
+export type AuthErrorKind = "unreachable" | "session-store" | "server";
 
 export interface AuthContextValue {
   phase: AuthPhase;
@@ -82,6 +87,16 @@ export function useAuth(): AuthContextValue {
  */
 export function useAuthOptional(): AuthContextValue | null {
   return useContext(AuthContext);
+}
+
+/**
+ * Only the route's own 503 means the session store is unreadable. Anything
+ * else that answered is a generic server error, and anything that did not
+ * answer at all is unreachable.
+ */
+function classifyStatusFailure(err: unknown): AuthErrorKind {
+  if (!(err instanceof AuthStatusError)) return "unreachable";
+  return err.status === 503 && err.fromRoute ? "session-store" : "server";
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -136,12 +151,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // one of them silently drops the identity display on an instance that
       // does have auth on.
       //
-      // But which failure it is changes what to tell the operator, so the two
-      // are kept apart: the server answering 503 means it is up and its
-      // session store is not, which is an operator problem rather than a
-      // network one.
+      // But which failure it is changes what to tell the operator, so they
+      // are kept apart — see AuthErrorKind and classifyStatusFailure.
       setUser(null);
-      setErrorKind(err instanceof AuthStatusError ? "server" : "unreachable");
+      setErrorKind(classifyStatusFailure(err));
       setPhase("error");
     }
   }, []);

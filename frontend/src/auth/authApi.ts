@@ -47,7 +47,17 @@ export class LoginError extends Error {
  * had just replied.
  */
 export class AuthStatusError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    /**
+     * Whether the response came from the route rather than something in front
+     * of it. Only the route's own 503 means "the session store is unreadable";
+     * an nginx 502/504, or a 500 raised before the route ran, is a different
+     * problem pointing at a different place. Carrying the status alone was not
+     * enough — a gateway can return 503 too.
+     */
+    readonly fromRoute: boolean,
+  ) {
     super(`auth status ${status}`);
     this.name = "AuthStatusError";
   }
@@ -55,10 +65,21 @@ export class AuthStatusError extends Error {
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {
   // A fetch rejection here propagates as-is — that is the genuinely
-  // unreachable case, and the caller tells the two apart by error type.
+  // unreachable case, and the caller tells the cases apart by error type.
   const res = await fetch("/api/auth/status", { credentials: CREDENTIALS });
-  if (!res.ok) throw new AuthStatusError(res.status);
-  return res.json();
+  if (res.ok) return res.json();
+
+  // Same rule as logout(): a status code is not proof the route ran, because a
+  // proxy can produce any of them. FastAPI's error envelope carries `detail`;
+  // a gateway error page is HTML and fails to parse.
+  let fromRoute = false;
+  try {
+    const body = await res.json();
+    fromRoute = typeof body?.detail === "string";
+  } catch {
+    /* HTML, empty, or truncated — not this app talking */
+  }
+  throw new AuthStatusError(res.status, fromRoute);
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {
