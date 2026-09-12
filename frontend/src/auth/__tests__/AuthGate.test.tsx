@@ -290,6 +290,80 @@ describe("logout when the server cannot be reached", () => {
     expect(notice.textContent).not.toMatch(/signed out here/i);
   });
 
+  it.each([
+    ["502 from the proxy", 502, "<html>Bad Gateway</html>"],
+    ["504 from the proxy", 504, "<html>Gateway Timeout</html>"],
+    ["500 raised before the route ran", 500, '{"detail":"Internal Server Error"}'],
+    ["503 that is not ours", 503, "<html>Service Unavailable</html>"],
+    ["an empty body", 200, ""],
+  ])("keeps the user signed in on %s", async (_label, status, body) => {
+    /**
+     * Raised in review. The cookie is only gone if the logout ROUTE ran, since
+     * delete_cookie lives there — and a status code does not prove that. nginx
+     * answers 502/504 when the backend is down, and a 500 can be raised before
+     * the route reaches its cookie clearing.
+     *
+     * Note the 503 case: that status is the route's own "could not revoke"
+     * signal, but a proxy can produce it too. Only the route's JSON envelope
+     * counts as proof it ran.
+     */
+    window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/auth/status") {
+        return new Response(JSON.stringify(STATUS_SIGNED_IN), { status: 200 });
+      }
+      if (path === "/api/auth/logout") return new Response(body, { status });
+      return new Response("{}", { status: 200 });
+    }) as never;
+
+    render(
+      <AuthProvider>
+        <AuthGate><Terminal /></AuthGate>
+        <SignOutButton />
+      </AuthProvider>
+    );
+    await screen.findByTestId(TERMINAL);
+
+    fireEvent.click(screen.getByText("sign out"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(/still signed in/i);
+    });
+    expect(screen.getByTestId(TERMINAL)).toBeInTheDocument();
+  });
+
+  it("accepts the route's own 503 envelope as cookie-cleared", async () => {
+    // The other half: fail-safe must not become fail-always. The route's real
+    // 503 does clear the cookie, and that has to keep working.
+    window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/auth/status") {
+        return new Response(JSON.stringify(STATUS_SIGNED_IN), { status: 200 });
+      }
+      if (path === "/api/auth/logout") {
+        return new Response(JSON.stringify({ ok: false, detail: "…" }), { status: 503 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as never;
+
+    render(
+      <AuthProvider>
+        <AuthGate><Terminal /></AuthGate>
+        <SignOutButton />
+      </AuthProvider>
+    );
+    await screen.findByTestId(TERMINAL);
+
+    fireEvent.click(screen.getByText("sign out"));
+
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    // The login screen and the sign-out stand-in both render the warning here,
+    // so assert across all of them rather than assuming one.
+    const notices = screen.getAllByRole("status").map(n => n.textContent).join(" ");
+    expect(notices).toMatch(/could not revoke/i);
+    expect(notices).not.toMatch(/still signed in/i);
+  });
+
   it("still signs out once the server comes back", async () => {
     let up = false;
     window.fetch = vi.fn(async (input: RequestInfo | URL) => {

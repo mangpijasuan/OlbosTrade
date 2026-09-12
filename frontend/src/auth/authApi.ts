@@ -93,16 +93,42 @@ export interface LogoutResult {
   cookieCleared: boolean;
 }
 
+/** Unreachable is the safe answer: it keeps the caller signed in. */
+const UNREACHABLE: LogoutResult = { outcome: "unreachable", cookieCleared: false };
+
 export async function logout(): Promise<LogoutResult> {
+  let res: Response;
   try {
-    const res = await fetch("/api/auth/logout", {
+    res = await fetch("/api/auth/logout", {
       method: "POST",
       credentials: CREDENTIALS,
     });
-    // Either status carries the cookie-deletion header — the route clears it
-    // before reporting a revocation failure — so the browser is clean here.
-    return { outcome: res.ok ? "revoked" : "not-revoked", cookieCleared: true };
   } catch {
-    return { outcome: "unreachable", cookieCleared: false };
+    return UNREACHABLE;                  // never left the browser
   }
+
+  // Deliberately NOT `res.ok ? … : …`, and deliberately not a check on 503.
+  //
+  // The cookie is only gone if the logout ROUTE ran, because delete_cookie
+  // lives there. A status code does not prove that: nginx answers 502/504 when
+  // the backend is down, and an unhandled error can produce a 500 raised before
+  // the route reaches its cookie clearing. Trusting the status would report
+  // cookieCleared on a response that never touched the cookie, sign the user
+  // out in the UI, and leave a live httpOnly session in the browser — which is
+  // precisely the bug this module was just changed to stop telling.
+  //
+  // So the route identifies itself: only its own JSON envelope, {ok: boolean},
+  // counts as proof it ran. A proxy error page cannot forge that. Anything
+  // unrecognised falls through to unreachable, which keeps the caller signed
+  // in — the fail-safe direction, since a spurious "still signed in" costs a
+  // retry and a spurious "signed out" costs a live session on a shared machine.
+  try {
+    const body = await res.json();
+    if (body && typeof body.ok === "boolean") {
+      return { outcome: body.ok ? "revoked" : "not-revoked", cookieCleared: true };
+    }
+  } catch {
+    /* not JSON — a proxy error page, an empty body, a truncated response */
+  }
+  return UNREACHABLE;
 }

@@ -23,6 +23,12 @@ function stubStatus(body: unknown) {
     if (path === "/api/auth/status") {
       return new Response(JSON.stringify(body), { status: 200 });
     }
+    if (path === "/api/auth/logout") {
+      // The route's real success envelope. A bare {} would now (correctly) be
+      // read as "cannot prove the route ran", so the client would keep the user
+      // signed in — the stub has to answer like the real endpoint.
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
     return new Response("{}", { status: 200 });
   }) as never;
 }

@@ -130,10 +130,13 @@ export default function UserMenu() {
             {user.tier} tier
           </div>
 
-          {/* Kept for a warning left over from an earlier failed sign-out that
-              the operator then signed back in over. The live case — the warning
-              raised by the sign-out just performed — is shown on the login
-              screen, since this menu unmounts the moment the phase changes. */}
+          {/* Two cases land here, and they differ in where the warning is read:
+              - unreachable: the phase stays "signed-in" on purpose, so this
+                menu is still mounted and THIS is where the warning is seen.
+              - cookie cleared but not revoked: the phase flips to anonymous,
+                this unmounts, and the login screen carries the warning.
+              Plus the leftover case — a warning from an earlier failed sign-out
+              that the operator has since signed back in over. */}
           {logoutWarning && (
             <div role="status" style={{
               fontSize: 10, lineHeight: 1.4, color: AMBER,
