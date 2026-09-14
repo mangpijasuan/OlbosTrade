@@ -51,6 +51,8 @@
 }
 .landing-nav-links a:hover { color: var(--ink); }
 .landing-nav-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+/* The nav CTA carries both labels; only one is displayed at a time. */
+.landing-cta-compact { display: none; }
 .landing-signin { font-family: var(--sans); font-size: 13px; color: var(--ink-dim); }
 .landing-signin:hover { color: var(--ink); }
 
@@ -343,9 +345,43 @@
   .landing-nav-actions { gap: 8px; min-width: 0; }
   .landing-cta-btn { padding: 9px 14px; }
   .landing-nav-row { gap: 12px; }
+
+  /* That first pass fixed 390px and nothing narrower. The row was still a
+     fixed 373.9px wide at EVERY viewport, because .landing-nav-actions is
+     flex-shrink: 0 and the CTA label is 173.5px of unbreakable text — so it
+     cleared 375px by 1.1px and overhung 360px by 14px and 320px by 54px.
+     360px is the most common Android viewport, so the public marketing page
+     scrolled sideways there.
+
+     Two changes, because either alone is fragile:
+       1. A compact label on phones, so the row fits with room to spare
+          rather than by a rounding error.
+       2. Real shrinkability, so no future label length can push the
+          document wide again — the row runs out of space before the
+          viewport does. */
+  .landing-nav-cta .landing-cta-full { display: none; }
+  .landing-nav-cta .landing-cta-compact { display: inline; }
+
+  .landing-nav-row { min-width: 0; }
+  .landing-nav-actions { flex-shrink: 1; }
+  .landing-nav-cta {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .landing-nav-cta > span { overflow: hidden; text-overflow: ellipsis; }
+
   .landing-h1 { font-size: 26px; }
   .pipeline, .landing-grid-4 { grid-template-columns: 1fr; }
   .pricing-grid { grid-template-columns: 1fr; }
   .pricing-card { max-width: 380px; }
   .landing-section { padding: 56px 0; }
+}
+
+/* Very narrow phones (320px): the 24px container gutters are the last thing
+   left to give back. */
+@media (max-width: 380px) {
+  .landing-nav-row { padding-left: 16px; padding-right: 16px; }
+  .landing-cta-btn { padding: 9px 12px; }
 }
