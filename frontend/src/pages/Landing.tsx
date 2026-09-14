@@ -152,7 +152,13 @@ export default function Landing() {
           </nav>
           <div className="landing-nav-actions">
             <Link className="landing-signin" to="/terminal">Sign In</Link>
-            <Link className="landing-cta-btn" to="/terminal">Start Paper Trading</Link>
+            {/* Two labels, one shown at a time by CSS. The full label measures
+                173px — most of the phone nav row's budget. See the
+                .landing-nav-actions note in landing.css. */}
+            <Link className="landing-cta-btn landing-nav-cta" to="/terminal">
+              <span className="landing-cta-full">Start Paper Trading</span>
+              <span className="landing-cta-compact">Start Free</span>
+            </Link>
             <button
               type="button"
               className="landing-nav-toggle"
