@@ -51,6 +51,19 @@ class Settings(BaseSettings):
     max_concurrent_positions: int = Field(default=5)
     max_trades_per_day: int = Field(default=6)
     max_consecutive_losses: int = Field(default=3)
+
+    # ── Regime hysteresis ─────────────────────────────────────────────────
+    # How many consecutive classifications must agree before a regime CHANGE
+    # is adopted. The classifier is stateless and several of its decisions sit
+    # on knife-edges of continuous inputs — a 1bp move in the 5-day return
+    # flips normal_mean_revert -> high_vol_trending, which removes iron
+    # condors, cuts size to 75% and raises the signal bar. Reclassification
+    # runs every 30 min against a still-forming daily bar, so that boundary is
+    # re-sampled ~13x a session. Measured against the shipped classifier on
+    # simulated ordinary markets: ~97 changes/yr unguarded, ~44 at 3.
+    # CRISIS always bypasses this — risk-off is never delayed.
+    # 1 disables the guard (pre-guard behaviour).
+    regime_confirm_readings: int = Field(default=3, ge=1, le=20)
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
     # Margin utilization thresholds (maintenance_margin / net_liquidation).
