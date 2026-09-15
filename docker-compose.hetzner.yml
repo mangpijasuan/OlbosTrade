@@ -40,6 +40,40 @@ services:
       dockerfile: Dockerfile
     container_name: olbostrade-backend
     restart: unless-stopped
+    # Overrides the image CMD to add --proxy-headers. Without it uvicorn
+    # ignores X-Forwarded-For entirely, so request.client.host is the frontend
+    # nginx for EVERY request and the login rate limiter (10 attempts / 5 min,
+    # api/rate_limit.py) puts every client in one shared bucket: ten failed
+    # logins from anyone locked out everyone for five minutes.
+    #
+    # WHY "*" IS SAFE HERE AND ONLY HERE. uvicorn 0.29 with always-trust takes
+    # x_forwarded_for_hosts[0] — the leftmost, which is normally
+    # client-controlled and would make the limit worse than useless. Two facts
+    # remove that:
+    #
+    #   1. This backend publishes NO host port (see: only `frontend` maps
+    #      8080:3000). Nothing outside the Docker networks can open a socket to
+    #      uvicorn, so every request has already been through the frontend.
+    #   2. That frontend sets `X-Forwarded-For $remote_addr` — $remote_addr,
+    #      not $proxy_add_x_forwarded_for — so it OVERWRITES whatever the
+    #      client sent with the address it actually observed. The header
+    #      arriving here is a single value written by the proxy, never by the
+    #      caller.
+    #
+    # Do NOT copy this flag to docker-compose.yml or docker-compose.prod.yml:
+    # both publish the backend port (8001:8000 and 8000:8000), so a client
+    # could connect directly and forge the header. The flag is per-stack for
+    # exactly that reason.
+    #
+    # A CIDR cannot be used instead: uvicorn 0.29 matches trusted hosts by
+    # exact string (`client_host in self.trusted_hosts`), so
+    # --forwarded-allow-ips=172.16.0.0/12 would never match and would silently
+    # disable the fix rather than scope it.
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0 --port 8000
+      --workers 1 --loop uvloop --access-log
+      --proxy-headers --forwarded-allow-ips=*
     env_file:
       - backend/.env.prod
     environment:
@@ -90,6 +124,13 @@ services:
       # when exposed by public IP).
       - DASH_USER=${DASH_USER:-}
       - DASH_PASS=${DASH_PASS:-}
+      # Caddy's Docker subnet, so nginx can recover the real client IP from the
+      # X-Forwarded-For Caddy sets. Unset = trust nobody, which is safe but
+      # means every Caddy-routed caller shares one login rate-limit bucket
+      # (nginx sees Caddy's address as the peer). Find it with:
+      #   docker network inspect olbos_default -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+      # Never widen this to a range a real client could originate from.
+      - TRUSTED_PROXY_CIDR=${TRUSTED_PROXY_CIDR:-}
     # Publish a host port for direct IP access (http://<server-ip>:8080) when no
     # domain is set up. Caddy (when used) still reaches it over the internal
     # network; this just additionally exposes it on the host.

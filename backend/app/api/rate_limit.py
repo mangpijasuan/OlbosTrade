@@ -49,12 +49,31 @@ def login_rate_limit(request: Request) -> None:
     Tighter than the operator limit (10 per 5 minutes, not 20 per minute)
     because a human logging in types a password once or twice, not twenty times.
 
-    Caveat worth knowing: behind a reverse proxy request.client.host is the
-    proxy unless it is configured to forward the real address and the app is run
-    with --proxy-headers. Without that every client shares one bucket, which
-    errs toward refusing logins rather than allowing unlimited guesses, but it
-    also means one attacker can lock out everyone. Check the deployment before
-    relying on this as the only brake.
+    request.client.host is only the real caller when the deployment cooperates,
+    and for a while this one did not. The caveat used to end "check the
+    deployment before relying on this"; the deployment was checked, and it was
+    broken: the image CMD ran uvicorn WITHOUT --proxy-headers, so every request
+    carried the frontend proxy's address and all callers shared one bucket.
+    Ten failed logins from anyone locked out everybody for five minutes — a
+    denial of service against login, not a brake on guessing.
+
+    Fixed in docker-compose.hetzner.yml, which now passes --proxy-headers.
+    The trust chain it depends on, so nobody unpicks a link by accident:
+
+      1. The backend publishes no host port there, so nothing can reach uvicorn
+         without passing the frontend proxy first.
+      2. That proxy sets X-Forwarded-For from $remote_addr — overwriting, not
+         appending — so the header is written by the proxy and never by the
+         caller.
+      3. uvicorn therefore sees one proxy-authored value and reports it as
+         client.host.
+
+    Two things still to know. Behind Caddy the proxy's own $remote_addr is
+    Caddy, so Caddy-routed callers still share a bucket until
+    TRUSTED_PROXY_CIDR names Caddy's subnet (frontend/docker-entrypoint.sh).
+    And the flag is deliberately per-stack: docker-compose.yml and
+    docker-compose.prod.yml publish the backend port, so a caller could connect
+    directly and forge the header — --proxy-headers must not be copied there.
     """
     key = request.client.host if request.client else "unknown"
     now = time.monotonic()
