@@ -1,7 +1,7 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import "./index.css";
-import { pageKeyToUrl, pathToPageKey } from "./terminalRoutes";
+import { canonicalPageKey, pageKeyToUrl, pathToPageKey } from "./terminalRoutes";
 import TerminalLayout  from "./components/TerminalLayout";
 import Dashboard       from "./pages/Dashboard";
 import TradeDesk       from "./pages/TradeDesk";
@@ -157,7 +157,14 @@ export default function App() {
       // /terminal/dashboard are both the Dashboard. Canonicalise the URL, but
       // replace rather than push: a Back that lands on a different URL showing
       // the identical page is the same confusion in a subtler form.
-      const samePage = pathToPageKey(target) === pathToPageKey(location.pathname);
+      // Compare CANONICAL keys. Some pages answer to two spellings —
+      // /terminal/risk and /terminal/risk/heat are both RiskCenter's monitor
+      // tab — and comparing the raw keys treated those as a real change, so
+      // clicking the active nav item from the bare URL still pushed an entry
+      // and Back still landed on an identical view.
+      const samePage =
+        canonicalPageKey(pathToPageKey(target)) ===
+        canonicalPageKey(pathToPageKey(location.pathname));
       navigate(target, { replace: samePage });
     },
     [navigate, location.pathname],

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PAGE,
+  PAGE_ALIASES,
   TERMINAL_BASE,
+  canonicalPageKey,
   pageKeyToPath,
   pageKeyToUrl,
   pathToPageKey,
@@ -167,5 +169,105 @@ describe("round trip", () => {
     // Two keys mapping to one URL would make a deep link ambiguous.
     const urls = KEYS.map(pageKeyToUrl);
     expect(new Set(urls).size, "two page keys produce the same URL").toBe(urls.length);
+  });
+});
+
+/**
+ * PAGE_ALIASES must not fall behind the registry.
+ *
+ * An alias is a bare key whose page default tab equals the tab a `group:sub`
+ * key pins — both spellings then render the identical screen, and the
+ * duplicate-history check has to treat them as one page.
+ *
+ * Rather than trust a hand-written map, derive the set from App.tsx plus each
+ * page's own default and compare. A new alias added later fails here with the
+ * pair named, instead of quietly reintroducing a dead Back press.
+ */
+describe("page aliases stay in step with the registry", () => {
+  /**
+   * Restricted to BASE_PAGES on purpose.
+   *
+   * tradeDeskPages() registers the same keys twice, once per branch of the
+   * trade_desk_v2 flag, so "what does this key render" has two answers there
+   * and an alias claim cannot be settled from the registry alone. BASE_PAGES
+   * has exactly one answer per key, which is what makes this derivation sound.
+   */
+  const BASE = APP_SOURCE.match(/const BASE_PAGES[^{]*\{([\s\S]*?)\n\};/)?.[1] ?? "";
+
+  /** `"risk:heat": () => <RiskCenter initialTab="monitor" />` */
+  const PINNED = [...BASE.matchAll(
+    /"([a-z0-9:-]+)"\s*:\s*\(\)\s*=>\s*<(\w+)\s+initialTab="([^"]+)"/g
+  )].map((m) => ({ key: m[1], component: m[2], tab: m[3] }));
+
+  /** `risk: RiskCenter,` — a bare key taking the component's own default. */
+  const BARE = [...BASE.matchAll(/^\s{2}([a-z][a-z0-9]*)\s*:\s*(\w+),/gm)]
+    .map((m) => ({ key: m[1], component: m[2] }));
+
+  function readPageSource(component: string): string | null {
+    const rel = APP_SOURCE.match(
+      new RegExp(`import\\s+${component}\\s+from\\s+"([^"]+)"`)
+    )?.[1];
+    if (!rel) return null;
+    try {
+      return readFileSync(`${TEST_DIR}/../${rel.replace(/^\.\//, "")}.tsx`, "utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  /** `export default function RiskCenter({ initialTab = "monitor" }` */
+  function defaultTabOf(component: string): string | null {
+    return readPageSource(component)?.match(/initialTab\s*=\s*"([^"]+)"/)?.[1] ?? null;
+  }
+
+  /** bare key -> the pinned key that renders the same component AND tab. */
+  function twinOf(bare: { key: string; component: string }): string | null {
+    const dflt = defaultTabOf(bare.component);
+    if (dflt === null) return null;
+    return PINNED.find((p) => p.component === bare.component && p.tab === dflt)?.key ?? null;
+  }
+
+  it("parses the registry rather than matching nothing", () => {
+    // Empty lists would make every assertion below vacuous.
+    expect(BASE.length, "BASE_PAGES block not found in App.tsx").toBeGreaterThan(200);
+    expect(PINNED.length, "no pinned-tab entries parsed").toBeGreaterThan(5);
+    expect(BARE.length, "no bare keys parsed").toBeGreaterThan(5);
+  });
+
+  it("every declared alias really is two spellings of one view", () => {
+    for (const [from, to] of Object.entries(PAGE_ALIASES)) {
+      const bare = BARE.find((b) => b.key === from);
+      expect(bare, `PAGE_ALIASES declares "${from}", which BASE_PAGES does not register`).toBeTruthy();
+      expect(
+        twinOf(bare!),
+        `"${from}" and "${to}" do not render the same component and tab — ` +
+        `remove this from PAGE_ALIASES`
+      ).toBe(to);
+    }
+  });
+
+  it("no alias is missing from the map", () => {
+    const missing = BARE
+      .map((b) => ({ from: b.key, to: twinOf(b) }))
+      .filter((a) => a.to !== null && canonicalPageKey(a.from) !== a.to)
+      .map((a) => `${a.from} -> ${a.to}`);
+
+    expect(
+      missing,
+      "these keys render the same view under two spellings but are not in " +
+      "PAGE_ALIASES, so clicking the active nav item from the bare URL still " +
+      "pushes a history entry that Back cannot meaningfully undo:\n  " +
+      missing.join("\n  ")
+    ).toEqual([]);
+  });
+
+  it("canonicalPageKey maps an alias and leaves everything else alone", () => {
+    expect(canonicalPageKey("risk")).toBe("risk:heat");
+    expect(canonicalPageKey("risk:heat")).toBe("risk:heat");
+    expect(canonicalPageKey("journal")).toBe("journal");
+    // Must not resolve inherited names — the same prototype hazard App guards.
+    // This returned the constructor FUNCTION until it used hasOwnProperty.
+    expect(canonicalPageKey("constructor")).toBe("constructor");
+    expect(canonicalPageKey("__proto__")).toBe("__proto__");
   });
 });

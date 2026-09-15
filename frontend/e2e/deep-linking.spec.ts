@@ -215,4 +215,32 @@ test.describe("history has one entry per real navigation", () => {
     await page.waitForTimeout(600);
     expect(page.url()).toContain("/terminal/dashboard");
   });
+
+  test("an alias of the page you are on does not stack history either", async ({ page }) => {
+    // /terminal/risk and /terminal/risk/heat are both RiskCenter's monitor
+    // tab, and the mobile Risk item navigates to risk:heat. Arriving on the
+    // bare URL and clicking it therefore looked like a real navigation to a
+    // key-only comparison: it pushed an entry, and Back returned to a view
+    // identical to the one you were already looking at.
+    await open(page, "/terminal/risk", 390);
+    await page.waitForSelector(".mobile-bottom-nav");
+
+    const historyLength = () => page.evaluate(() => history.length);
+    const before = await historyLength();
+
+    const risk = page.locator(".mobile-bottom-nav").getByRole("button", { name: "Risk", exact: true });
+    await risk.click();
+    await page.waitForTimeout(400);
+
+    expect(
+      await historyLength(),
+      "navigating to an alias of the current page pushed a history entry — " +
+      "Back now returns to an identical view"
+    ).toBe(before);
+
+    // The URL is still allowed to canonicalise (risk -> risk:heat), which adds
+    // the leaf name to the status label — so assert the page, not the exact
+    // string. What must not change is the history depth, above.
+    expect(await statusLabel(page)).toMatch(/^PORTFOLIO & RISK/);
+  });
 });

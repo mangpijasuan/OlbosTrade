@@ -84,3 +84,56 @@ export function pathToPageKey(pathOrSplat: string | undefined | null): string {
 
   return segments.length ? segments.join(":") : DEFAULT_PAGE;
 }
+
+/**
+ * Keys that render the identical view under two spellings.
+ *
+ * A bare key takes the page's own default tab; a `group:sub` key that pins
+ * that SAME default tab is therefore the same screen reached by a different
+ * URL. `/terminal/risk` and `/terminal/risk/heat` are both RiskCenter's
+ * monitor tab.
+ *
+ * This matters only for the duplicate-history decision in App: without it,
+ * clicking the already-active nav item while on the bare URL pushes the alias
+ * URL, and Back then returns to a view identical to the one you were on — the
+ * dead Back press this PR set out to remove, surviving in the routes where the
+ * two spellings disagree.
+ *
+ * The value is the CANONICAL key: the one the nav actually navigates to, so
+ * the URL settles on the spelling a user will see everywhere else.
+ *
+ * terminalRoutes.test.ts derives this same set from App.tsx and fails if a new
+ * alias appears, so the map cannot quietly fall behind the registry.
+ */
+export const PAGE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  risk: "risk:heat",              // RiskCenter      default "monitor"
+  lab: "lab:scenario",            // ResearchCenter  default "scenario"
+  settings: "system:broker",      // SystemCenter    default "broker"
+});
+
+/**
+ * Deliberately NOT here: the Trade Desk keys.
+ *
+ * `paper`, `trade:overview` and `trade:logs` are registered in both branches
+ * of tradeDeskPages(), and what they render depends on the trade_desk_v2 flag
+ * — `trade:logs` is TradeDeskV2 "trade:overview" with v2 on and TradeDesk
+ * "pnl" with it off. `paper` and `trade:overview` do look equivalent in both
+ * branches, but establishing that is a per-branch argument rather than a
+ * property of the registry, and the cost of being wrong is asymmetric: a
+ * missing alias costs one redundant Back press, while a wrong one swallows a
+ * history entry for a genuinely different page. The safe direction wins.
+ */
+
+/**
+ * The canonical spelling of a page key — itself, unless it is an alias.
+ *
+ * hasOwnProperty, not `PAGE_ALIASES[key] ?? key`. The key comes from the URL,
+ * so the bare lookup also finds Object.prototype members: canonicalPageKey
+ * ("constructor") returned the constructor FUNCTION, reintroducing here the
+ * exact prototype hazard App.tsx guards against. Caught by its own test.
+ */
+export function canonicalPageKey(key: string): string {
+  return Object.prototype.hasOwnProperty.call(PAGE_ALIASES, key)
+    ? PAGE_ALIASES[key]
+    : key;
+}
