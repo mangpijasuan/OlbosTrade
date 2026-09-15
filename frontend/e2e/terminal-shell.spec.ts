@@ -92,7 +92,11 @@ test.describe("mobile nav drawer", () => {
     // Starts off-screen to the left.
     await expect.poll(() => drawerRowRightEdge(page)).toBeLessThanOrEqual(0);
 
-    const burger = page.locator("button").first();
+    // Addressed by its accessible name, not by DOM order. `button.first()`
+    // would silently bind to whatever button happens to come first, so adding
+    // any control above the header would leave this test green while
+    // exercising the wrong element.
+    const burger = page.getByRole("button", { name: /toggle navigation/i });
     await burger.click();
     await expect
       .poll(() => drawerRowRightEdge(page), { timeout: 5_000 })
