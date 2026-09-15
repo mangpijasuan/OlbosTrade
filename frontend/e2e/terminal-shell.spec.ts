@@ -1,57 +1,83 @@
 /**
- * The terminal shell must fit a phone on every route.
+ * The terminal shell must fit a phone on every page a phone can reach.
  *
- * Scope is deliberate: this measures the SHELL — header, ticker strip, nav
- * drawer, status bar, bottom nav — not panel contents. The backend is stubbed,
- * so panels render their ErrorBoundary fallback rather than real data. That is
- * the point: it keeps the run deterministic and hermetic while still exercising
- * the parts where a horizontal overflow would actually come from, which are all
- * in the chrome.
+ * ── Why these navigate instead of using URLs ─────────────────────────────
  *
- * The drawer test is here because the bug it guards was invisible to jsdom and
- * to a static read of the CSS: the mobile nav overlay was clipped out of
- * existence by an ancestor's `overflow-y: hidden`, so sign-out was unreachable
- * on a phone. Nothing but a real browser paints that.
+ * An earlier version of this file looped over /terminal/markets,
+ * /terminal/risk and six more, and measured the same Dashboard eight times.
+ * App.tsx holds the active page in `useState("dashboard")` and never reads
+ * location.pathname, so every /terminal/* URL mounts the same page. Eight
+ * tests, one page, and a green tick that meant nothing.
+ *
+ * So these drive the real navigation a phone user drives: the bottom nav, and
+ * the drawer for what the bottom nav does not carry. That covers distinct
+ * pages AND exercises the nav itself, which is where the shell bugs have
+ * actually been.
+ *
+ * (That the URL does not restore the page is a genuine app limitation —
+ * deep-linking or reloading /terminal/markets lands on Dashboard — but it is
+ * an app change, not a test change, so it is reported rather than worked
+ * around here.)
+ *
+ * ── Scope ────────────────────────────────────────────────────────────────
+ *
+ * This measures the SHELL — header, ticker strip, nav drawer, status bar,
+ * bottom nav. The backend is stubbed, so panels render their ErrorBoundary
+ * fallback rather than real data. That keeps runs hermetic and deterministic
+ * while still exercising every part a horizontal overflow comes from.
  */
 
-import { test, expect } from "@playwright/test";
-import { expectNoHorizontalOverflow, stubBackend } from "./helpers";
+import { test, expect, type Page } from "@playwright/test";
+import { expectNoHorizontalOverflow, stubBackend, SIGNED_IN } from "./helpers";
 
-const ROUTES = [
-  "/terminal/dashboard",
-  "/terminal/markets",
-  "/terminal/tradedesk",
-  "/terminal/positions",
-  "/terminal/risk",
-  "/terminal/journal",
-  "/terminal/performance",
-  "/terminal/strategies",
+const PHONE_WIDTH = 390;
+const NARROW_WIDTH = 320;
+const WIDTHS = [PHONE_WIDTH, NARROW_WIDTH];
+
+/** Pages a phone can actually reach, and how it reaches them. */
+const PAGES: Array<{ label: string; via: "bottom" | "drawer" }> = [
+  { label: "Home", via: "bottom" },
+  { label: "Desk", via: "bottom" },
+  { label: "Signals", via: "bottom" },
+  { label: "Positions", via: "bottom" },
+  { label: "Risk", via: "bottom" },
+  { label: "Journal", via: "drawer" },
+  { label: "Performance", via: "drawer" },
 ];
 
-const PHONE = { width: 390, height: 844 };
-const NARROW = { width: 320, height: 844 };
+const burger = (page: Page) =>
+  page.getByRole("button", { name: /toggle navigation/i });
 
-test.describe("terminal shell fits a phone", () => {
-  for (const route of ROUTES) {
-    test(`no horizontal overflow on ${route}`, async ({ page }) => {
-      await stubBackend(page);
-      await page.setViewportSize(PHONE);
-      await page.goto(route);
-      // The bottom nav is the last piece of the shell to mount, so its presence
-      // means the shell is laid out rather than mid-render.
-      await page.waitForSelector("nav, footer, [class*=bottom]", { timeout: 15_000 });
-      await expectNoHorizontalOverflow(page, PHONE.width);
-    });
+async function openTerminal(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto("/terminal/dashboard");
+  await page.waitForSelector(".mobile-bottom-nav");
+}
+
+async function navigateTo(page: Page, label: string, via: "bottom" | "drawer") {
+  if (via === "bottom") {
+    await page.locator(".mobile-bottom-nav").getByRole("button", { name: label, exact: true }).click();
+  } else {
+    await burger(page).click();
+    await page.getByText(new RegExp(`^${label}$`, "i")).first().click();
   }
+  // The drawer animates out over 0.2s after a selection; measuring mid-slide
+  // would read a transient geometry rather than the settled layout.
+  await page.waitForTimeout(400);
+}
 
-  test(`no horizontal overflow at ${NARROW.width}px`, async ({ page }) => {
-    await stubBackend(page);
-    await page.setViewportSize(NARROW);
-    await page.goto("/terminal/dashboard");
-    await page.waitForSelector("nav, footer, [class*=bottom]", { timeout: 15_000 });
-    await expectNoHorizontalOverflow(page, NARROW.width);
+for (const width of WIDTHS) {
+  test.describe(`terminal shell at ${width}px`, () => {
+    for (const { label, via } of PAGES) {
+      test(`no horizontal overflow on ${label}`, async ({ page }) => {
+        await stubBackend(page);
+        await openTerminal(page, width);
+        await navigateTo(page, label, via);
+        await expectNoHorizontalOverflow(page, width);
+      });
+    }
   });
-});
+}
 
 /**
  * How far the drawer has slid in, measured as the right edge of one of its
@@ -63,61 +89,93 @@ test.describe("terminal shell fits a phone", () => {
  * still has a non-empty box and `visibility: visible`, so Playwright considers
  * it visible whether the drawer is open or shut — an assertion on visibility
  * passes in both states and tests nothing.
- *
- * Position is the honest signal: fully open puts the row on screen, fully
- * closed puts its right edge at or past the left viewport edge.
  */
-async function drawerRowRightEdge(page: import("@playwright/test").Page): Promise<number> {
+async function drawerRowRightEdge(page: Page): Promise<number> {
   const box = await page.getByText(/^Journal$/i).first().boundingBox();
   return box ? box.x + box.width : NaN;
 }
 
 test.describe("mobile nav drawer", () => {
-  /**
-   * Regression guard for a bug that no unit test could have caught: the user
-   * menu inside this overlay was once clipped to nothing by an ancestor's
-   * `overflow-y: hidden`, which made sign-out impossible on a phone. The
-   * element was in the DOM with a non-zero box and was simply never painted.
-   *
-   * Clicking is what proves it. Playwright hit-tests the click point before
-   * dispatching, so a row that is clipped, covered, or painted behind the page
-   * fails here rather than silently "passing" a visibility check.
-   */
   test("opens, its rows are actually clickable, and it closes on tap-away", async ({ page }) => {
     await stubBackend(page);
-    await page.setViewportSize(PHONE);
-    await page.goto("/terminal/dashboard");
-    await page.waitForSelector("text=Journal");
+    await openTerminal(page, PHONE_WIDTH);
 
-    // Starts off-screen to the left.
     await expect.poll(() => drawerRowRightEdge(page)).toBeLessThanOrEqual(0);
 
     // Addressed by its accessible name, not by DOM order. `button.first()`
     // would silently bind to whatever button happens to come first, so adding
     // any control above the header would leave this test green while
     // exercising the wrong element.
-    const burger = page.getByRole("button", { name: /toggle navigation/i });
-    await burger.click();
-    await expect
-      .poll(() => drawerRowRightEdge(page), { timeout: 5_000 })
-      .toBeGreaterThan(0);
+    await burger(page).click();
+    await expect.poll(() => drawerRowRightEdge(page), { timeout: 5_000 }).toBeGreaterThan(0);
 
     // Selecting a destination closes the overlay — otherwise it covers the page
     // the user just asked for. The click itself is the hit-test.
     await page.getByText(/^Journal$/i).first().click();
-    await expect
-      .poll(() => drawerRowRightEdge(page), { timeout: 5_000 })
-      .toBeLessThanOrEqual(0);
+    await expect.poll(() => drawerRowRightEdge(page), { timeout: 5_000 }).toBeLessThanOrEqual(0);
 
     // Tapping the backdrop must also close it. Without one the drawer covers
     // the page with no obvious way out.
-    await burger.click();
+    await burger(page).click();
+    await expect.poll(() => drawerRowRightEdge(page), { timeout: 5_000 }).toBeGreaterThan(0);
+    await page.mouse.click(PHONE_WIDTH - 30, 400);
+    await expect.poll(() => drawerRowRightEdge(page), { timeout: 5_000 }).toBeLessThanOrEqual(0);
+  });
+});
+
+/**
+ * Sign-out on a phone. THIS is the test that guards the original bug.
+ *
+ * The account menu was once clipped to nothing by an ancestor's
+ * `overflow-y: hidden` — present in the DOM, non-zero box, never painted —
+ * which made sign-out unreachable on a phone.
+ *
+ * Mutation testing pinned down which half of the fix actually holds it up.
+ * Removing the portal alone still passes: the menu is `position: fixed`, and a
+ * fixed element escapes an ancestor's overflow clipping whether or not it is
+ * portalled. Reverting the positioning too — inline AND absolute, the original
+ * shape — fails here with "intercepts pointer events". So this guards the
+ * POSITIONING; the portal is belt-and-braces on top of it.
+ *
+ * It needs auth ENABLED. UserMenu renders null on a single-operator install,
+ * so with the default auth-disabled stub none of this exists and a test here
+ * would pass against the bug and against the fix alike. Clicking is what
+ * proves it: Playwright hit-tests the click point, so a menu that is clipped
+ * or painted behind the page fails rather than quietly satisfying a
+ * visibility check.
+ */
+test.describe("sign out on a phone", () => {
+  test("the account menu opens and its Sign out control is reachable", async ({ page }) => {
+    await stubBackend(page, SIGNED_IN);
+
+    let signOutCalled = false;
+    await page.route("**/api/auth/logout", (route) => {
+      signOutCalled = true;
+      return route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }),
+      });
+    });
+
+    await openTerminal(page, PHONE_WIDTH);
+
+    const account = page.getByRole("button", { name: /^Account:/ });
+    await expect(
+      account,
+      "the account control never mounted — auth stub is not being applied"
+    ).toBeVisible();
+    await account.click();
+
+    // "menuitem", not "button": the control is a <button role="menuitem">, and
+    // an explicit role overrides the implicit one, so getByRole("button") does
+    // not match it at all.
+    //
+    // Not .toBeVisible() either: the bug this guards produced an element that
+    // passed visibility checks and painted nothing. The click is the real
+    // assertion, because Playwright hit-tests before dispatching.
+    await page.getByRole("menuitem", { name: /sign out/i }).click();
+
     await expect
-      .poll(() => drawerRowRightEdge(page), { timeout: 5_000 })
-      .toBeGreaterThan(0);
-    await page.mouse.click(PHONE.width - 30, 400);
-    await expect
-      .poll(() => drawerRowRightEdge(page), { timeout: 5_000 })
-      .toBeLessThanOrEqual(0);
+      .poll(() => signOutCalled, { timeout: 5_000 })
+      .toBe(true);
   });
 });
