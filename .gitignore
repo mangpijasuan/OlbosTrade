@@ -25,6 +25,13 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.playwright/
+
+
 # Docker volumes / local data
 postgres_data/
 redis_data/
