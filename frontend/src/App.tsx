@@ -44,7 +44,7 @@ function UnknownPage() {
   );
 }
 
-function tradeDeskPages(v2: boolean): Record<string, React.ComponentType> {
+export function tradeDeskPages(v2: boolean): Record<string, React.ComponentType> {
   if (!v2) {
     return {
       paper: TradeDesk,
@@ -72,7 +72,7 @@ function tradeDeskPages(v2: boolean): Record<string, React.ComponentType> {
   };
 }
 
-const BASE_PAGES: Record<string, React.ComponentType> = {
+export const BASE_PAGES: Record<string, React.ComponentType> = {
   dashboard: Dashboard,
   equity:    SignalsCenter,
   backtest:  BacktestCenter,

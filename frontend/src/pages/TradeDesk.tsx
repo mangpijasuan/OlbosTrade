@@ -18,6 +18,7 @@ import HoldToConfirmButton from "../components/HoldToConfirmButton";
 import { Button } from "../components/ui";
 import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
 import { tint } from "../utils/tint";
+import { useTabRoute } from "../hooks/useTabRoute";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -439,9 +440,30 @@ function PnLBreakdown() {
 }
 
 // ── Main Trade Desk ────────────────────────────────────────────────────────────
-export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Tab }) {
+/**
+ * Tab -> the page key that renders it.
+ *
+ * "mode" (Trading style) and "manual" (Manual Trade) have no page key in
+ * App.tsx, so they switch without changing the URL — the address bar then
+ * names the desk but not the tab. Refusing to open a tab because it has no URL
+ * would be the worse trade.
+ */
+/** Exported so the route table can be checked against the page registry — see src/hooks/__tests__/tabRouteTable.test.tsx. */
+/** The tab the page opens on when the URL names it without one. */
+export const DEFAULT_TAB: Tab = "overview";
+
+export const TAB_PAGE_KEYS = {
+  overview:  "trade:overview",
+  signals:   "trade:orders",
+  positions: "trade:positions",
+  approvals: "trade:copilot",
+  execution: "trade:execlog",
+  pnl:       "trade:logs",
+} as const;
+
+export default function TradeDesk({ initialTab = DEFAULT_TAB }: { initialTab?: Tab }) {
   const { positions, lastSignal, cycleLog, loading, runCycle, refresh } = usePaperTrade();
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useTabRoute<Tab>(initialTab, TAB_PAGE_KEYS);
   const onNav = useTerminalNav();
   const [closingId, setClosingId] = useState<string | null>(null);
   const [closeMsg, setCloseMsg] = useState<string | null>(null);

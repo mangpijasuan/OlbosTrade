@@ -215,9 +215,27 @@ describe("page aliases stay in step with the registry", () => {
     }
   }
 
-  /** `export default function RiskCenter({ initialTab = "monitor" }` */
+  /**
+   * `export default function RiskCenter({ initialTab = DEFAULT_TAB }`.
+   *
+   * The default used to be an inline literal. It is now a named export, because
+   * the tab-table test needs to read it too and two copies of the same default
+   * would be one more pair of tables free to disagree. So resolve one hop: if
+   * the default is an identifier, look up its `export const` in the same file.
+   * A literal is still accepted — this must not depend on every page adopting
+   * the constant.
+   */
   function defaultTabOf(component: string): string | null {
-    return readPageSource(component)?.match(/initialTab\s*=\s*"([^"]+)"/)?.[1] ?? null;
+    const src = readPageSource(component);
+    if (!src) return null;
+    const raw = src.match(/initialTab\s*=\s*("([^"]+)"|[A-Za-z_$][\w$]*)/);
+    if (!raw) return null;
+    if (raw[2] !== undefined) return raw[2];
+    return (
+      src.match(
+        new RegExp(`export\\s+const\\s+${raw[1]}\\s*(?::[^=]+)?=\\s*"([^"]+)"`)
+      )?.[1] ?? null
+    );
   }
 
   /** bare key -> the pinned key that renders the same component AND tab. */
