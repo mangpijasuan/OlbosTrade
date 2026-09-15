@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./index.css";
+import { canonicalPageKey, pageKeyToUrl, pathToPageKey } from "./terminalRoutes";
 import TerminalLayout  from "./components/TerminalLayout";
 import Dashboard       from "./pages/Dashboard";
 import TradeDesk       from "./pages/TradeDesk";
@@ -113,13 +115,63 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
 };
 
 export default function App() {
-  const [page, setPage] = useState("dashboard");
+  // The URL is the single source of truth for which page is open.
+  //
+  // This was `useState("dashboard")`, which never read the pathname — so every
+  // /terminal/* URL rendered the Dashboard while the address bar claimed
+  // otherwise. Reload, bookmark, share and the browser Back button were all
+  // silently broken. Deriving the page from the location fixes all four at
+  // once, and history navigation comes free because the browser already tracks
+  // it; there is no second copy of this state to drift.
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const page = pathToPageKey(location.pathname);
   const v2 = isTradeDeskV2Enabled();
   const PAGES = { ...BASE_PAGES, ...tradeDeskPages(v2) };
-  const Page = PAGES[page] || UnknownPage;
+
+  // hasOwnProperty, not a bare PAGES[page]. The key comes straight from the
+  // URL, so a plain lookup also finds everything on Object.prototype:
+  // /terminal/constructor resolved to Object.prototype.constructor and threw
+  // React error #31, and /terminal/__proto__ resolved to Object.prototype
+  // itself and threw #130 — which took down the WHOLE SHELL, not just the
+  // page, because it is not inside the page ErrorBoundary. Any visitor could
+  // white-screen the terminal by typing a URL.
+  const Page = Object.prototype.hasOwnProperty.call(PAGES, page)
+    ? PAGES[page]
+    : UnknownPage;
+
+  // Nav pushes a history entry, so Back returns to the previous page rather
+  // than leaving the terminal entirely — but only for a real change.
+  //
+  // Navigating unconditionally pushed an entry even when the target was the
+  // page already open, so clicking the active nav item three times added three
+  // identical entries and the next Back went nowhere. Back looked broken; it
+  // was being asked to return to where it already was.
+  const handleNav = React.useCallback(
+    (key: string) => {
+      const target = pageKeyToUrl(key);
+      if (target === location.pathname) return;
+
+      // Same page reached by a different spelling — /terminal and
+      // /terminal/dashboard are both the Dashboard. Canonicalise the URL, but
+      // replace rather than push: a Back that lands on a different URL showing
+      // the identical page is the same confusion in a subtler form.
+      // Compare CANONICAL keys. Some pages answer to two spellings —
+      // /terminal/risk and /terminal/risk/heat are both RiskCenter's monitor
+      // tab — and comparing the raw keys treated those as a real change, so
+      // clicking the active nav item from the bare URL still pushed an entry
+      // and Back still landed on an identical view.
+      const samePage =
+        canonicalPageKey(pathToPageKey(target)) ===
+        canonicalPageKey(pathToPageKey(location.pathname));
+      navigate(target, { replace: samePage });
+    },
+    [navigate, location.pathname],
+  );
 
   return (
-    <TerminalLayout activePage={page} onNav={setPage}>
+    <TerminalLayout activePage={page} onNav={handleNav}>
       <Page />
     </TerminalLayout>
   );
