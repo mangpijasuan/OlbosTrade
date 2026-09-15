@@ -65,11 +65,36 @@ describe("url -> page key", () => {
     expect(pathToPageKey("/terminal/Markets/Chart")).toBe("markets:chart");
   });
 
-  it("decodes a percent-encoded path without throwing on a malformed one", () => {
-    expect(pathToPageKey("/terminal/markets%2Fchart".replace("%2F", "/"))).toBe("markets:chart");
-    // A lone % is not a valid escape — decodeURIComponent throws on it, and a
+  it("resolves a percent-encoded separator to the same page", () => {
+    // The encoded input goes in AS-IS. An earlier version of this test did
+    // `"...markets%2Fchart".replace("%2F", "/")` before calling, so it passed
+    // "/terminal/markets/chart" and never exercised decoding at all — green
+    // against both the bug and the fix. Which is how the bug shipped: decoding
+    // happened after the split, leaving the separator trapped in one segment
+    // and producing the non-key "markets/chart".
+    expect(pathToPageKey("/terminal/markets%2Fchart")).toBe("markets:chart");
+    expect(pathToPageKey("/terminal/markets%2fchart")).toBe("markets:chart");
+  });
+
+  it("does not throw on a malformed percent-escape", () => {
+    // A lone % is not valid encoding — decodeURIComponent throws on it, and a
     // pasted URL must not be able to take the whole terminal down.
     expect(() => pathToPageKey("/terminal/mark%ets")).not.toThrow();
+    expect(pathToPageKey("/terminal/mark%ets")).toBe("mark%ets");
+  });
+
+  it("strips the base path case-insensitively", () => {
+    // React Router matches /terminal/* case-insensitively, so /TERMINAL/risk
+    // mounts the terminal. A case-sensitive strip left the base in the key
+    // ("terminal:risk") and rendered UnknownPage for a URL the router had
+    // already accepted.
+    expect(pathToPageKey("/TERMINAL/risk")).toBe("risk");
+    expect(pathToPageKey("/Terminal/Markets/Chart")).toBe("markets:chart");
+  });
+
+  it("only strips the base on a path boundary", () => {
+    // A path that merely starts with the same letters is not the base.
+    expect(pathToPageKey("/terminalish/risk")).toBe("terminalish:risk");
   });
 
   it("returns an unknown key as-is rather than silently rewriting it", () => {
@@ -79,17 +104,68 @@ describe("url -> page key", () => {
   });
 });
 
-describe("round trip", () => {
-  const KEYS = [
-    "dashboard", "journal", "risk", "settings", "paper",
-    "markets:chart", "markets:sector-rotation", "trade:overview",
-    "strat:alpha-edge", "strat:signal-history", "options:chain",
-    "risk:heat", "lab:scenario", "system:broker",
-  ];
+/**
+ * The round trip has to cover EVERY page key, not a sample.
+ *
+ * A hand-written list of 14 was wrong here: App.tsx registers 36 base keys
+ * plus the feature-flagged Trade Desk set, so most nav destinations
+ * (markets:watchlists, lab:intel, trade:settings) had no coverage at all, and
+ * a key added later would silently have none either.
+ *
+ * So the keys are read out of App.tsx itself. Same approach as
+ * landingNavOverflow.test.ts: the source is the fixture, so the test cannot
+ * drift from the registry it is meant to guard.
+ */
+// @ts-expect-error - node:fs is untyped here; vitest runs in Node, so it resolves at runtime.
+import { readFileSync } from "node:fs";
 
-  it("every real page key survives url -> key -> url", () => {
+// Assembled by string, NOT `new URL(..., import.meta.url)` — Vite rewrites
+// that exact pattern into an asset URL and readFileSync then fails.
+const TEST_DIR = import.meta.url.replace(/^file:\/\//, "").replace(/\/[^/]*$/, "");
+const APP_SOURCE: string = readFileSync(`${TEST_DIR}/../App.tsx`, "utf8");
+
+/** Pull the property keys out of every page-registry object literal. */
+function registeredPageKeys(source: string): string[] {
+  const keys = new Set<string>();
+
+  // Quoted keys: "markets:chart": () => ...
+  for (const m of source.matchAll(/"([a-z0-9:-]+)"\s*:/g)) keys.add(m[1]);
+
+  // Bare keys inside the registries only: `  dashboard: Dashboard,`.
+  // Scoped to the registry blocks so style objects elsewhere in the file
+  // (height:, display:) cannot leak in.
+  const blocks = [
+    /const BASE_PAGES[^{]*\{([\s\S]*?)\n\};/,
+    /function tradeDeskPages[^{]*\{([\s\S]*?)\n\}\n/,
+  ];
+  for (const re of blocks) {
+    const block = source.match(re)?.[1] ?? "";
+    for (const m of block.matchAll(/^\s{2,6}([a-z][a-z0-9]*)\s*:/gm)) keys.add(m[1]);
+  }
+  return [...keys];
+}
+
+describe("round trip", () => {
+  const KEYS = registeredPageKeys(APP_SOURCE);
+
+  it("finds the real registry rather than an empty list", () => {
+    // A zero-length list would make the loop below pass vacuously — which is
+    // the failure mode this whole file keeps running into.
+    expect(KEYS.length).toBeGreaterThan(30);
+    expect(KEYS).toContain("dashboard");
+    expect(KEYS).toContain("markets:watchlists");
+    expect(KEYS).toContain("trade:overview");
+  });
+
+  it("every registered page key survives url -> key -> url", () => {
     for (const key of KEYS) {
       expect(pathToPageKey(pageKeyToUrl(key)), `round trip failed for ${key}`).toBe(key);
     }
+  });
+
+  it("no registered key collides with another once converted", () => {
+    // Two keys mapping to one URL would make a deep link ambiguous.
+    const urls = KEYS.map(pageKeyToUrl);
+    expect(new Set(urls).size, "two page keys produce the same URL").toBe(urls.length);
   });
 });

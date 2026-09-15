@@ -129,13 +129,38 @@ export default function App() {
   const page = pathToPageKey(location.pathname);
   const v2 = isTradeDeskV2Enabled();
   const PAGES = { ...BASE_PAGES, ...tradeDeskPages(v2) };
-  const Page = PAGES[page] || UnknownPage;
+
+  // hasOwnProperty, not a bare PAGES[page]. The key comes straight from the
+  // URL, so a plain lookup also finds everything on Object.prototype:
+  // /terminal/constructor resolved to Object.prototype.constructor and threw
+  // React error #31, and /terminal/__proto__ resolved to Object.prototype
+  // itself and threw #130 — which took down the WHOLE SHELL, not just the
+  // page, because it is not inside the page ErrorBoundary. Any visitor could
+  // white-screen the terminal by typing a URL.
+  const Page = Object.prototype.hasOwnProperty.call(PAGES, page)
+    ? PAGES[page]
+    : UnknownPage;
 
   // Nav pushes a history entry, so Back returns to the previous page rather
-  // than leaving the terminal entirely.
+  // than leaving the terminal entirely — but only for a real change.
+  //
+  // Navigating unconditionally pushed an entry even when the target was the
+  // page already open, so clicking the active nav item three times added three
+  // identical entries and the next Back went nowhere. Back looked broken; it
+  // was being asked to return to where it already was.
   const handleNav = React.useCallback(
-    (key: string) => navigate(pageKeyToUrl(key)),
-    [navigate],
+    (key: string) => {
+      const target = pageKeyToUrl(key);
+      if (target === location.pathname) return;
+
+      // Same page reached by a different spelling — /terminal and
+      // /terminal/dashboard are both the Dashboard. Canonicalise the URL, but
+      // replace rather than push: a Back that lands on a different URL showing
+      // the identical page is the same confusion in a subtler form.
+      const samePage = pathToPageKey(target) === pathToPageKey(location.pathname);
+      navigate(target, { replace: samePage });
+    },
+    [navigate, location.pathname],
   );
 
   return (

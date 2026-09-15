@@ -52,19 +52,33 @@ export function pathToPageKey(pathOrSplat: string | undefined | null): string {
   if (!pathOrSplat) return DEFAULT_PAGE;
 
   let raw = pathOrSplat.split("?")[0].split("#")[0];
-  if (raw.startsWith(TERMINAL_BASE)) raw = raw.slice(TERMINAL_BASE.length);
+
+  // DECODE BEFORE SPLITTING, not after. Splitting first leaves an encoded
+  // separator trapped inside a segment: "/terminal/markets%2Fchart" became the
+  // single key "markets/chart", which matches no page and rendered
+  // UnknownPage. Clients that percent-encode "/" are the ones this module
+  // claims to support, so they have to resolve to the same page as everyone
+  // else. A malformed escape must not throw and take the terminal down, so
+  // the decode falls back to the raw string.
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    /* not valid percent-encoding — use it as typed */
+  }
+
+  // Case-insensitively, and only on a path boundary. React Router matches
+  // `/terminal/*` case-insensitively, so /TERMINAL/risk mounts the terminal;
+  // a case-sensitive strip left "TERMINAL" in the key ("terminal:risk") and
+  // rendered UnknownPage for a URL the router had already accepted. The
+  // boundary check keeps a hypothetical /terminalish/... from being mangled.
+  const lower = raw.toLowerCase();
+  const base = TERMINAL_BASE.toLowerCase();
+  if (lower === base || lower.startsWith(`${base}/`)) {
+    raw = raw.slice(TERMINAL_BASE.length);
+  }
 
   const segments = raw
     .split("/")
-    .map((s) => {
-      // A pasted or logged URL can arrive percent-encoded; a malformed escape
-      // must not throw and take the whole terminal down with it.
-      try {
-        return decodeURIComponent(s);
-      } catch {
-        return s;
-      }
-    })
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
 
