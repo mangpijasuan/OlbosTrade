@@ -57,9 +57,12 @@ export default defineConfig({
   webServer: {
     command: `npm run build && npm run preview -- --port ${PORT} --strictPort --host 127.0.0.1`,
     url: BASE_URL,
-    // Safe in CI (a fresh runner has nothing on this port) and convenient
-    // locally, where it avoids a rebuild between runs.
-    reuseExistingServer: true,
+    // Deliberately false. With reuse on, any preview already listening on this
+    // port lets Playwright skip `npm run build`, so a local run after a CSS
+    // change can pass against a STALE bundle — the precise false-green this
+    // suite exists to prevent. A rebuild costs a few seconds; a test that
+    // silently measured the previous build costs a great deal more.
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });
