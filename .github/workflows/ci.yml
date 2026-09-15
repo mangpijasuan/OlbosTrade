@@ -98,3 +98,66 @@ jobs:
         run: npx vitest run
       - name: Dependency vulnerability scan (informational)
         run: npm audit --audit-level=high || true
+
+  # Browser tests, for the things jsdom structurally cannot see.
+  #
+  # vitest runs under jsdom, which does NO layout: every element measures 0x0
+  # and scrollWidth is always 0. Two real defects in this repo lived in exactly
+  # that blind spot — a nav row that overflowed a 360px phone viewport, and a
+  # mobile nav overlay clipped out of existence by an ancestor's overflow rule.
+  # Neither was visible to a unit test, a type-check, or a linter.
+  #
+  # Kept as its own job rather than bolted onto frontend-tests so a browser
+  # failure is legible at a glance and the fast unit feedback is not held up
+  # behind a browser download.
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Browser binaries are ~150MB and change only when the pin moves, so key
+      # the cache on the resolved version rather than the lockfile hash.
+      - name: Cache browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium and its system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      # The cache restores the browser but not the apt packages it links
+      # against, which live outside the cached path. Skipping this on a cache
+      # hit makes the browser fail to start with a missing shared library.
+      - name: Install system dependencies (browser restored from cache)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      # playwright.config.ts builds the app and serves it with `vite preview`,
+      # so this runs against the production bundle rather than the dev server.
+      - name: Browser tests
+        run: npx playwright test
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
