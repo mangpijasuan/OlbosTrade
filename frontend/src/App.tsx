@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./index.css";
+import { pageKeyToUrl, pathToPageKey } from "./terminalRoutes";
 import TerminalLayout  from "./components/TerminalLayout";
 import Dashboard       from "./pages/Dashboard";
 import TradeDesk       from "./pages/TradeDesk";
@@ -113,13 +115,31 @@ const BASE_PAGES: Record<string, React.ComponentType> = {
 };
 
 export default function App() {
-  const [page, setPage] = useState("dashboard");
+  // The URL is the single source of truth for which page is open.
+  //
+  // This was `useState("dashboard")`, which never read the pathname — so every
+  // /terminal/* URL rendered the Dashboard while the address bar claimed
+  // otherwise. Reload, bookmark, share and the browser Back button were all
+  // silently broken. Deriving the page from the location fixes all four at
+  // once, and history navigation comes free because the browser already tracks
+  // it; there is no second copy of this state to drift.
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const page = pathToPageKey(location.pathname);
   const v2 = isTradeDeskV2Enabled();
   const PAGES = { ...BASE_PAGES, ...tradeDeskPages(v2) };
   const Page = PAGES[page] || UnknownPage;
 
+  // Nav pushes a history entry, so Back returns to the previous page rather
+  // than leaving the terminal entirely.
+  const handleNav = React.useCallback(
+    (key: string) => navigate(pageKeyToUrl(key)),
+    [navigate],
+  );
+
   return (
-    <TerminalLayout activePage={page} onNav={setPage}>
+    <TerminalLayout activePage={page} onNav={handleNav}>
       <Page />
     </TerminalLayout>
   );

@@ -5,8 +5,8 @@
  *
  * An earlier version of this file looped over /terminal/markets,
  * /terminal/risk and six more, and measured the same Dashboard eight times.
- * App.tsx holds the active page in `useState("dashboard")` and never reads
- * location.pathname, so every /terminal/* URL mounts the same page. Eight
+ * App.tsx held the active page in `useState("dashboard")` and never read
+ * location.pathname, so every /terminal/* URL mounted the same page. Eight
  * tests, one page, and a green tick that meant nothing.
  *
  * So these drive the real navigation a phone user drives: the bottom nav, and
@@ -14,10 +14,11 @@
  * pages AND exercises the nav itself, which is where the shell bugs have
  * actually been.
  *
- * (That the URL does not restore the page is a genuine app limitation —
- * deep-linking or reloading /terminal/markets lands on Dashboard — but it is
- * an app change, not a test change, so it is reported rather than worked
- * around here.)
+ * (The URL not restoring the page WAS a genuine app limitation when this file
+ * was written — every /terminal/* URL rendered the Dashboard. That is fixed;
+ * see terminalRoutes.ts and deep-linking.spec.ts. These tests still navigate
+ * rather than deep-link, because what they measure is the shell's layout on
+ * each page, and driving the real nav also exercises the nav itself.)
  *
  * ── Scope ────────────────────────────────────────────────────────────────
  *
