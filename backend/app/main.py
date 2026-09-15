@@ -188,6 +188,24 @@ _equity_scan_offset: int = 0
 # interval — generous for a transient yfinance outage, not indefinite.
 MAX_REGIME_AGE_SECONDS = 2 * 60 * 60
 
+# Hysteresis on regime CHANGES. Created lazily and kept for the process
+# lifetime, because the guard is all state — a per-call instance would confirm
+# nothing. A restart resets it, which is correct: with no history the first
+# reading is adopted immediately rather than being withheld against a regime
+# that may no longer apply.
+_regime_stabilizer_instance = None
+
+
+def _regime_stabilizer():
+    global _regime_stabilizer_instance
+    if _regime_stabilizer_instance is None:
+        from app.core.config import settings
+        from app.services.regime_stabilizer import RegimeStabilizer
+        _regime_stabilizer_instance = RegimeStabilizer(
+            required=settings.regime_confirm_readings
+        )
+    return _regime_stabilizer_instance
+
 # Signal-outcome resolution budget. These rows are the training labels for any
 # future model that learns from signal outcomes, so a pass that cannot finish
 # must end cleanly and say so — never be cancelled mid-write, which is what
@@ -627,16 +645,35 @@ async def _reclassify_regime() -> None:
         from app.services.regime_classifier import RegimeClassifier, compute_flow_features
         classifier = RegimeClassifier()
         flow_feats = await compute_flow_features("SPY")
-        _current_regime = classifier.classify(
+        reading = classifier.classify(
             surface, rsi=rsi_val, adx=adx_val, spy_returns=returns,
             flow_sentiment_score=flow_feats["flow_sentiment_score"],
             flow_large_sweep_bullish_count=flow_feats["flow_large_sweep_bullish_count"],
         )
-        logger.info(
-            "Regime → %s (VIX=%.1f, IV_rank=%.0f, RSI=%.1f, ADX=%.1f, equity=%s)",
-            _current_regime.regime.value, vix_now, iv_rank, rsi_val, adx_val,
-            _current_regime.equity_allowed,
-        )
+
+        # Hysteresis. classify() is stateless and decides on knife-edges of
+        # continuous inputs, and this runs every 30 min against a daily bar
+        # that is still forming — so the boundary is re-sampled ~13x a session
+        # and the regime can flip back and forth within a single day. The
+        # stabilizer withholds a CHANGE until consecutive readings agree;
+        # CRISIS bypasses it, so risk-off is never delayed.
+        stabilized = _regime_stabilizer().observe(reading)
+        _current_regime = stabilized.state
+
+        if stabilized.held:
+            logger.info(
+                "Regime → %s HELD (classifier said %s, %d/%d readings) "
+                "(VIX=%.1f, IV_rank=%.0f, RSI=%.1f, ADX=%.1f, equity=%s)",
+                _current_regime.regime.value, stabilized.raw.value,
+                stabilized.pending_count, stabilized.required,
+                vix_now, iv_rank, rsi_val, adx_val, _current_regime.equity_allowed,
+            )
+        else:
+            logger.info(
+                "Regime → %s (VIX=%.1f, IV_rank=%.0f, RSI=%.1f, ADX=%.1f, equity=%s)",
+                _current_regime.regime.value, vix_now, iv_rank, rsi_val, adx_val,
+                _current_regime.equity_allowed,
+            )
 
     except Exception as exc:
         logger.warning("Regime reclassify failed: %s", exc, exc_info=True)
