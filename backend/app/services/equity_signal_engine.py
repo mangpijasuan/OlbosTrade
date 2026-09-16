@@ -6,11 +6,13 @@ Uses the `ta` library (Technical Analysis Library in Python) for indicator compu
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +188,16 @@ class EquitySignalParams:
     min_margin_to_fire:         float = 0.06
 
     # ── compute_equity_trade_plan() ──
-    stop_atr_multiplier:       float = 2.0
-    target_atr_multiplier:     float = 4.0
+    # Read from settings rather than hardcoded, because these two decide how
+    # far a signal has to travel to count as right and are meant to be chosen
+    # from measured outcomes. default_factory, not a plain default: a bare
+    # `= settings.x` would bind once at import and ignore the environment.
+    # See config.py for why the RATIO is not where an edge comes from, and
+    # why max_hold_days is what makes the target distance bite.
+    stop_atr_multiplier:   float = field(
+        default_factory=lambda: settings.equity_stop_atr_multiplier)
+    target_atr_multiplier: float = field(
+        default_factory=lambda: settings.equity_target_atr_multiplier)
     risk_pct_per_trade:        float = 0.02
     sentiment_scale_floor:     float = 0.70
     sentiment_scale_trigger:   float = 0.1

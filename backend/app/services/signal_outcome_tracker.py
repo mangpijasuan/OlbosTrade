@@ -49,13 +49,21 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
+from app.core.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # ~1 trading month — roughly matches the horizon a 4xATR target (the
 # equity trade plan's target distance) is expected to resolve within.
-DEFAULT_MAX_HOLD_DAYS = 20
+# How long a signal gets to reach target or stop before it is closed as
+# "expired". Settings-driven for the same reason as the ATR multipliers: it
+# and the target distance are one decision, not two. A target the signal
+# cannot reach inside this window does not become a loss, it becomes an
+# expiry — and because `hit_rate` excludes expiries from its denominator,
+# that silently removes would-be winners from the measurement rather than
+# showing up as a worse number. See config.py.
+DEFAULT_MAX_HOLD_DAYS = settings.signal_max_hold_days
 
 # Rows per UPDATE statement, and how many accumulate before a flush. Chunking
 # keeps a single pass from building one enormous statement or holding the whole
@@ -447,6 +455,100 @@ def _confidence_buckets(outcomes: list[dict]) -> dict:
     return by_confidence
 
 
+# ── R-based outcome maths ────────────────────────────────────────────────
+#
+# R is one unit of risk: the entry-to-stop distance. Everything below is in
+# R rather than ATR or percent, so it stays comparable across tickers AND
+# across changes to the multipliers themselves — a 4×ATR target over a 2×ATR
+# stop is 2.0R, and it is still 2.0R after both multipliers are halved.
+#
+# Why this exists at all: `hit_rate` cannot answer "is the target in the
+# right place". It excludes expiries, and expiry is not neutral — the stop is
+# nearer than the target, so slow winners expire while losers resolve, and
+# the excluded pile is disproportionately made of signals that would have
+# won. These functions measure the signals themselves instead of the
+# subset that happened to resolve decisively.
+
+def _risk_per_share(o: dict) -> Optional[float]:
+    """1R in price terms. None when the row cannot support the maths."""
+    entry, stop = o.get("entry_price"), o.get("stop_price")
+    if entry is None or stop is None:
+        return None
+    risk = abs(float(entry) - float(stop))
+    return risk if risk > 0 else None
+
+
+def _realised_r(o: dict) -> Optional[float]:
+    """What the signal actually returned, in R, signed for its direction."""
+    risk = _risk_per_share(o)
+    exit_price, entry = o.get("exit_price"), o.get("entry_price")
+    if risk is None or exit_price is None or entry is None:
+        return None
+    move = float(exit_price) - float(entry)
+    if str(o.get("action", "")).upper() == "SELL":
+        move = -move
+    return move / risk
+
+
+def _mfe_r(o: dict) -> Optional[float]:
+    """Max favourable excursion in R — how far it went before it turned.
+
+    max_favorable_pct is a fraction OF ENTRY (see _resolve_one), so it has to
+    be taken back to price before it can be divided by risk.
+    """
+    risk = _risk_per_share(o)
+    mfe, entry = o.get("max_favorable_pct"), o.get("entry_price")
+    if risk is None or mfe is None or entry is None:
+        return None
+    return (float(mfe) * float(entry)) / risk
+
+
+def _target_distance_r(o: dict) -> Optional[float]:
+    """Where the target sits, in R. 4×ATR over a 2×ATR stop is 2.0R."""
+    risk = _risk_per_share(o)
+    target, entry = o.get("target_price"), o.get("entry_price")
+    if risk is None or target is None or entry is None:
+        return None
+    return abs(float(target) - float(entry)) / risk
+
+
+MFE_BUCKETS_R = [
+    ("0.0-0.5R", 0.0, 0.5),
+    ("0.5-1.0R", 0.5, 1.0),
+    ("1.0-1.5R", 1.0, 1.5),
+    ("1.5-2.0R", 1.5, 2.0),
+    ("2.0-3.0R", 2.0, 3.0),
+    ("3.0R+",    3.0, float("inf")),
+]
+
+# Candidate target distances to report a counterfactual expectancy for.
+CANDIDATE_TARGETS_R = [1.0, 1.5, 2.0, 2.5, 3.0]
+
+
+def _counterfactual_expectancy(outcomes: list[dict], target_r: float) -> Optional[float]:
+    """Roughly what expectancy would have been with the target at `target_r`.
+
+    READ THE CAVEAT. Bar data records how far a signal went, not WHEN, so for
+    a signal that ended at its stop having first run past `target_r`, this
+    cannot tell whether the favourable excursion came before the stop or
+    after it. It assumes before, which makes every number here an OPTIMISTIC
+    bound, and most optimistic for small target_r where more stopped-out rows
+    qualify.
+
+    So this ranks candidates and says which are worth testing properly. It is
+    not a backtest and must not be quoted as an expected return.
+    """
+    rows = []
+    for o in outcomes:
+        if o.get("status") == "pending":
+            continue
+        mfe, realised = _mfe_r(o), _realised_r(o)
+        if mfe is None or realised is None:
+            continue
+        rows.append(target_r if mfe >= target_r else realised)
+    return round(sum(rows) / len(rows), 3) if rows else None
+
+
 def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
     """
     Aggregate hit rate / days-to-resolve stats from a list of outcome dicts
@@ -495,6 +597,26 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         for r in regimes
     }
 
+    # ── Is the target in the right place? ────────────────────────────
+    # hit_rate cannot answer that: it drops expiries, and expiry is not
+    # neutral between winners and losers. These are measured over every
+    # RESOLVED signal, expiries included, so nothing is silently excluded.
+    resolved = [o for o in outcomes if o["status"] != "pending"]
+    realised = [r for r in (_realised_r(o) for o in resolved) if r is not None]
+    mfes = [m for m in (_mfe_r(o) for o in resolved) if m is not None]
+    target_rs = [t for t in (_target_distance_r(o) for o in outcomes)
+                 if t is not None]
+
+    by_mfe_bucket = {}
+    for label, lo, hi in MFE_BUCKETS_R:
+        by_mfe_bucket[label] = sum(1 for m in mfes if lo <= m < hi)
+
+    # The headline: mean R per resolved signal. Positive means the system
+    # makes money, whatever the hit rate says. A 2R target reached a third of
+    # the time and a 1R loss the rest is expectancy 0 — hit rate alone never
+    # shows that.
+    expectancy_r = round(sum(realised) / len(realised), 3) if realised else None
+
     return {
         "total": total,
         "pending": len(pending),
@@ -502,6 +624,15 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         "stop_hit": len(stop_hit),
         "expired": len(expired),
         "hit_rate": round(hit_rate, 3) if hit_rate is not None else None,
+        "expectancy_r": expectancy_r,
+        "resolved_with_r": len(realised),
+        "target_distance_r": round(sum(target_rs) / len(target_rs), 2) if target_rs else None,
+        "mfe_r_median": round(sorted(mfes)[len(mfes) // 2], 2) if mfes else None,
+        "by_mfe_bucket_r": by_mfe_bucket,
+        "counterfactual_expectancy_r": {
+            str(t): _counterfactual_expectancy(resolved, t)
+            for t in CANDIDATE_TARGETS_R
+        },
         "avg_days_to_target": _avg_days(target_hit),
         "avg_days_to_stop": _avg_days(stop_hit),
         "by_confidence_bucket": by_confidence,
