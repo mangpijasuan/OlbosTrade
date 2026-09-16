@@ -126,10 +126,18 @@ async def record_signal(signal: dict) -> Optional[str]:
         # read of something already computed — no extra work, no extra I/O.
         #
         # Only the composite and its liquidity/regime components are kept. The
-        # other three weights are confidence-determined (see the model's own
-        # comment), and the Alpha Edge entry score and risk score are exact
-        # monotone transforms of `confidence`, so storing them would re-express
-        # a column that is already two lines below this one.
+        # other three weights are confidence-determined AT THE SHIPPED 2:1
+        # GEOMETRY, and so are the Alpha Edge entry score and risk score — at
+        # 2:1 all five reduce to transforms of `confidence`, so storing them
+        # would re-express a column already two lines below this one.
+        #
+        # That reduction is a property of the geometry, not of equity signals,
+        # and the ATR multipliers are settings now (see config.py). Off 2:1,
+        # EV (p*rr - (1-p)) and reward_risk vary with rr and risk_score's
+        # sub-1:1 penalty can fire, so these stop being redundant. Nothing is
+        # lost in that case either: rr is recoverable per row as
+        # |target_price - entry_price| / |entry_price - stop_price|. Any
+        # analysis spanning a retune has to derive it rather than assume 2:1.
         oppty = signal.get("opportunity_score")
         oppty_score = None
         oppty_components: dict = {}
@@ -581,7 +589,14 @@ def _counterfactual_expectancy(
     """
     if ceiling_r is None:
         ceiling_r = _censoring_ceiling_r(outcomes)
-    if target_r > ceiling_r:
+    # Compared at the precision the API REPORTS the ceiling at, not at full
+    # float precision. entry/stop/target persist as Numeric(12, 4), so a
+    # nominal 2:1 row can compute a ratio of 1.99995 — enough for a raw
+    # `2.0 > ceiling` to reject the shipped target candidate while
+    # counterfactual_ceiling_r displays that same ceiling as 2.0. Real data
+    # would have returned null for the one candidate that matters most, with
+    # the response contradicting itself. Raised in review on #61.
+    if round(target_r, 2) > round(ceiling_r, 2):
         return None
 
     rows = []

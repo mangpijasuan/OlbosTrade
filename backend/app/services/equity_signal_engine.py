@@ -203,6 +203,10 @@ class EquitySignalParams:
     sentiment_scale_trigger:   float = 0.1
 
 
+# Import-time snapshot, kept for score_equity_signal — whose weights are
+# plain constants, so a snapshot is exactly right there. Do NOT use it where
+# the ATR multipliers matter: those come from settings, and this object froze
+# them at import. compute_equity_trade_plan builds its own for that reason.
 DEFAULT_EQUITY_SIGNAL_PARAMS = EquitySignalParams()
 
 
@@ -358,7 +362,19 @@ def compute_equity_trade_plan(
         entry_price, stop_price, target_price, position_size,
         shares, risk_reward, risk_dollars
     """
-    p = params or DEFAULT_EQUITY_SIGNAL_PARAMS
+    # A FRESH params object, not DEFAULT_EQUITY_SIGNAL_PARAMS, and that is the
+    # whole point of default_factory being here at all.
+    #
+    # The singleton is built at import, so its multipliers are a snapshot of
+    # whatever settings held then. Every live caller — the scanner, Alpha Edge —
+    # passes params=None, so falling back to the singleton would have left the
+    # live path pinned to the import-time geometry while a test that
+    # constructed its own params saw the configured one. Caught in review on
+    # #61: the mutation test passed for exactly that reason, proving a property
+    # the production path did not have.
+    #
+    # Constructing one small dataclass per plan is not worth optimising away.
+    p = params if params is not None else EquitySignalParams()
     entry = ind.get("close", 0.0)
     atr   = ind.get("atr",   1.0) or 1.0
 

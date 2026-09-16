@@ -22,6 +22,7 @@ from app.services.equity_signal_engine import (
     EquitySignalParams,
     compute_equity_trade_plan,
 )
+from app.services.signal_outcome_tracker import _censoring_ceiling_r
 from app.services.signal_outcome_tracker import (
     compute_signal_outcome_stats,
     _counterfactual_expectancy,
@@ -309,3 +310,82 @@ class TestReviewFindings:
         row = dict(entry_price=100.0, stop_price=96.0, target_price=108.0)
         assert _target_distance_r(row) == pytest.approx(2.0)
         assert _target_distance_r(dict(row, target_price=102.0)) == pytest.approx(0.5)
+
+
+class TestReviewFindingsRound2:
+    """Round 2 of the #61 review. Both reproduced."""
+
+    def test_the_live_no_params_path_reads_current_settings(self, monkeypatch):
+        """The finding that landed on one of my own tests.
+
+        Every live caller — the scanner, Alpha Edge — calls
+        compute_equity_trade_plan WITHOUT params. That used to fall back to
+        DEFAULT_EQUITY_SIGNAL_PARAMS, a singleton built at import, so the
+        production path was pinned to the import-time geometry while
+        test_the_plan_uses_the_configured_multipliers passed — because it
+        constructs its own params object. The test proved a property the live
+        path did not have.
+
+        So this one omits params entirely, which is what production does.
+        """
+        monkeypatch.setattr(settings, "equity_stop_atr_multiplier", 1.0)
+        monkeypatch.setattr(settings, "equity_target_atr_multiplier", 3.0)
+
+        plan = compute_equity_trade_plan(
+            ind={"close": 100.0, "atr": 4.0}, action="BUY", portfolio_value=100_000,
+        )
+        assert plan["stop_price"] == pytest.approx(96.0)
+        assert plan["target_price"] == pytest.approx(112.0)
+
+    def test_the_import_time_singleton_is_not_on_the_plan_path(self, monkeypatch):
+        """Pins the mechanism, not just the outcome.
+
+        DEFAULT_EQUITY_SIGNAL_PARAMS still exists for score_equity_signal,
+        whose weights are plain constants. If the plan path ever falls back to
+        it again this fails, even if the default happens to match.
+        """
+        from app.services import equity_signal_engine as engine
+
+        monkeypatch.setattr(settings, "equity_target_atr_multiplier", 3.0)
+        assert engine.DEFAULT_EQUITY_SIGNAL_PARAMS.target_atr_multiplier == 4.0, (
+            "the singleton is a snapshot; if this is 3.0 it is being rebuilt "
+            "and this test no longer distinguishes the two paths"
+        )
+        plan = compute_equity_trade_plan(
+            ind={"close": 100.0, "atr": 4.0}, action="BUY", portfolio_value=100_000,
+        )
+        assert plan["target_price"] == pytest.approx(112.0), (
+            "the plan used the import-time singleton instead of current settings"
+        )
+
+    def test_a_rounded_two_to_one_row_does_not_reject_the_2_0_candidate(self):
+        """entry/stop/target persist as Numeric(12, 4).
+
+        So a nominal 2:1 row can compute 1.99995R, and a raw `2.0 > ceiling`
+        rejected the shipped target candidate while the API reported that same
+        ceiling as 2.0 — the response contradicting itself on the one
+        candidate that matters most.
+        """
+        # risk = 4.0001, reward = 8.0 -> 1.99995R, displayed as 2.0
+        row = buy("target_hit", 108.0, 0.08)
+        row["stop_price"] = 95.9999
+        assert _censoring_ceiling_r([row]) < 2.0          # genuinely below
+
+        stats = compute_signal_outcome_stats([row])
+        assert stats["counterfactual_ceiling_r"] == pytest.approx(2.0)
+        assert stats["counterfactual_expectancy_r"]["2.0"] is not None, (
+            "the 2.0 candidate was rejected against a ceiling the same "
+            "response displays as 2.0"
+        )
+
+    def test_the_tolerance_does_not_swallow_a_real_gap(self):
+        """One rounding step of slack, not a free pass.
+
+        A genuinely nearer ceiling must still reject larger candidates, or the
+        censoring guard stops guarding.
+        """
+        row = dict(buy("target_hit", 103.0, 0.03), target_price=103.0)  # 0.75R
+        stats = compute_signal_outcome_stats([row])
+        assert stats["counterfactual_ceiling_r"] == pytest.approx(0.75)
+        assert stats["counterfactual_expectancy_r"]["1.0"] is None
+        assert stats["counterfactual_expectancy_r"]["2.0"] is None
