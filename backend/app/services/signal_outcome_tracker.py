@@ -47,9 +47,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from statistics import median
 from typing import Optional
 
-from app.core.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,13 +57,23 @@ logger = get_logger(__name__)
 # ~1 trading month — roughly matches the horizon a 4xATR target (the
 # equity trade plan's target distance) is expected to resolve within.
 # How long a signal gets to reach target or stop before it is closed as
-# "expired". Settings-driven for the same reason as the ATR multipliers: it
-# and the target distance are one decision, not two. A target the signal
-# cannot reach inside this window does not become a loss, it becomes an
-# expiry — and because `hit_rate` excludes expiries from its denominator,
-# that silently removes would-be winners from the measurement rather than
-# showing up as a worse number. See config.py.
-DEFAULT_MAX_HOLD_DAYS = settings.signal_max_hold_days
+# "expired".
+#
+# DELIBERATELY A CONSTANT, unlike the ATR multipliers next door in config.py,
+# and the asymmetry is the whole reason. A multiplier is baked into each row
+# at generation: record_signal persists stop_price and target_price, and
+# _resolve_one reads those columns, so retuning a multiplier cannot touch a
+# signal that already exists. This value is read at RESOLUTION time and
+# applied to every pending row, so making it a setting would let a deploy
+# retroactively expire 10–19-day-old signals under a policy they were never
+# generated under — mixing two labelling rules inside one cohort, and
+# rewriting the very sample the retune is meant to measure.
+#
+# Raised in review on #61 and the right call. Making this tunable needs the
+# horizon persisted per outcome (or the pending cohort migrated) so each row
+# resolves under its own policy; that is a migration, and it belongs in its
+# own change rather than riding along here.
+DEFAULT_MAX_HOLD_DAYS = 20
 
 # Rows per UPDATE statement, and how many accumulate before a flush. Chunking
 # keeps a single pass from building one enormous statement or holding the whole
@@ -525,19 +535,55 @@ MFE_BUCKETS_R = [
 CANDIDATE_TARGETS_R = [1.0, 1.5, 2.0, 2.5, 3.0]
 
 
-def _counterfactual_expectancy(outcomes: list[dict], target_r: float) -> Optional[float]:
+def _censoring_ceiling_r(outcomes: list[dict]) -> float:
+    """Above this distance, MFE cannot answer the counterfactual question.
+
+    _resolve_one RETURNS the moment the target is touched, so a target_hit
+    row's max_favorable_pct is censored at its own target — it records that
+    the signal reached 2.0R, never whether it would have gone on to 3.0R.
+    Asking "what if the target were 2.5R" of such a row is unanswerable from
+    stored data: it falls through to the realised 2.0R exit, which is not a
+    counterfactual for a larger target, it is the old answer wearing a new
+    label. Raised in review on #61.
+
+    stop_hit and expired rows are NOT censored — the walk continued past any
+    favourable excursion to the stop or the horizon — so the limit is set by
+    the nearest target among the rows that did hit one.
+    """
+    hit_distances = [
+        d for d in (_target_distance_r(o) for o in outcomes
+                    if o.get("status") == "target_hit")
+        if d is not None
+    ]
+    return min(hit_distances) if hit_distances else float("inf")
+
+
+def _counterfactual_expectancy(
+    outcomes: list[dict], target_r: float, ceiling_r: Optional[float] = None
+) -> Optional[float]:
     """Roughly what expectancy would have been with the target at `target_r`.
 
-    READ THE CAVEAT. Bar data records how far a signal went, not WHEN, so for
-    a signal that ended at its stop having first run past `target_r`, this
-    cannot tell whether the favourable excursion came before the stop or
-    after it. It assumes before, which makes every number here an OPTIMISTIC
-    bound, and most optimistic for small target_r where more stopped-out rows
-    qualify.
+    TWO limits, and both are real. Neither is a reason to drop the readout —
+    it is the only thing in the codebase that speaks to where the target
+    belongs — but it is a reason not to quote a number from it as a return.
 
-    So this ranks candidates and says which are worth testing properly. It is
-    not a backtest and must not be quoted as an expected return.
+    1. ORDERING. Bar data records how far a signal went, not when, so for a
+       signal that ended at its stop having first run past `target_r`, this
+       cannot tell whether the favourable excursion came before the stop or
+       after it. It assumes before, making every number an OPTIMISTIC bound,
+       most optimistic at small target_r where more stopped-out rows qualify.
+
+    2. CENSORING. Above _censoring_ceiling_r the answer is not merely
+       optimistic, it is unavailable — see that function. Those candidates
+       return None rather than a confident wrong number.
+
+    So this ranks candidates worth testing properly. It is not a backtest.
     """
+    if ceiling_r is None:
+        ceiling_r = _censoring_ceiling_r(outcomes)
+    if target_r > ceiling_r:
+        return None
+
     rows = []
     for o in outcomes:
         if o.get("status") == "pending":
@@ -611,11 +657,20 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
     for label, lo, hi in MFE_BUCKETS_R:
         by_mfe_bucket[label] = sum(1 for m in mfes if lo <= m < hi)
 
+    target_mix: dict[str, int] = {}
+    for t in target_rs:
+        key = f"{round(t, 2):g}"
+        target_mix[key] = target_mix.get(key, 0) + 1
+    target_distance_r = (
+        round(target_rs[0], 2) if target_mix and len(target_mix) == 1 else None
+    )
+
     # The headline: mean R per resolved signal. Positive means the system
     # makes money, whatever the hit rate says. A 2R target reached a third of
     # the time and a 1R loss the rest is expectancy 0 — hit rate alone never
     # shows that.
     expectancy_r = round(sum(realised) / len(realised), 3) if realised else None
+    ceiling = _censoring_ceiling_r(resolved)
 
     return {
         "total": total,
@@ -626,13 +681,23 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         "hit_rate": round(hit_rate, 3) if hit_rate is not None else None,
         "expectancy_r": expectancy_r,
         "resolved_with_r": len(realised),
-        "target_distance_r": round(sum(target_rs) / len(target_rs), 2) if target_rs else None,
-        "mfe_r_median": round(sorted(mfes)[len(mfes) // 2], 2) if mfes else None,
+        # A scalar ONLY when every row shares one geometry. Averaging a
+        # cohort that holds both 2.0R and 1.5R signals reports 1.75R, which
+        # describes neither and silently breaks the one comparison this
+        # readout exists for — is the target within reach of by_mfe_bucket_r.
+        # After a retune the mix is exactly what you have, so it is reported
+        # instead of averaged away. Raised in review on #61.
+        "target_distance_r": target_distance_r,
+        "target_distance_r_mix": target_mix,
+        "mfe_r_median": round(median(mfes), 2) if mfes else None,
         "by_mfe_bucket_r": by_mfe_bucket,
+        # None above the censoring ceiling rather than a confident wrong
+        # number — see _counterfactual_expectancy.
         "counterfactual_expectancy_r": {
-            str(t): _counterfactual_expectancy(resolved, t)
+            str(t): _counterfactual_expectancy(resolved, t, ceiling)
             for t in CANDIDATE_TARGETS_R
         },
+        "counterfactual_ceiling_r": None if ceiling == float("inf") else round(ceiling, 2),
         "avg_days_to_target": _avg_days(target_hit),
         "avg_days_to_stop": _avg_days(stop_hit),
         "by_confidence_bucket": by_confidence,

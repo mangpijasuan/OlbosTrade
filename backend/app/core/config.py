@@ -66,8 +66,7 @@ class Settings(BaseSettings):
     regime_confirm_readings: int = Field(default=3, ge=1, le=20)
 
     # ── Equity signal geometry ────────────────────────────────────────
-    # stop = entry ∓ ATR×stop_mult, target = entry ± ATR×target_mult, and a
-    # signal that touches neither within max_hold_days is closed as "expired".
+    # stop = entry ∓ ATR×stop_mult, target = entry ± ATR×target_mult.
     #
     # These were hardcoded in equity_signal_engine.py. They are settings now
     # because they are the one thing in the signal path that should be chosen
@@ -81,16 +80,25 @@ class Settings(BaseSettings):
     # Moving the target does not manufacture margin; it decides how much of
     # the move you try to capture, and how often you run out of time first.
     #
-    # max_hold_days is what makes the choice bite. Over N days a random walk
-    # covers roughly ATR×√N, so at 20 days a 4×ATR target sits near the edge
-    # of the typical range while a 2×ATR stop sits well inside it. Slow
-    # winners expire; losers resolve. Check by_mfe_bucket in
+    # What makes the choice bite is the 20-day expiry in
+    # signal_outcome_tracker.py: over N days a random walk covers roughly
+    # ATR×√N, so at 20 days a 4×ATR target sits near the edge of the typical
+    # range while a 2×ATR stop sits well inside it. Slow winners expire;
+    # losers resolve. Check by_mfe_bucket_r against target_distance_r in
     # /api/signal-research/outcomes before changing these: if favourable
     # excursion rarely reaches the target's distance in R, the target is out
     # of reach and is converting winners into expiries.
+    #
+    # CHANGING THESE ONLY AFFECTS NEW SIGNALS. Each row persists the stop and
+    # target prices it was generated with, and resolution reads those, so a
+    # retune cannot relabel history. That property is why the expiry horizon
+    # is deliberately NOT a setting here — see signal_outcome_tracker.py.
+    #
+    # Off 2:1 these stop being cosmetic: risk_reward, and the opportunity
+    # components derived from it, are only confidence-determined while the
+    # ratio is fixed. See the note on SignalOutcome.opportunity_score.
     equity_stop_atr_multiplier: float = Field(default=2.0, gt=0, le=10)
     equity_target_atr_multiplier: float = Field(default=4.0, gt=0, le=20)
-    signal_max_hold_days: int = Field(default=20, ge=1, le=250)
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
     # Margin utilization thresholds (maintenance_margin / net_liquidation).

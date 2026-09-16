@@ -47,6 +47,40 @@ def sell(status, exit_price, mfe_pct, **kw):
                 days_to_resolve=5, regime="calm", **kw)
 
 
+class TestTheHorizonIsDeliberatelyNotConfigurable:
+    """Review on #61 caught what making it a setting would have cost.
+
+    A multiplier is baked into a row at generation — record_signal persists
+    stop_price and target_price and _resolve_one reads those columns — so
+    retuning one cannot touch a signal that already exists. The expiry
+    horizon is read at RESOLUTION time and applied to every pending row, so
+    as a setting it would retroactively expire signals generated under the
+    old policy: two labelling rules in one cohort, rewriting the very sample
+    the retune exists to measure.
+    """
+
+    def test_the_horizon_is_a_constant(self):
+        from app.services import signal_outcome_tracker as tracker
+        assert tracker.DEFAULT_MAX_HOLD_DAYS == 20
+        assert not hasattr(settings, "signal_max_hold_days"), (
+            "the expiry horizon is a setting again — it relabels already-"
+            "generated signals, which the multipliers cannot do. It needs the "
+            "horizon persisted per outcome first."
+        )
+
+    def test_retuning_a_multiplier_cannot_move_an_existing_signal(self, monkeypatch):
+        """The asymmetry, stated as behaviour rather than as a comment."""
+        plan = compute_equity_trade_plan(
+            ind={"close": 100.0, "atr": 4.0}, action="BUY", portfolio_value=100_000,
+            params=EquitySignalParams(),
+        )
+        recorded_target = plan["target_price"]
+
+        monkeypatch.setattr(settings, "equity_target_atr_multiplier", 1.0)
+        # A row already written keeps its own prices; nothing re-derives them.
+        assert recorded_target == pytest.approx(116.0)
+
+
 class TestGeometryIsConfigurable:
     def test_defaults_reproduce_the_previous_hardcoded_behaviour(self):
         """The point of the change is choosability, not a silent retune."""
@@ -197,3 +231,81 @@ class TestTargetPlacementReadout:
 
     def test_counterfactual_is_none_without_usable_rows(self):
         assert _counterfactual_expectancy([], 2.0) is None
+
+
+class TestReviewFindings:
+    """Each of these reproduces a finding from the #61 review."""
+
+    def test_median_is_the_median_for_an_even_sample(self):
+        """Was `sorted(m)[len(m)//2]`, which returns the upper-middle value.
+
+        For four MFEs of 0.15 / 0.60 / 1.30 / 2.10 R that reported 1.30R when
+        the median is 0.95R — an overstatement of how far signals run, in the
+        one number meant to say whether the target is reachable.
+        """
+        rows = [
+            buy("stop_hit", 96.0, 0.006),    # 0.15R
+            buy("stop_hit", 96.0, 0.024),    # 0.60R
+            buy("expired", 104.0, 0.052),    # 1.30R
+            buy("target_hit", 108.0, 0.084),  # 2.10R
+        ]
+        assert compute_signal_outcome_stats(rows)["mfe_r_median"] == pytest.approx(0.95)
+
+    def test_candidates_above_the_censoring_ceiling_are_none(self):
+        """_resolve_one returns the moment the target is touched.
+
+        So a target_hit row's MFE is censored at its own target: it records
+        that the signal reached 2.0R, never whether it would have reached
+        3.0R. Falling back to the realised 2.0R exit would present the old
+        answer as a counterfactual for a larger target.
+        """
+        rows = [buy("target_hit", 108.0, 0.08), buy("stop_hit", 96.0, 0.02)]
+        cf = compute_signal_outcome_stats(rows)["counterfactual_expectancy_r"]
+
+        assert cf["1.5"] is not None      # below the ceiling: answerable
+        assert cf["2.0"] is not None      # at it: answerable
+        assert cf["2.5"] is None          # above it: NOT answerable
+        assert cf["3.0"] is None
+
+    def test_the_ceiling_is_reported_so_the_nones_are_explicable(self):
+        rows = [buy("target_hit", 108.0, 0.08)]
+        assert compute_signal_outcome_stats(rows)["counterfactual_ceiling_r"] == pytest.approx(2.0)
+
+    def test_no_ceiling_when_nothing_hit_a_target(self):
+        """Unresolved-by-target rows are not censored — the walk continued."""
+        rows = [buy("stop_hit", 96.0, 0.02), buy("expired", 102.0, 0.03)]
+        stats = compute_signal_outcome_stats(rows)
+        assert stats["counterfactual_ceiling_r"] is None
+        assert stats["counterfactual_expectancy_r"]["3.0"] is not None
+
+    def test_target_distance_is_a_scalar_only_for_one_geometry(self):
+        """Pooling 2.0R and 1.5R reported 1.75R, describing neither.
+
+        That silently breaks the single comparison this readout exists for:
+        target distance against by_mfe_bucket_r.
+        """
+        same = [buy("target_hit", 108.0, 0.08), buy("stop_hit", 96.0, 0.02)]
+        stats = compute_signal_outcome_stats(same)
+        assert stats["target_distance_r"] == pytest.approx(2.0)
+        assert stats["target_distance_r_mix"] == {"2": 2}
+
+        mixed = same + [dict(buy("expired", 103.0, 0.06), target_price=106.0)]
+        stats = compute_signal_outcome_stats(mixed)
+        assert stats["target_distance_r"] is None, (
+            "a mixed cohort reported one averaged distance instead of saying "
+            "the cohort is mixed"
+        )
+        assert stats["target_distance_r_mix"] == {"2": 2, "1.5": 1}
+
+    def test_reward_risk_is_recoverable_from_the_persisted_prices(self):
+        """Why no migration was needed for the 2:1 finding.
+
+        SignalOutcome deliberately does not store ev / reward_risk / the risk
+        score, on the rationale that all are confidence-determined while the
+        geometry is fixed at 2:1. Configurable multipliers void that
+        rationale — but not the data, because reward:risk is exactly the
+        target distance in R, derivable from three persisted columns.
+        """
+        row = dict(entry_price=100.0, stop_price=96.0, target_price=108.0)
+        assert _target_distance_r(row) == pytest.approx(2.0)
+        assert _target_distance_r(dict(row, target_price=102.0)) == pytest.approx(0.5)
