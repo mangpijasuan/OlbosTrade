@@ -57,23 +57,31 @@ def login_rate_limit(request: Request) -> None:
     Ten failed logins from anyone locked out everybody for five minutes — a
     denial of service against login, not a brake on guessing.
 
-    Fixed in docker-compose.hetzner.yml, which now passes --proxy-headers.
-    The trust chain it depends on, so nobody unpicks a link by accident:
+    Fixed in docker-compose.hetzner.yml, which now passes --proxy-headers
+    --forwarded-allow-ips=*. What makes the value trustworthy is the frontend:
+    it sets X-Forwarded-For from $remote_addr — overwriting, not appending — so
+    a header arriving from it was written by the proxy and never by the caller,
+    and uvicorn sees one proxy-authored value and reports it as client.host.
 
-      1. The backend publishes no host port there, so nothing can reach uvicorn
-         without passing the frontend proxy first.
-      2. That proxy sets X-Forwarded-For from $remote_addr — overwriting, not
-         appending — so the header is written by the proxy and never by the
-         caller.
-      3. uvicorn therefore sees one proxy-authored value and reports it as
-         client.host.
+    What that does NOT establish, and an earlier version of this docstring
+    wrongly said it did: that every request has been through the frontend. The
+    backend publishes no host port, but it does join the shared docker_default
+    network (it has to — that is where the IBKR gateway resolves), so any
+    container on that network can reach uvicorn directly and forge the header
+    to dodge its own login limit. The bar is a container on the operator's own
+    private network rather than any internet caller, which is why this is still
+    a large net improvement over one shared bucket; it is not the same as
+    trusting only the proxy. Closing it means not depending on topology at all
+    — e.g. requiring a shared-secret header from the frontend before believing
+    X-Forwarded-For.
 
-    Two things still to know. Behind Caddy the proxy's own $remote_addr is
+    Two more things to know. Behind Caddy the frontend's own $remote_addr is
     Caddy, so Caddy-routed callers still share a bucket until
-    TRUSTED_PROXY_CIDR names Caddy's subnet (frontend/docker-entrypoint.sh).
-    And the flag is deliberately per-stack: docker-compose.yml and
-    docker-compose.prod.yml publish the backend port, so a caller could connect
-    directly and forge the header — --proxy-headers must not be copied there.
+    TRUSTED_PROXY_CIDR names Caddy's subnet (frontend/docker-entrypoint.sh,
+    deploy/hetzner/.env.example). And the flag is deliberately per-stack:
+    docker-compose.yml and docker-compose.prod.yml publish the backend port, so
+    any caller on the host network could connect directly and forge the header
+    — --proxy-headers must not be copied there.
     """
     key = request.client.host if request.client else "unknown"
     now = time.monotonic()

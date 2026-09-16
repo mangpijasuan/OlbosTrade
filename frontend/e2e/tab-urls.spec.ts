@@ -145,6 +145,54 @@ test.describe("tab history", () => {
   });
 });
 
+test.describe("the legacy desk nested inside TradeDeskV2", () => {
+  /**
+   * TradeDeskV2's Positions tab renders the legacy TradeDesk as a PANEL
+   * (TradeDeskV2.tsx). Its tab keys mean something else in that role: with
+   * trade_desk_v2 on, `trade:orders` mounts V2's own OrdersWorkspace, not this
+   * component's signals tab. So URL-routing the nested tabs navigated the user
+   * out of the page they were on.
+   *
+   * Caught in review, and it only reproduces with the flag in its SHIPPING
+   * position, which is why the nested case needs its own test rather than
+   * riding on the page-level ones above.
+   *
+   * These are plain buttons, not role="tab" — the legacy desk predates TabBar.
+   */
+  test("clicking a nested tab switches the panel without navigating", async ({ page }) => {
+    await open(page, "/terminal/trade/positions");
+
+    const urlBefore = page.url();
+    // "Desk signals" in the DOM; the uppercase is CSS, and the accessible name
+    // comes from the text content, not the painted glyphs.
+    const deskSignals = page.getByRole("button", { name: /^Desk signals$/i });
+    await expect(
+      deskSignals,
+      "the nested legacy desk did not render — this test is not exercising it"
+    ).toBeVisible();
+    await expect(page.getByText("No open positions")).toBeVisible();
+
+    await deskSignals.click();
+    await page.waitForTimeout(600);
+
+    expect(
+      page.url(),
+      "a nested panel tab changed the URL, which navigates out of the page it is nested in"
+    ).toBe(urlBefore);
+    expect(
+      await statusLabel(page),
+      "the shell moved to a different workspace"
+    ).toBe("TRADE DESK \u00b7 POSITIONS");
+
+    // And it must still actually switch the panel — a fix that simply stopped
+    // the nested tabs working would also satisfy the two assertions above.
+    await expect(
+      page.getByText("No open positions"),
+      "the panel did not switch away from Positions"
+    ).toBeHidden();
+  });
+});
+
 /**
  * The legacy Trade Desk's unmapped tabs ("Trading style", "Manual Trade") are
  * covered in src/hooks/__tests__/useTabRoute.test.tsx, not here.

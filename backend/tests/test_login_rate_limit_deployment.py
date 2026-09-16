@@ -96,6 +96,28 @@ class TestTheRunningStackCanSeeTheCaller:
             "rate-limit bucket: ten failed logins lock out everybody"
         )
 
+    def test_hetzner_backend_actually_trusts_the_frontend(self):
+        """--proxy-headers alone does nothing here, which is easy to miss.
+
+        uvicorn defaults forwarded_allow_ips to "127.0.0.1". The frontend
+        reaches the backend over the Docker network from a container address,
+        never from loopback, so with --proxy-headers but no
+        --forwarded-allow-ips uvicorn parses the header and then discards it as
+        untrusted. The limiter falls straight back to one shared bucket, and
+        the command still LOOKS correct.
+
+        Caught in review: the guard above passes on that half-configured
+        command, so deleting only this flag left the tests green and the
+        limiter broken.
+        """
+        block = service_block(read("docker-compose.hetzner.yml"), "backend")
+        assert "--forwarded-allow-ips" in block, (
+            "the Hetzner backend passes --proxy-headers but no "
+            "--forwarded-allow-ips, so uvicorn defaults to trusting 127.0.0.1 "
+            "only, ignores the frontend's X-Forwarded-For, and every caller is "
+            "back in one login rate-limit bucket"
+        )
+
     def test_hetzner_backend_is_not_directly_reachable(self):
         """The whole reason --forwarded-allow-ips=* is safe there."""
         block = service_block(read("docker-compose.hetzner.yml"), "backend")

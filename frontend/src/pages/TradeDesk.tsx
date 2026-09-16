@@ -461,9 +461,36 @@ export const TAB_PAGE_KEYS = {
   pnl:       "trade:logs",
 } as const;
 
-export default function TradeDesk({ initialTab = DEFAULT_TAB }: { initialTab?: Tab }) {
+/** Stable identity: a fresh `{}` each render would re-run effects downstream. */
+const EMPTY_TAB_KEYS: Readonly<Partial<Record<Tab, string>>> = Object.freeze({});
+
+/**
+ * `routeTabsToUrl` exists because this component is mounted in two very
+ * different roles.
+ *
+ * As a PAGE (trade_desk_v2 off) it owns the workspace, its tabs have their own
+ * registry keys, and putting the tab in the URL is the whole point.
+ *
+ * NESTED inside TradeDeskV2's Positions tab (TradeDeskV2.tsx) it owns only a
+ * panel, and the same keys mean something else entirely: with v2 enabled
+ * `trade:orders` mounts V2's OrdersWorkspace, not this component's signals tab.
+ * URL-routing the nested tabs would therefore navigate the user out of the
+ * page they are on — a regression, and a subtle one, because it only happens
+ * with the flag in its shipping position.
+ *
+ * Passing an empty table rather than adding a branch keeps this on the path
+ * already covered by tests: a tab with no page key switches locally and does
+ * not touch the URL.
+ */
+export default function TradeDesk({
+  initialTab = DEFAULT_TAB,
+  routeTabsToUrl = true,
+}: { initialTab?: Tab; routeTabsToUrl?: boolean }) {
   const { positions, lastSignal, cycleLog, loading, runCycle, refresh } = usePaperTrade();
-  const [tab, setTab] = useTabRoute<Tab>(initialTab, TAB_PAGE_KEYS);
+  const [tab, setTab] = useTabRoute<Tab>(
+    initialTab,
+    routeTabsToUrl ? TAB_PAGE_KEYS : EMPTY_TAB_KEYS,
+  );
   const onNav = useTerminalNav();
   const [closingId, setClosingId] = useState<string | null>(null);
   const [closeMsg, setCloseMsg] = useState<string | null>(null);
