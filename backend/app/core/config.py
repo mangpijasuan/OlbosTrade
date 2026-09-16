@@ -65,6 +65,24 @@ class Settings(BaseSettings):
     # 1 disables the guard (pre-guard behaviour).
     regime_confirm_readings: int = Field(default=3, ge=1, le=20)
 
+    # ── Proxy trust ───────────────────────────────────────────────────
+    # Shared secret proving a request came through the frontend nginx, which
+    # is the only thing that overwrites X-Forwarded-For with the address it
+    # actually observed. rate_limit.client_ip() believes that header ONLY
+    # when this matches.
+    #
+    # Replaces --proxy-headers --forwarded-allow-ips=* (issue #60). uvicorn's
+    # middleware can only decide by PEER ADDRESS, and the backend shares the
+    # external docker_default network with Caddy and the IBKR gateway — it has
+    # to, that is where IBKR_HOST resolves — so peer address cannot separate
+    # the frontend from anything else on that network. A secret can, and it
+    # keeps working if the topology changes.
+    #
+    # Empty = do not trust the header at all. Safe, but it puts every caller
+    # behind the proxy in one rate-limit bucket, so docker-compose.hetzner.yml
+    # requires it rather than defaulting it.
+    trusted_proxy_secret: str = Field(default="")
+
     # ── Equity signal geometry ────────────────────────────────────────
     # stop = entry ∓ ATR×stop_mult, target = entry ± ATR×target_mult.
     #

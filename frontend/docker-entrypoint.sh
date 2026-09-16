@@ -51,6 +51,23 @@ else
     echo "[entrypoint]   Behind Caddy, all callers share one bucket: set TRUSTED_PROXY_CIDR to Caddy's subnet."
 fi
 
+# Proves to the backend that a request came through THIS proxy, so it can
+# believe the X-Forwarded-For set just below. See backend/app/api/rate_limit.py
+# client_ip() and issue #60: the backend shares the external docker_default
+# network with Caddy and the IBKR gateway, so peer address cannot tell the
+# frontend apart from anything else on it. A secret can.
+#
+# Unset = the backend ignores X-Forwarded-For and buckets every caller
+# together. docker-compose.hetzner.yml requires the variable for that reason.
+SECRET_HEADER=""
+if [ -n "$TRUSTED_PROXY_SECRET" ]; then
+    SECRET_HEADER="proxy_set_header X-Olbos-Proxy-Secret \"$TRUSTED_PROXY_SECRET\";"
+    echo "[entrypoint] Proxy secret set — backend will trust this proxy's X-Forwarded-For."
+else
+    echo "[entrypoint] WARNING: TRUSTED_PROXY_SECRET not set — the backend will ignore"
+    echo "[entrypoint]   X-Forwarded-For, so every caller shares one login rate-limit bucket."
+fi
+
 AUTH_BLOCK=""
 if [ -n "$DASH_USER" ] && [ -n "$DASH_PASS" ]; then
     htpasswd -bc /etc/nginx/.htpasswd "$DASH_USER" "$DASH_PASS" >/dev/null 2>&1
@@ -75,7 +92,7 @@ ${REAL_IP_BLOCK}
     # own OPTION_CHAIN coordinator timeout (120s, market_data.py) — without
     # this, nginx would 504 the connection before the backend's own timeout
     # (and its clean error body) ever gets a chance to fire.
-    location /api         { proxy_pass http://olbostrade-backend:8000; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$remote_addr; proxy_read_timeout 130s; proxy_send_timeout 130s; }
+    location /api         { proxy_pass http://olbostrade-backend:8000; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$remote_addr; ${SECRET_HEADER} proxy_read_timeout 130s; proxy_send_timeout 130s; }
     location /docs        { proxy_pass http://olbostrade-backend:8000; }
     location /openapi.json { proxy_pass http://olbostrade-backend:8000; }
     location /ws {

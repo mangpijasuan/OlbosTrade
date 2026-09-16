@@ -40,60 +40,31 @@ services:
       dockerfile: Dockerfile
     container_name: olbostrade-backend
     restart: unless-stopped
-    # Overrides the image CMD to add --proxy-headers. Without it uvicorn
-    # ignores X-Forwarded-For entirely, so request.client.host is the frontend
-    # nginx for EVERY request and the login rate limiter (10 attempts / 5 min,
-    # api/rate_limit.py) puts every client in one shared bucket: ten failed
-    # logins from anyone locked out everyone for five minutes.
+    # NO --proxy-headers here, deliberately, and that is the fix rather than
+    # an omission. uvicorn's ProxyHeadersMiddleware decides whether to believe
+    # X-Forwarded-For by PEER ADDRESS, and this service joins olbos_default
+    # (the shared external docker_default network) because that is where
+    # IBKR_HOST=ibkr-gateway resolves. Peer address therefore cannot separate
+    # the frontend from Caddy, the gateway, or anything else on that network,
+    # so the only workable setting was --forwarded-allow-ips=*: every
+    # container there could name its own IP and duck its own rate limit. A
+    # CIDR was not an alternative — uvicorn 0.29 matches trusted hosts by
+    # exact string, so a subnet silently matches nothing.
     #
-    # WHAT "*" DOES AND DOES NOT BUY YOU. uvicorn 0.29 with always-trust takes
-    # x_forwarded_for_hosts[0] — the leftmost entry, which is normally
-    # client-controlled and would make the limit worse than useless. What stops
-    # that here is the frontend: it sets `X-Forwarded-For $remote_addr` —
-    # $remote_addr, NOT $proxy_add_x_forwarded_for — so it OVERWRITES whatever
-    # the client sent with the address it actually observed. A header arriving
-    # from the frontend is a single value written by the proxy, never by the
-    # caller.
+    # The trust decision moved into the application, where it can be made on
+    # PROVENANCE instead: the frontend sets X-Olbos-Proxy-Secret alongside the
+    # X-Forwarded-For it overwrites, and rate_limit.client_ip() believes the
+    # header only when that secret matches. Network layout stops mattering.
+    # Issue #60.
     #
-    # THE LIMIT OF THAT ARGUMENT, and it is a real one. An earlier version of
-    # this comment claimed that because the backend publishes no host port,
-    # "every request has already been through the frontend". That does not
-    # follow, and it is wrong: this service also joins `olbos_default` (the
-    # shared external `docker_default` network) — it has to, because that is
-    # where IBKR_HOST=ibkr-gateway resolves. Any container on that network can
-    # open a socket straight to uvicorn:8000 and forge X-Forwarded-For, and so
-    # evade its own login rate limit. "Not reachable from the host network" is
-    # not the same claim as "only reachable from the frontend".
-    #
-    # That residual risk is a container already running on the operator's own
-    # private Docker network — a far higher bar than the bug this fixes, which
-    # any internet caller could trigger: without --proxy-headers EVERY client
-    # shares one bucket, so ten failed logins locked out the operator too. Net
-    # improvement, but the guarantee is weaker than trust-the-proxy-only, and a
-    # topology change (another container joining docker_default) silently
-    # widens it. Closing it properly means not depending on network topology at
-    # all — e.g. the frontend setting a shared-secret header that the limiter
-    # requires before it believes X-Forwarded-For — which is an application
-    # change, not a compose change.
-    #
-    # Do NOT copy this flag to docker-compose.yml or docker-compose.prod.yml:
-    # both publish the backend port (8001:8000 and 8000:8000), so any client on
-    # the host network could connect directly and forge the header. The flag is
-    # per-stack for exactly that reason.
-    #
-    # A CIDR cannot be used instead: uvicorn 0.29 matches trusted hosts by
-    # exact string (`client_host in self.trusted_hosts`), so
-    # --forwarded-allow-ips=172.16.0.0/12 would never match and would silently
-    # disable the fix rather than scope it.
-    command: >
-      uvicorn app.main:app
-      --host 0.0.0.0 --port 8000
-      --workers 1 --loop uvloop --access-log
-      --proxy-headers --forwarded-allow-ips=*
+    # Required, not defaulted: without it the backend ignores X-Forwarded-For
+    # and every caller behind the proxy shares one login bucket — ten failed
+    # logins lock out everybody. Both services read the same variable.
     env_file:
       - backend/.env.prod
     environment:
       DATABASE_URL: postgresql+asyncpg://olbosquant:${OLBOSTRADE_DB_PASSWORD}@olbostrade-db:5432/olbostrade
+      TRUSTED_PROXY_SECRET: "${TRUSTED_PROXY_SECRET:?set TRUSTED_PROXY_SECRET in backend/.env.prod, generated with openssl rand -hex 32}"
     volumes:
       # Trained models are not committed (see .gitignore) and the build context
       # is ./backend, so nothing puts a .pkl inside the image. Mounting the
@@ -149,6 +120,10 @@ services:
       # file's alias for it, and `docker network inspect` does not know it.)
       # Never widen this to a range a real client could originate from.
       - TRUSTED_PROXY_CIDR=${TRUSTED_PROXY_CIDR:-}
+      # The same value the backend requires — it is how the backend knows a
+      # request came through this proxy and its X-Forwarded-For can be
+      # believed. See backend/app/api/rate_limit.py client_ip(), issue #60.
+      - "TRUSTED_PROXY_SECRET=${TRUSTED_PROXY_SECRET:?set TRUSTED_PROXY_SECRET in backend/.env.prod, generated with openssl rand -hex 32}"
     # Publish a host port for direct IP access (http://<server-ip>:8080) when no
     # domain is set up. Caddy (when used) still reaches it over the internal
     # network; this just additionally exposes it on the host.
