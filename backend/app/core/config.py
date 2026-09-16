@@ -64,6 +64,41 @@ class Settings(BaseSettings):
     # CRISIS always bypasses this — risk-off is never delayed.
     # 1 disables the guard (pre-guard behaviour).
     regime_confirm_readings: int = Field(default=3, ge=1, le=20)
+
+    # ── Equity signal geometry ────────────────────────────────────────
+    # stop = entry ∓ ATR×stop_mult, target = entry ± ATR×target_mult.
+    #
+    # These were hardcoded in equity_signal_engine.py. They are settings now
+    # because they are the one thing in the signal path that should be chosen
+    # from measured outcomes rather than assumed, and re-measuring after every
+    # change should not need a code edit and a deploy.
+    #
+    # The ratio between them is NOT where an edge comes from, which is worth
+    # stating because it is easy to assume otherwise: for barriers at +a and
+    # −b, the hit rate needed to break even is b/(a+b), and the hit rate a
+    # coin flip achieves is also b/(a+b). Equal for every choice of a and b.
+    # Moving the target does not manufacture margin; it decides how much of
+    # the move you try to capture, and how often you run out of time first.
+    #
+    # What makes the choice bite is the 20-day expiry in
+    # signal_outcome_tracker.py: over N days a random walk covers roughly
+    # ATR×√N, so at 20 days a 4×ATR target sits near the edge of the typical
+    # range while a 2×ATR stop sits well inside it. Slow winners expire;
+    # losers resolve. Check by_mfe_bucket_r against target_distance_r in
+    # /api/signal-research/outcomes before changing these: if favourable
+    # excursion rarely reaches the target's distance in R, the target is out
+    # of reach and is converting winners into expiries.
+    #
+    # CHANGING THESE ONLY AFFECTS NEW SIGNALS. Each row persists the stop and
+    # target prices it was generated with, and resolution reads those, so a
+    # retune cannot relabel history. That property is why the expiry horizon
+    # is deliberately NOT a setting here — see signal_outcome_tracker.py.
+    #
+    # Off 2:1 these stop being cosmetic: risk_reward, and the opportunity
+    # components derived from it, are only confidence-determined while the
+    # ratio is fixed. See the note on SignalOutcome.opportunity_score.
+    equity_stop_atr_multiplier: float = Field(default=2.0, gt=0, le=10)
+    equity_target_atr_multiplier: float = Field(default=4.0, gt=0, le=20)
     cooling_off_hours: int = Field(default=24)
     capital_preservation_threshold: float = Field(default=0.85)
     # Margin utilization thresholds (maintenance_margin / net_liquidation).

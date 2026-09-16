@@ -47,6 +47,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from statistics import median
 from typing import Optional
 
 from app.utils.logger import get_logger
@@ -55,6 +56,23 @@ logger = get_logger(__name__)
 
 # ~1 trading month — roughly matches the horizon a 4xATR target (the
 # equity trade plan's target distance) is expected to resolve within.
+# How long a signal gets to reach target or stop before it is closed as
+# "expired".
+#
+# DELIBERATELY A CONSTANT, unlike the ATR multipliers next door in config.py,
+# and the asymmetry is the whole reason. A multiplier is baked into each row
+# at generation: record_signal persists stop_price and target_price, and
+# _resolve_one reads those columns, so retuning a multiplier cannot touch a
+# signal that already exists. This value is read at RESOLUTION time and
+# applied to every pending row, so making it a setting would let a deploy
+# retroactively expire 10–19-day-old signals under a policy they were never
+# generated under — mixing two labelling rules inside one cohort, and
+# rewriting the very sample the retune is meant to measure.
+#
+# Raised in review on #61 and the right call. Making this tunable needs the
+# horizon persisted per outcome (or the pending cohort migrated) so each row
+# resolves under its own policy; that is a migration, and it belongs in its
+# own change rather than riding along here.
 DEFAULT_MAX_HOLD_DAYS = 20
 
 # Rows per UPDATE statement, and how many accumulate before a flush. Chunking
@@ -108,10 +126,18 @@ async def record_signal(signal: dict) -> Optional[str]:
         # read of something already computed — no extra work, no extra I/O.
         #
         # Only the composite and its liquidity/regime components are kept. The
-        # other three weights are confidence-determined (see the model's own
-        # comment), and the Alpha Edge entry score and risk score are exact
-        # monotone transforms of `confidence`, so storing them would re-express
-        # a column that is already two lines below this one.
+        # other three weights are confidence-determined AT THE SHIPPED 2:1
+        # GEOMETRY, and so are the Alpha Edge entry score and risk score — at
+        # 2:1 all five reduce to transforms of `confidence`, so storing them
+        # would re-express a column already two lines below this one.
+        #
+        # That reduction is a property of the geometry, not of equity signals,
+        # and the ATR multipliers are settings now (see config.py). Off 2:1,
+        # EV (p*rr - (1-p)) and reward_risk vary with rr and risk_score's
+        # sub-1:1 penalty can fire, so these stop being redundant. Nothing is
+        # lost in that case either: rr is recoverable per row as
+        # |target_price - entry_price| / |entry_price - stop_price|. Any
+        # analysis spanning a retune has to derive it rather than assume 2:1.
         oppty = signal.get("opportunity_score")
         oppty_score = None
         oppty_components: dict = {}
@@ -447,6 +473,143 @@ def _confidence_buckets(outcomes: list[dict]) -> dict:
     return by_confidence
 
 
+# ── R-based outcome maths ────────────────────────────────────────────────
+#
+# R is one unit of risk: the entry-to-stop distance. Everything below is in
+# R rather than ATR or percent, so it stays comparable across tickers AND
+# across changes to the multipliers themselves — a 4×ATR target over a 2×ATR
+# stop is 2.0R, and it is still 2.0R after both multipliers are halved.
+#
+# Why this exists at all: `hit_rate` cannot answer "is the target in the
+# right place". It excludes expiries, and expiry is not neutral — the stop is
+# nearer than the target, so slow winners expire while losers resolve, and
+# the excluded pile is disproportionately made of signals that would have
+# won. These functions measure the signals themselves instead of the
+# subset that happened to resolve decisively.
+
+def _risk_per_share(o: dict) -> Optional[float]:
+    """1R in price terms. None when the row cannot support the maths."""
+    entry, stop = o.get("entry_price"), o.get("stop_price")
+    if entry is None or stop is None:
+        return None
+    risk = abs(float(entry) - float(stop))
+    return risk if risk > 0 else None
+
+
+def _realised_r(o: dict) -> Optional[float]:
+    """What the signal actually returned, in R, signed for its direction."""
+    risk = _risk_per_share(o)
+    exit_price, entry = o.get("exit_price"), o.get("entry_price")
+    if risk is None or exit_price is None or entry is None:
+        return None
+    move = float(exit_price) - float(entry)
+    if str(o.get("action", "")).upper() == "SELL":
+        move = -move
+    return move / risk
+
+
+def _mfe_r(o: dict) -> Optional[float]:
+    """Max favourable excursion in R — how far it went before it turned.
+
+    max_favorable_pct is a fraction OF ENTRY (see _resolve_one), so it has to
+    be taken back to price before it can be divided by risk.
+    """
+    risk = _risk_per_share(o)
+    mfe, entry = o.get("max_favorable_pct"), o.get("entry_price")
+    if risk is None or mfe is None or entry is None:
+        return None
+    return (float(mfe) * float(entry)) / risk
+
+
+def _target_distance_r(o: dict) -> Optional[float]:
+    """Where the target sits, in R. 4×ATR over a 2×ATR stop is 2.0R."""
+    risk = _risk_per_share(o)
+    target, entry = o.get("target_price"), o.get("entry_price")
+    if risk is None or target is None or entry is None:
+        return None
+    return abs(float(target) - float(entry)) / risk
+
+
+MFE_BUCKETS_R = [
+    ("0.0-0.5R", 0.0, 0.5),
+    ("0.5-1.0R", 0.5, 1.0),
+    ("1.0-1.5R", 1.0, 1.5),
+    ("1.5-2.0R", 1.5, 2.0),
+    ("2.0-3.0R", 2.0, 3.0),
+    ("3.0R+",    3.0, float("inf")),
+]
+
+# Candidate target distances to report a counterfactual expectancy for.
+CANDIDATE_TARGETS_R = [1.0, 1.5, 2.0, 2.5, 3.0]
+
+
+def _censoring_ceiling_r(outcomes: list[dict]) -> float:
+    """Above this distance, MFE cannot answer the counterfactual question.
+
+    _resolve_one RETURNS the moment the target is touched, so a target_hit
+    row's max_favorable_pct is censored at its own target — it records that
+    the signal reached 2.0R, never whether it would have gone on to 3.0R.
+    Asking "what if the target were 2.5R" of such a row is unanswerable from
+    stored data: it falls through to the realised 2.0R exit, which is not a
+    counterfactual for a larger target, it is the old answer wearing a new
+    label. Raised in review on #61.
+
+    stop_hit and expired rows are NOT censored — the walk continued past any
+    favourable excursion to the stop or the horizon — so the limit is set by
+    the nearest target among the rows that did hit one.
+    """
+    hit_distances = [
+        d for d in (_target_distance_r(o) for o in outcomes
+                    if o.get("status") == "target_hit")
+        if d is not None
+    ]
+    return min(hit_distances) if hit_distances else float("inf")
+
+
+def _counterfactual_expectancy(
+    outcomes: list[dict], target_r: float, ceiling_r: Optional[float] = None
+) -> Optional[float]:
+    """Roughly what expectancy would have been with the target at `target_r`.
+
+    TWO limits, and both are real. Neither is a reason to drop the readout —
+    it is the only thing in the codebase that speaks to where the target
+    belongs — but it is a reason not to quote a number from it as a return.
+
+    1. ORDERING. Bar data records how far a signal went, not when, so for a
+       signal that ended at its stop having first run past `target_r`, this
+       cannot tell whether the favourable excursion came before the stop or
+       after it. It assumes before, making every number an OPTIMISTIC bound,
+       most optimistic at small target_r where more stopped-out rows qualify.
+
+    2. CENSORING. Above _censoring_ceiling_r the answer is not merely
+       optimistic, it is unavailable — see that function. Those candidates
+       return None rather than a confident wrong number.
+
+    So this ranks candidates worth testing properly. It is not a backtest.
+    """
+    if ceiling_r is None:
+        ceiling_r = _censoring_ceiling_r(outcomes)
+    # Compared at the precision the API REPORTS the ceiling at, not at full
+    # float precision. entry/stop/target persist as Numeric(12, 4), so a
+    # nominal 2:1 row can compute a ratio of 1.99995 — enough for a raw
+    # `2.0 > ceiling` to reject the shipped target candidate while
+    # counterfactual_ceiling_r displays that same ceiling as 2.0. Real data
+    # would have returned null for the one candidate that matters most, with
+    # the response contradicting itself. Raised in review on #61.
+    if round(target_r, 2) > round(ceiling_r, 2):
+        return None
+
+    rows = []
+    for o in outcomes:
+        if o.get("status") == "pending":
+            continue
+        mfe, realised = _mfe_r(o), _realised_r(o)
+        if mfe is None or realised is None:
+            continue
+        rows.append(target_r if mfe >= target_r else realised)
+    return round(sum(rows) / len(rows), 3) if rows else None
+
+
 def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
     """
     Aggregate hit rate / days-to-resolve stats from a list of outcome dicts
@@ -495,6 +658,35 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         for r in regimes
     }
 
+    # ── Is the target in the right place? ────────────────────────────
+    # hit_rate cannot answer that: it drops expiries, and expiry is not
+    # neutral between winners and losers. These are measured over every
+    # RESOLVED signal, expiries included, so nothing is silently excluded.
+    resolved = [o for o in outcomes if o["status"] != "pending"]
+    realised = [r for r in (_realised_r(o) for o in resolved) if r is not None]
+    mfes = [m for m in (_mfe_r(o) for o in resolved) if m is not None]
+    target_rs = [t for t in (_target_distance_r(o) for o in outcomes)
+                 if t is not None]
+
+    by_mfe_bucket = {}
+    for label, lo, hi in MFE_BUCKETS_R:
+        by_mfe_bucket[label] = sum(1 for m in mfes if lo <= m < hi)
+
+    target_mix: dict[str, int] = {}
+    for t in target_rs:
+        key = f"{round(t, 2):g}"
+        target_mix[key] = target_mix.get(key, 0) + 1
+    target_distance_r = (
+        round(target_rs[0], 2) if target_mix and len(target_mix) == 1 else None
+    )
+
+    # The headline: mean R per resolved signal. Positive means the system
+    # makes money, whatever the hit rate says. A 2R target reached a third of
+    # the time and a 1R loss the rest is expectancy 0 — hit rate alone never
+    # shows that.
+    expectancy_r = round(sum(realised) / len(realised), 3) if realised else None
+    ceiling = _censoring_ceiling_r(resolved)
+
     return {
         "total": total,
         "pending": len(pending),
@@ -502,6 +694,25 @@ def compute_signal_outcome_stats(outcomes: list[dict]) -> dict:
         "stop_hit": len(stop_hit),
         "expired": len(expired),
         "hit_rate": round(hit_rate, 3) if hit_rate is not None else None,
+        "expectancy_r": expectancy_r,
+        "resolved_with_r": len(realised),
+        # A scalar ONLY when every row shares one geometry. Averaging a
+        # cohort that holds both 2.0R and 1.5R signals reports 1.75R, which
+        # describes neither and silently breaks the one comparison this
+        # readout exists for — is the target within reach of by_mfe_bucket_r.
+        # After a retune the mix is exactly what you have, so it is reported
+        # instead of averaged away. Raised in review on #61.
+        "target_distance_r": target_distance_r,
+        "target_distance_r_mix": target_mix,
+        "mfe_r_median": round(median(mfes), 2) if mfes else None,
+        "by_mfe_bucket_r": by_mfe_bucket,
+        # None above the censoring ceiling rather than a confident wrong
+        # number — see _counterfactual_expectancy.
+        "counterfactual_expectancy_r": {
+            str(t): _counterfactual_expectancy(resolved, t, ceiling)
+            for t in CANDIDATE_TARGETS_R
+        },
+        "counterfactual_ceiling_r": None if ceiling == float("inf") else round(ceiling, 2),
         "avg_days_to_target": _avg_days(target_hit),
         "avg_days_to_stop": _avg_days(stop_hit),
         "by_confidence_bucket": by_confidence,

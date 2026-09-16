@@ -154,7 +154,7 @@ def test_alpha_edge_entry_score_is_exactly_confidence_times_100():
 
 
 def test_risk_score_is_the_confidence_complement_for_equity_plans():
-    """Equity trade plans are fixed at 2:1, so risk_score's sub-1:1 nudge
+    """Equity trade plans are 2:1 BY DEFAULT, so risk_score's sub-1:1 nudge
     cannot fire and it reduces to (1 - confidence) * 100."""
     from app.services.trade_frequency_controller import risk_score
 

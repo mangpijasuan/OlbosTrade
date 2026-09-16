@@ -92,16 +92,26 @@ class SignalOutcome(Base):
     # Both are exact monotone transforms of `confidence` above —
     # alpha_edge_entry_score is round(confidence * 100) (alpha_edge_engine
     # compute_equity_scores), and risk_score is (1 - confidence) * 100 with a
-    # reward:risk nudge that cannot fire for equity (plans are fixed at 2:1).
+    # reward:risk nudge that cannot fire for equity WHILE the plan geometry
+    # stays 2:1 — which is now a config default (equity_*_atr_multiplier) and
+    # no longer a guarantee. Off 2:1 the nudge can fire and those components
+    # stop being confidence-determined, so this rationale holds only for the
+    # shipped defaults. No data is lost either way: reward:risk is recoverable
+    # per row as |target_price - entry_price| / |entry_price - stop_price|,
+    # all three of which are persisted below. Raised in review on #61.
     # Persisting either would add a column that re-expresses one already here,
     # and would leave any rank-based skill test (AUC is invariant to monotone
     # transforms) returning exactly the same number it does today.
     #
-    # Of the composite's five weights, confidence (0.35), EV (0.25 — p*rr-(1-p),
-    # with rr fixed) and reward_risk (0.15 — constant for equity) are likewise
-    # confidence-determined. Only liquidity and regime vary independently, so
-    # they are broken out: a future analysis can ask which component carries
-    # signal rather than testing a blend that is three-quarters already-measured.
+    # Of the composite's five weights, confidence (0.35), EV (0.25 — p*rr-(1-p))
+    # and reward_risk (0.15) are likewise confidence-determined AT 2:1, because
+    # rr is then a constant. They are not once the multipliers move off it: EV
+    # varies with rr, reward_risk IS rr, and both become independent inputs.
+    # Only liquidity and regime vary independently at every geometry, so they
+    # are broken out: a future analysis can ask which component carries signal
+    # rather than testing a blend that is three-quarters already-measured —
+    # while the geometry holds. Across a retune it must derive rr per row from
+    # the prices above rather than assume it.
     opportunity_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     oppty_liquidity: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
     oppty_regime: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
