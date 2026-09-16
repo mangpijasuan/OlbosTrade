@@ -9,6 +9,48 @@
 # loud warning) to preserve local/dev behaviour.
 set -e
 
+# ── Real client IP behind an upstream proxy ───────────────────────────────────
+# The /api block below sets X-Forwarded-For from $remote_addr, which is the
+# address nginx actually observed — deliberately NOT $proxy_add_x_forwarded_for,
+# so a caller cannot forge it. That is correct when the caller reaches this
+# container directly, and wrong when Caddy is in front: $remote_addr is then
+# CADDY's address for every request, so the backend's login rate limiter sees
+# one client and ten failed logins lock out everybody.
+#
+# set_real_ip_from fixes that without reopening the forgery hole: nginx rewrites
+# $remote_addr from X-Forwarded-For ONLY when the peer is a listed trusted
+# proxy, and ignores the header from anyone else.
+#
+# Defaults to empty = trust nobody = exactly the behaviour before this block
+# existed. Set TRUSTED_PROXY_CIDR to Caddy's Docker subnet to complete the
+# chain. Leaving it unset is safe; setting it too broadly is not — never
+# include a range that a client could originate from.
+#
+# USE COMMAS for more than one CIDR, not spaces. Spaces are still accepted
+# here, but the documented deploy path cannot carry them: deploy/hetzner/up.sh
+# does `set -a; source backend/.env.prod`, and bash reads
+#   TRUSTED_PROXY_CIDR=172.18.0.0/16 172.19.0.0/16
+# as "assign the first, then RUN the second as a command". The deploy fails
+# before Compose starts, with an error naming a subnet rather than a quoting
+# problem. Commas avoid it outright; quotes would too, but only if the operator
+# remembers, and nothing here can check for them.
+REAL_IP_BLOCK=""
+if [ -n "$TRUSTED_PROXY_CIDR" ]; then
+    for cidr in $(echo "$TRUSTED_PROXY_CIDR" | tr ',' ' '); do
+        REAL_IP_BLOCK="${REAL_IP_BLOCK}    set_real_ip_from ${cidr};
+"
+    done
+    # recursive on: with a proxy chain, step back through X-Forwarded-For past
+    # every trusted hop instead of stopping at the first.
+    REAL_IP_BLOCK="${REAL_IP_BLOCK}    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;"
+    echo "[entrypoint] Trusting upstream proxy for real client IP: $TRUSTED_PROXY_CIDR"
+else
+    echo "[entrypoint] TRUSTED_PROXY_CIDR not set — X-Forwarded-For from an upstream proxy is ignored."
+    echo "[entrypoint]   Direct callers are rate-limited per client correctly."
+    echo "[entrypoint]   Behind Caddy, all callers share one bucket: set TRUSTED_PROXY_CIDR to Caddy's subnet."
+fi
+
 AUTH_BLOCK=""
 if [ -n "$DASH_USER" ] && [ -n "$DASH_PASS" ]; then
     htpasswd -bc /etc/nginx/.htpasswd "$DASH_USER" "$DASH_PASS" >/dev/null 2>&1
@@ -23,6 +65,7 @@ server {
     listen 3000;
     root /usr/share/nginx/html;
     index index.html;
+${REAL_IP_BLOCK}
     ${AUTH_BLOCK}
 
     # Healthcheck must stay open (container probe has no credentials).
@@ -54,5 +97,15 @@ server {
     }
 }
 EOF
+
+# Parse-check before starting. The config is generated at runtime from env, so
+# a bad TRUSTED_PROXY_CIDR (or a missing realip module) would otherwise show up
+# as an opaque container crash-loop. `nginx -t` turns that into one readable
+# line naming the file and the offending directive.
+if ! nginx -t; then
+    echo "[entrypoint] FATAL: generated nginx config is invalid — see the error above." >&2
+    echo "[entrypoint] TRUSTED_PROXY_CIDR was: '${TRUSTED_PROXY_CIDR:-<unset>}'" >&2
+    exit 1
+fi
 
 exec nginx -g 'daemon off;'

@@ -8,15 +8,16 @@
  * viewing tool, not strategy research).
  * Each component is reused unchanged.
  */
-import React, { useState } from "react";
+import React from "react";
 import TabBar from "../components/TabBar";
 import ResearchLab from "./ResearchLab";
 import Research from "./Research";
 import Intel from "./Intel";
 import ScenarioLab from "./research/ScenarioLab";
 import MLModels from "./research/MLModels";
+import { useTabRoute } from "../hooks/useTabRoute";
 
-const TABS = [
+export const TABS = [
   { key: "scenario", label: "Scenario Lab" },
   { key: "lab", label: "Strategy Research" },
   { key: "market", label: "Market & Regime" },
@@ -24,8 +25,21 @@ const TABS = [
   { key: "models", label: "Model Health" },
 ];
 
-export default function ResearchCenter({ initialTab = "scenario" }: { initialTab?: string }) {
-  const [tab, setTab] = useState(initialTab);
+/** Tab -> the page key that renders it, so a tab change shows up in the URL. */
+/** Exported so the route table can be checked against the page registry — see src/hooks/__tests__/tabRouteTable.test.tsx. */
+/** The tab the page opens on when the URL names it without one. */
+export const DEFAULT_TAB = "scenario";
+
+export const TAB_PAGE_KEYS = {
+  scenario: "lab:scenario",
+  lab: "lab:strategy",
+  market: "lab:market",
+  intel: "lab:intel",
+  models: "lab:models",
+} as const;
+
+export default function ResearchCenter({ initialTab = DEFAULT_TAB }: { initialTab?: string }) {
+  const [tab, setTab] = useTabRoute(initialTab, TAB_PAGE_KEYS);
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} label="Research views" />

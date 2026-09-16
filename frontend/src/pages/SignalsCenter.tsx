@@ -13,8 +13,9 @@ import SignalResearch from "./SignalResearch";
 import OptionsSignalHistory from "./OptionsSignalHistory";
 import StrategyHealthPanel from "./StrategyHealthPanel";
 import AlphaEdgePanel from "./AlphaEdgePanel";
+import { useTabRoute } from "../hooks/useTabRoute";
 
-const TABS = [
+export const TABS = [
   { key: "alpha-edge", label: "Alpha Edge" },
   { key: "signals", label: "Live Signals" },
   { key: "history", label: "History" },
@@ -36,8 +37,21 @@ function SignalsHistory() {
   );
 }
 
-export default function SignalsCenter({ initialTab = "signals" }: { initialTab?: string }) {
-  const [tab, setTab] = useState(initialTab);
+/** Tab -> the page key that renders it, so a tab change shows up in the URL. */
+/** Exported so the route table can be checked against the page registry — see src/hooks/__tests__/tabRouteTable.test.tsx. */
+/** The tab the page opens on when the URL names it without one. */
+export const DEFAULT_TAB = "signals";
+
+export const TAB_PAGE_KEYS = {
+  signals: "equity",
+  strategies: "strat:cards",
+  health: "strat:health",
+  "alpha-edge": "strat:alpha-edge",
+  history: "strat:signal-history",
+} as const;
+
+export default function SignalsCenter({ initialTab = DEFAULT_TAB }: { initialTab?: string }) {
+  const [tab, setTab] = useTabRoute(initialTab, TAB_PAGE_KEYS);
   return (
     <div>
       <TabBar tabs={TABS} active={tab} onChange={setTab} label="Signal views" />

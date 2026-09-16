@@ -18,6 +18,7 @@ import HoldToConfirmButton from "../components/HoldToConfirmButton";
 import { Button } from "../components/ui";
 import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
 import { tint } from "../utils/tint";
+import { useTabRoute } from "../hooks/useTabRoute";
 
 function HintedTh({ label }: { label: string }) {
   return (
@@ -439,9 +440,57 @@ function PnLBreakdown() {
 }
 
 // ── Main Trade Desk ────────────────────────────────────────────────────────────
-export default function TradeDesk({ initialTab = "overview" }: { initialTab?: Tab }) {
+/**
+ * Tab -> the page key that renders it.
+ *
+ * "mode" (Trading style) and "manual" (Manual Trade) have no page key in
+ * App.tsx, so they switch without changing the URL — the address bar then
+ * names the desk but not the tab. Refusing to open a tab because it has no URL
+ * would be the worse trade.
+ */
+/** Exported so the route table can be checked against the page registry — see src/hooks/__tests__/tabRouteTable.test.tsx. */
+/** The tab the page opens on when the URL names it without one. */
+export const DEFAULT_TAB: Tab = "overview";
+
+export const TAB_PAGE_KEYS = {
+  overview:  "trade:overview",
+  signals:   "trade:orders",
+  positions: "trade:positions",
+  approvals: "trade:copilot",
+  execution: "trade:execlog",
+  pnl:       "trade:logs",
+} as const;
+
+/** Stable identity: a fresh `{}` each render would re-run effects downstream. */
+const EMPTY_TAB_KEYS: Readonly<Partial<Record<Tab, string>>> = Object.freeze({});
+
+/**
+ * `routeTabsToUrl` exists because this component is mounted in two very
+ * different roles.
+ *
+ * As a PAGE (trade_desk_v2 off) it owns the workspace, its tabs have their own
+ * registry keys, and putting the tab in the URL is the whole point.
+ *
+ * NESTED inside TradeDeskV2's Positions tab (TradeDeskV2.tsx) it owns only a
+ * panel, and the same keys mean something else entirely: with v2 enabled
+ * `trade:orders` mounts V2's OrdersWorkspace, not this component's signals tab.
+ * URL-routing the nested tabs would therefore navigate the user out of the
+ * page they are on — a regression, and a subtle one, because it only happens
+ * with the flag in its shipping position.
+ *
+ * Passing an empty table rather than adding a branch keeps this on the path
+ * already covered by tests: a tab with no page key switches locally and does
+ * not touch the URL.
+ */
+export default function TradeDesk({
+  initialTab = DEFAULT_TAB,
+  routeTabsToUrl = true,
+}: { initialTab?: Tab; routeTabsToUrl?: boolean }) {
   const { positions, lastSignal, cycleLog, loading, runCycle, refresh } = usePaperTrade();
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useTabRoute<Tab>(
+    initialTab,
+    routeTabsToUrl ? TAB_PAGE_KEYS : EMPTY_TAB_KEYS,
+  );
   const onNav = useTerminalNav();
   const [closingId, setClosingId] = useState<string | null>(null);
   const [closeMsg, setCloseMsg] = useState<string | null>(null);
