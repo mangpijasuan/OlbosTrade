@@ -22,10 +22,18 @@ set -e
 # proxy, and ignores the header from anyone else.
 #
 # Defaults to empty = trust nobody = exactly the behaviour before this block
-# existed. Set TRUSTED_PROXY_CIDR to Caddy's Docker subnet (space- or
-# comma-separated CIDRs are both accepted) to complete the chain. Leaving it
-# unset is safe; setting it too broadly is not — never include a range that a
-# client could originate from.
+# existed. Set TRUSTED_PROXY_CIDR to Caddy's Docker subnet to complete the
+# chain. Leaving it unset is safe; setting it too broadly is not — never
+# include a range that a client could originate from.
+#
+# USE COMMAS for more than one CIDR, not spaces. Spaces are still accepted
+# here, but the documented deploy path cannot carry them: deploy/hetzner/up.sh
+# does `set -a; source backend/.env.prod`, and bash reads
+#   TRUSTED_PROXY_CIDR=172.18.0.0/16 172.19.0.0/16
+# as "assign the first, then RUN the second as a command". The deploy fails
+# before Compose starts, with an error naming a subnet rather than a quoting
+# problem. Commas avoid it outright; quotes would too, but only if the operator
+# remembers, and nothing here can check for them.
 REAL_IP_BLOCK=""
 if [ -n "$TRUSTED_PROXY_CIDR" ]; then
     for cidr in $(echo "$TRUSTED_PROXY_CIDR" | tr ',' ' '); do

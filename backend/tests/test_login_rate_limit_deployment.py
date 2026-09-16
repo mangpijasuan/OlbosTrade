@@ -111,11 +111,39 @@ class TestTheRunningStackCanSeeTheCaller:
         limiter broken.
         """
         block = service_block(read("docker-compose.hetzner.yml"), "backend")
-        assert "--forwarded-allow-ips" in block, (
-            "the Hetzner backend passes --proxy-headers but no "
-            "--forwarded-allow-ips, so uvicorn defaults to trusting 127.0.0.1 "
-            "only, ignores the frontend's X-Forwarded-For, and every caller is "
-            "back in one login rate-limit bucket"
+        assert "--forwarded-allow-ips=*" in block, (
+            "the Hetzner backend does not pass --forwarded-allow-ips=*, so "
+            "uvicorn falls back to trusting 127.0.0.1 only, ignores the "
+            "frontend's X-Forwarded-For (the frontend connects from a Docker "
+            "address, never loopback), and every caller is back in one login "
+            "rate-limit bucket"
+        )
+
+    def test_the_trusted_ips_value_is_the_one_that_works(self):
+        """Asserting the option NAME is not enough, which is the third time.
+
+        `--forwarded-allow-ips=127.0.0.1` contains the option and trusts
+        nothing that can actually reach this backend, so a regression to it
+        satisfies a name-only check while silently restoring the shared bucket.
+        A CIDR is the same trap for a different reason: uvicorn 0.29 matches
+        with `client_host in self.trusted_hosts`, an exact string comparison,
+        so `--forwarded-allow-ips=172.16.0.0/12` never matches anything.
+
+        The value is load-bearing, so the value is what gets asserted. Changing
+        it deliberately should mean changing this test and its reasoning, not
+        discovering later that the limiter quietly stopped working.
+        """
+        block = service_block(read("docker-compose.hetzner.yml"), "backend")
+        match = re.search(r"--forwarded-allow-ips=(\S+)", block)
+        assert match, "no --forwarded-allow-ips value found at all"
+        assert match.group(1) == "*", (
+            f"--forwarded-allow-ips is {match.group(1)!r}, not '*'. uvicorn 0.29 "
+            "compares trusted hosts by exact string, so anything other than '*' "
+            "must equal the frontend container's address exactly — and that is "
+            "assigned by Docker at runtime. A CIDR or 127.0.0.1 here does not "
+            "scope the trust, it removes it: the frontend's X-Forwarded-For is "
+            "ignored and every caller shares one login rate-limit bucket. See "
+            "issue #60 for the topology-independent replacement."
         )
 
     def test_hetzner_backend_is_not_directly_reachable(self):
