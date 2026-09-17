@@ -1,0 +1,124 @@
+r"""
+update.sh cleans up after the build it just did.
+
+The coupling this guards: the deploy builds with `--no-cache`, which makes
+BuildKit write every layer it produces and then guarantees the next build will
+not read any of them. Nothing collected that. By 2026-09-17 the cache had
+reached 40.83GB over 185 entries — 51GB of /var/lib/containerd on a 75GB disk
+at 82% full, produced entirely by routine deploys. It had to be cleared by hand
+from a rescue system, which is a poor way to find out.
+
+`--no-cache` without a prune is the bug, so that is what this file asserts:
+not that a particular command is present, but that the two stay coupled and in
+the right order. A prune that ran BEFORE the build would collect the previous
+deploy's garbage and leave its own — technically present, quietly useless.
+
+It also pins `image prune` to the dangling-only form. `-a` evicts every image
+without a running container, and this host runs other compose projects
+(ibkr-gateway, olbos-caddy). A deploy that happened to coincide with one of
+those being stopped would delete its image. That is a real footgun in an
+unattended script, and the dangling-only sweep already collects what a rebuild
+orphans.
+
+PARSING: comments are stripped, and the danger is real — the step-5 comment
+block in update.sh explains itself using `--no-cache`, `builder prune -af` and
+`image prune -f` as prose, which is exactly how an earlier guard in this repo
+(test_login_rate_limit_deployment.py) came to match its own explanation and
+pass against a broken deployment.
+
+But the stripping is NOT what holds here, and saying otherwise would invite
+someone to lean on it. Mutation-testing: delete the real prune commands, keep
+the comment, disable the stripping — the tests still fail, correctly. What
+saves them is that every pattern below requires the literal `docker ` prefix,
+and the comment's shorthand omits it.
+
+That makes the stripping defence in depth against a FUTURE comment written in
+full command form. It also means the prefix is load-bearing: shortening any
+pattern here to `builder prune` or `image prune` would make the comment block
+match, and then only the stripping would stand between this file and a guard
+that tests its own prose.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+UPDATE_SH = REPO / "deploy" / "hetzner" / "update.sh"
+
+
+def executable_lines() -> list[str]:
+    """update.sh with comment lines and blanks removed — what bash actually runs."""
+    out = []
+    for line in UPDATE_SH.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        out.append(stripped)
+    return out
+
+
+def index_of(pattern: str) -> int | None:
+    for i, line in enumerate(executable_lines()):
+        if re.search(pattern, line):
+            return i
+    return None
+
+
+def test_the_script_was_actually_parsed():
+    """Guards the guard: an empty list satisfies every 'not present' assertion."""
+    lines = executable_lines()
+    assert lines, "no executable lines parsed out of update.sh"
+    assert any("docker compose" in l for l in lines), (
+        f"update.sh no longer runs docker compose at all; parsed {len(lines)} lines"
+    )
+
+
+def test_a_no_cache_build_is_followed_by_a_cache_prune():
+    build = index_of(r"docker compose .*build .*--no-cache")
+    if build is None:
+        # Dropping --no-cache is a legitimate fix for the same problem: the
+        # cache would then be USED rather than orphaned. Nothing to guard.
+        import pytest
+        pytest.skip("update.sh no longer builds with --no-cache")
+
+    prune = index_of(r"docker\s+builder\s+prune")
+    assert prune is not None, (
+        "update.sh builds with --no-cache but never prunes the build cache. "
+        "BuildKit writes every layer and the next build is told to ignore all "
+        "of them, so the store grows without bound — it reached 40.83GB on the "
+        "Hetzner box and filled the disk to 82%."
+    )
+    assert prune > build, (
+        f"the build cache prune (line {prune}) runs BEFORE the build (line "
+        f"{build}). It would collect the previous deploy's garbage and leave "
+        f"its own, which looks like a fix and is not one."
+    )
+
+
+def test_image_prune_stays_dangling_only():
+    lines = executable_lines()
+    greedy = [l for l in lines if re.search(r"docker\s+image\s+prune\s+(-\w*a|--all)", l)]
+    assert not greedy, (
+        f"update.sh runs an image prune with -a: {greedy}. That evicts every "
+        f"image without a RUNNING container, and this host carries other "
+        f"compose projects (ibkr-gateway, olbos-caddy) whose images would be "
+        f"deleted if they were stopped when the deploy ran. Rebuilding a tag "
+        f"already orphans the image it replaces, so dangling-only collects this "
+        f"deploy's garbage without reaching into anyone else's."
+    )
+
+
+def test_cleanup_cannot_fail_the_deploy():
+    """`set -e` is on, and step 5 runs after the app is already serving."""
+    lines = executable_lines()
+    prunes = [l for l in lines if re.search(r"docker\s+(builder|image)\s+prune", l)]
+    assert prunes, "no prune commands found at all"
+    unguarded = [l for l in prunes if "||" not in l]
+    assert not unguarded, (
+        f"these prunes would abort the script under `set -e`: {unguarded}. "
+        f"Cleanup runs after migrations, so the deployment has already "
+        f"succeeded by then — failing the run here reports a working deploy as "
+        f"a broken one, and the operator rolls back something that was fine."
+    )
