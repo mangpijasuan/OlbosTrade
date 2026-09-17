@@ -884,6 +884,52 @@ async def reject_signal(signal_id: str):
     return entry
 
 
+@router.post("/reject-all", dependencies=[Depends(require_api_key), Depends(rate_limit)])
+async def reject_all_pending():
+    """
+    Bulk-reject every currently-pending approval in one call.
+
+    Intended for clearing a stale queue (e.g. signals that queued in COPILOT
+    mode before the operator switched to AUTOPILOT, or a backlog accumulated
+    while the operator was away).  Each rejected item is written to the
+    execution log exactly as a per-signal rejection would be.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.execution_event import ExecutionEvent
+    from sqlalchemy import select
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            rows = (await session.execute(
+                select(ExecutionEvent)
+                .where(ExecutionEvent.kind == "pending_approval", ExecutionEvent.status == "pending")
+            )).scalars().all()
+
+            rejected: list[dict] = []
+            for row in rows:
+                row.status = "rejected"
+                payload = row.payload or {}
+                rejected.append({
+                    "signal_id":   row.signal_id,
+                    "ticker":      payload.get("ticker"),
+                    "asset_type":  payload.get("asset_type", "equity"),
+                    "action":      payload.get("action"),
+                    "result":      "rejected",
+                    "rejected_at": now,
+                    "rejected_by": "user:bulk",
+                })
+
+    for entry in rejected:
+        await _log_execution(entry)
+
+    return {
+        "rejected": len(rejected),
+        "rejected_at": now,
+    }
+
+
 # ── Manual trade ──────────────────────────────────────────────────────────────
 
 @router.post("/manual-trade", dependencies=[Depends(require_api_key), Depends(rate_limit)])

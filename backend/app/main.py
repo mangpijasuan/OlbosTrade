@@ -64,6 +64,8 @@ async def _yf_bars(ticker: str, limit: int = 60) -> list:
 
     return await loop.run_in_executor(None, _fetch)
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -111,11 +113,20 @@ logger = get_logger(__name__)
 # immediately, so existing installs are unchanged.
 from app.api.auth_deps import require_session  # noqa: E402
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan handler — replaces the deprecated @app.on_event pattern."""
+    await _on_startup()
+    yield
+    await _on_shutdown()
+
+
 app = FastAPI(
     title="OlbosTrade",
     version="4.0.0",
     description="Blessed prosperity through disciplined, rules-based quantitative trading.",
     dependencies=[Depends(require_session)],
+    lifespan=lifespan,
 )
 
 _ALLOWED_ORIGINS = [
@@ -249,9 +260,8 @@ app.include_router(forecasts.router,   prefix="/api/forecasts",    tags=["Probab
 app.include_router(signal_research.router, prefix="/api/signal-research", tags=["Signal Research"])
 
 
-# ── Startup ─────────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def on_startup() -> None:
+# ── Startup / shutdown (called from the lifespan context manager above) ─────
+async def _on_startup() -> None:
     global _current_regime, _greeks_tracker
 
     # 1. Initialize broker and connect
@@ -344,13 +354,17 @@ async def on_startup() -> None:
         logger.warning("IBKR Live data broker init skipped (non-fatal): %s", exc)
 
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    """Cleanup the IBKR Live Data broker on shutdown."""
+async def _on_shutdown() -> None:
+    """Cleanup the IBKR Live Data broker and coordinator workers on shutdown."""
     try:
         await ibkr_live.shutdown_ibkr_live()
     except Exception as exc:
         logger.warning("IBKR Live data broker shutdown failed: %s", exc)
+    try:
+        from app.broker.ibkr_coordinator import ibkr_coordinator
+        await ibkr_coordinator.stop()
+    except Exception as exc:
+        logger.warning("IBKR coordinator shutdown failed: %s", exc)
 
 
 async def _guarded(coro, name: str, timeout: float) -> None:
