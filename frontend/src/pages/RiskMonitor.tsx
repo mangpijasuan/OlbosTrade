@@ -196,6 +196,8 @@ export default function RiskMonitor() {
   const [ks, setKs] = useState<any>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [ksError, setKsError] = useState<string | null>(null);
+  // What the last engage actually did — see engageKs.
+  const [ksReport, setKsReport] = useState<any>(null);
   const [resetCode, setResetCode] = useState("");
   const [operatorKey, setOperatorKey] = useState(() => getOperatorApiKey());
   const [sectionsError, setSectionsError] = useState(false);
@@ -260,8 +262,19 @@ export default function RiskMonitor() {
   // trade-desk endpoint's own handler already clears both together on
   // engage and on reset — this just routes both buttons through it.
   const engageKs = async () => {
-    setKsBusy(true); setKsError(null);
-    try { await api.setTradeDeskKillSwitch(true); await loadKs(); }
+    setKsBusy(true); setKsError(null); setKsReport(null);
+    try {
+      // Keep the report. Engaging is this app's only bulk-flatten path, and
+      // engage() runs every step even when an earlier one fails — it can pause
+      // the scheduler, never reach the broker, and still return normally. An
+      // engage on an ALREADY-engaged switch flattens nothing at all. Throwing
+      // the counts away left this page asserting "positions flattened" on no
+      // evidence, which is the one claim an operator must not have to take on
+      // faith.
+      const res: any = await api.setTradeDeskKillSwitch(true);
+      setKsReport(res);
+      await loadKs();
+    }
     catch (e: any) { setKsError(e?.message || "Failed to engage kill switch"); }
     finally { setKsBusy(false); }
   };
@@ -475,8 +488,33 @@ export default function RiskMonitor() {
                   <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--red)", fontWeight: 700, letterSpacing: "0.08em" }}>
                     ⚡ KILL SWITCH ENGAGED — TRADING HALTED
                   </div>
+                  {ksReport && (
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 11, lineHeight: 1.7 }}>
+                      {ksReport.already_engaged ? (
+                        <span style={{ color: "var(--amber)" }}>
+                          Already engaged — this press flattened nothing. Reset
+                          first if you need positions closed.
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--ink-dim)" }}>
+                          Flattened <b style={{ color: "var(--ink)" }}>{ksReport.positions_flattened ?? "?"}</b> position(s),
+                          cancelled <b style={{ color: "var(--ink)" }}>{ksReport.orders_cancelled ?? "?"}</b> order(s).
+                        </span>
+                      )}
+                      {Array.isArray(ksReport.errors) && ksReport.errors.length > 0 && (
+                        <div style={{ color: "var(--red)", marginTop: 6 }}>
+                          {ksReport.errors.length} error(s) — positions may still be open:
+                          <ul style={{ margin: "4px 0 0 16px" }}>
+                            {ksReport.errors.map((err: string, i: number) => (
+                              <li key={i}>{String(err)}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <p style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-dim)", lineHeight: 1.7 }}>
-                    All orders were cancelled and positions flattened. Reset only
+                    Verify against the broker before relying on this. Reset only
                     after manual review. Enter the server reset code
                     (KILL_SWITCH_RESET_CODE) — it is never stored in this app.
                   </p>

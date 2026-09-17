@@ -42,6 +42,46 @@ export function apiAuthHeaders(extra?: HeadersInit): HeadersInit {
   return headers;
 }
 
+/**
+ * An HTTP failure, with the status kept as a field rather than baked into a
+ * string.
+ *
+ * Callers need to branch on it: a 403 from a mutate route means the operator
+ * API key is missing or stale and the fix is to re-enter it, which is a wholly
+ * different message from "the broker rejected this order". Parsing that back
+ * out of "API error 403: Forbidden" is not something call sites should be
+ * doing.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/**
+ * Build an ApiError from a failed response, preferring the server's own words.
+ *
+ * FastAPI puts the useful half in {"detail": ...}; res.statusText is
+ * "Forbidden", which tells an operator nothing they can act on. The body is
+ * read defensively — an error response is not guaranteed to be JSON (nginx
+ * returns HTML for a 502), and a parse failure here would replace a real
+ * status with an unrelated SyntaxError.
+ */
+async function apiError(res: Response): Promise<ApiError> {
+  let detail = "";
+  try {
+    const body = await res.json();
+    if (typeof body?.detail === "string") detail = body.detail;
+    else if (body?.detail) detail = JSON.stringify(body.detail);
+  } catch {
+    /* not JSON — statusText it is */
+  }
+  return new ApiError(res.status, detail || res.statusText || `HTTP ${res.status}`);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -53,7 +93,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     credentials: "same-origin",
     headers: apiAuthHeaders(options?.headers),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
+  if (!res.ok) throw await apiError(res);
   return res.json();
 }
 

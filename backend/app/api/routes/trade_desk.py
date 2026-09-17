@@ -398,8 +398,23 @@ async def set_kill_switch(body: KillSwitchRequest):
     """
     if body.engaged:
         _kill_switch.set()
-        await kill_switch_service.engage("manual via trade-desk API")
+        result = await kill_switch_service.engage("manual via trade-desk API")
         logger.warning("KILL SWITCH ENGAGED via API — all order submission halted")
+        # Return what engage() actually DID, not just that it ran. Engaging is
+        # the only bulk-flatten path this app has, and the report is the only
+        # evidence the flatten happened: engage() attempts every step even when
+        # an earlier one fails, so it can pause the scheduler, fail to reach
+        # the broker, and still come back a "success". Worse, a second engage
+        # on an already-engaged switch returns at the top having flattened
+        # NOTHING. Collapsing all of that to {"engaged": true} told an operator
+        # watching positions stay open that the close-all had worked.
+        return {
+            "engaged": _is_kill_switch_active(),
+            "already_engaged": result.get("status") == "already_engaged",
+            "positions_flattened": result.get("positions_flattened", 0),
+            "orders_cancelled": result.get("orders_cancelled", 0),
+            "errors": result.get("errors", []),
+        }
     else:
         result = await kill_switch_service.reset(body.authorization_code or "")
         if not result.get("reset"):
