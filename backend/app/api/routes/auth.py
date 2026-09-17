@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth_deps import current_user
-from app.api.rate_limit import login_rate_limit
+from app.api.rate_limit import client_ip, login_rate_limit
 from app.core.config import settings
 from app.services.auth_service import (
     SESSION_COOKIE_NAME, hash_token, new_session_token, normalize_email,
@@ -86,7 +86,9 @@ async def login(
             token_hash=token_hash,
             expires_at=session_expiry(settings.auth_session_hours),
             user_agent=(request.headers.get("user-agent") or "")[:300] or None,
-            ip=(request.client.host if request.client else None),
+            # Same trust rule as the rate limiter — a session audit row saying
+            # every login came from the proxy is worse than useless.
+            ip=client_ip(request),
         ))
         user.last_login_at = datetime.now(timezone.utc)
         await db.commit()
