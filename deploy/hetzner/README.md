@@ -120,7 +120,20 @@ Open **https://trading.yourdomain.com** in your browser.
 
 **Without a domain**, the frontend is also published directly on the host at
 port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
-`http://<YOUR_HETZNER_IP>:8080/terminal`. That number comes from the
+`http://<YOUR_HETZNER_IP>:8080/terminal`.
+
+> ⚠️ **That path is plain HTTP. Do not enter the Operator API Key over it.**
+> The key is your `SECRET_KEY`, it authorises closing positions and changing
+> execution mode, and on `http://` it crosses the network in clear text. The
+> same port also serves without Basic Auth when `DASH_USER`/`DASH_PASS` are
+> unset, so treat it as read-only triage — useful for confirming the stack is
+> up during an incident, not for operating it.
+>
+> For anything that needs the key, use the HTTPS domain above, or tunnel:
+> ```bash
+> ssh -L 8080:localhost:8080 root@<YOUR_HETZNER_IP>
+> # then open http://localhost:8080 — traffic rides the SSH tunnel
+> ``` That number comes from the
 `ports: ["8080:3000"]` entry on the `frontend` service in
 `docker-compose.hetzner.yml`; if you change it there, change it here. The
 backend is NOT published to the host — it is reachable only over the internal

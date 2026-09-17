@@ -387,6 +387,20 @@ async def get_kill_switch():
     return {"engaged": _is_kill_switch_active()}
 
 
+def _sanitize_kill_switch_errors(errors: list) -> list[str]:
+    """Reduce engage()'s raw error strings to a safe, still-useful label.
+
+    engage() formats these as "<stage>_<symbol>: <str(exc)>" — the stage and
+    symbol are operationally necessary (which position did not flatten), the
+    exception text is not, and on an unauthenticated route it is a disclosure.
+    Keep everything up to the first colon; drop the rest.
+    """
+    out: list[str] = []
+    for e in errors or []:
+        label = str(e).split(":", 1)[0].strip()
+        out.append(label or "unknown_error")
+    return out
+
 @router.post("/kill-switch")
 async def set_kill_switch(body: KillSwitchRequest):
     """
@@ -419,7 +433,15 @@ async def set_kill_switch(body: KillSwitchRequest):
             # alone would tell an operator the book is flat when it is not.
             "flatten_statuses": result.get("flatten_statuses", {}),
             "orders_cancelled": result.get("orders_cancelled", 0),
-            "errors": result.get("errors", []),
+            # Error LABELS, not raw exception text. This endpoint has no
+            # require_api_key by design (emergency stop), and the frontend can
+            # serve without Basic Auth when DASH_USER/DASH_PASS are blank — so
+            # an unauthenticated caller reaches this response. engage() builds
+            # its errors from str(exc), which carries broker internals,
+            # database DSNs and stack detail. The operator needs to know THAT
+            # something failed and roughly where; the full text belongs in the
+            # server log, which is already written by engage().
+            "errors": _sanitize_kill_switch_errors(result.get("errors", [])),
         }
     else:
         result = await kill_switch_service.reset(body.authorization_code or "")

@@ -158,3 +158,28 @@ def test_cleanup_cannot_fail_the_deploy():
         f"succeeded by then — failing the run here reports a working deploy as "
         f"a broken one, and the operator rolls back something that was fine."
     )
+
+
+def test_the_prunes_keep_their_cross_project_age_filter():
+    """The filter IS the safety fix; without it the command is the bug again.
+
+    `docker builder prune` and `docker image prune` both act on the whole
+    daemon, not this compose project. The first version of this step used a
+    bare `-af`, justified by "our build passes --no-cache so the cache is
+    worthless" — true of OlbosTrade's layers and silent about the sibling
+    projects on this host (ibkr-gateway, olbos-caddy). `--filter until=` is
+    what scopes it; a guard that only checks a prune EXISTS would let the
+    unscoped form back in unnoticed. Caught in review on PR #64.
+    """
+    lines = executable_lines()
+    prunes = [l for l in lines if re.search(r"docker\s+(builder|image)\s+prune", l)]
+    assert prunes, "no prune commands found at all"
+
+    unfiltered = [l for l in prunes if not re.search(r"--filter\s+until=", l)]
+    assert not unfiltered, (
+        f"these prunes have no age filter: {unfiltered}. Both commands are "
+        f"daemon-wide, so an unfiltered prune discards cache and dangling "
+        f"images belonging to other compose projects on this host — forcing "
+        f"expensive rebuilds elsewhere and destroying images a neighbour may "
+        f"be holding for rollback."
+    )

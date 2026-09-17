@@ -63,7 +63,11 @@ echo "[5/5] Reclaiming build cache..."
 CLEANUP_OK=1
 docker builder prune -af --filter until=72h \
   || { CLEANUP_OK=0; echo "      ⚠ build cache prune failed"; }
-docker image prune -f \
+# Also age-filtered. `image prune -f` is dangling-only but still DAEMON-WIDE:
+# a sibling project's just-replaced image is dangling too, and someone may be
+# holding it for a rollback. 72h matches the builder prune above — our own
+# per-deploy garbage ages out, a neighbour's recent work does not.
+docker image prune -f --filter until=72h \
   || { CLEANUP_OK=0; echo "      ⚠ dangling image prune failed"; }
 
 # `|| true`: set -euo pipefail is on and this is a diagnostic. An unguarded

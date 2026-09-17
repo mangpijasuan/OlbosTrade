@@ -493,8 +493,27 @@ def _opt_trade(spread_type="put", short=100, long=95, qty=2, strategy="bull_put_
     )
 
 
+def _held_legs(underlying="SPY", qty=2, short=100, long=95):
+    """BOTH live legs of the spread, at the broker.
+
+    close_options_trade() sizes the close from the live legs and refuses
+    unless both are held (PR #64): the combo quantity used to come from
+    trade.quantity, so DB drift could submit a 2-lot close against a 1-lot
+    position — closing one and OPENING one the other way.
+    """
+    return [
+        SimpleNamespace(
+            symbol=f"{underlying} L{k}", underlying=underlying,
+            strike=Decimal(str(k)), expiration=date(2026, 9, 18),
+            option_type="put", quantity=sign * qty,
+            avg_cost=Decimal("1.0"), asset_type="option",
+        )
+        for k, sign in ((short, -1), (long, 1))
+    ]
+
+
 def _held_option(underlying="SPY", qty=-2):
-    """A live options position at the broker.
+    """A single live leg — kept for callers that only need existence.
 
     close_options_trade() refuses to submit unless one exists (PR #64): every
     leg it builds comes from the DB row, so a closing combo for a position that
@@ -514,7 +533,7 @@ def _held_option(underlying="SPY", qty=-2):
 async def test_close_options_trade_success_correct_leg_actions_and_mkt():
     trade = _opt_trade()
     broker = MagicMock()
-    broker.get_positions = AsyncMock(return_value=[_held_option()])
+    broker.get_positions = AsyncMock(return_value=_held_legs())
     broker.cancel_open_orders = AsyncMock(return_value=1)
     broker.place_order = AsyncMock(return_value=MagicMock(
         status="filled", order_id="ord-opt-1", fill_price=Decimal("1.50"),
@@ -545,7 +564,7 @@ async def test_close_options_trade_success_correct_leg_actions_and_mkt():
 async def test_close_options_trade_broker_rejection_raises_runtimeerror():
     trade = _opt_trade()
     broker = MagicMock()
-    broker.get_positions = AsyncMock(return_value=[_held_option()])
+    broker.get_positions = AsyncMock(return_value=_held_legs())
     broker.cancel_open_orders = AsyncMock(return_value=0)
     broker.place_order = AsyncMock(return_value=MagicMock(
         status="rejected", order_id=None, fill_price=None,
@@ -591,7 +610,7 @@ async def test_close_options_trade_non_option_spread_type_raises_valueerror():
 async def test_close_options_trade_not_filled_skips_record_exit():
     trade = _opt_trade()
     broker = MagicMock()
-    broker.get_positions = AsyncMock(return_value=[_held_option()])
+    broker.get_positions = AsyncMock(return_value=_held_legs())
     broker.cancel_open_orders = AsyncMock(return_value=0)
     broker.place_order = AsyncMock(return_value=MagicMock(
         status="submitted", order_id="ord-opt-2", fill_price=None,

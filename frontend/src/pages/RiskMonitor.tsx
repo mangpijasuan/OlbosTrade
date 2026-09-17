@@ -1,3 +1,4 @@
+import { summarizeKillSwitchReport } from "../utils/killSwitchReport";
 import React, { useEffect, useState } from "react";
 import { useRisk } from "../hooks/useRisk";
 import { api, getOperatorApiKey, setOperatorApiKey } from "../api/client";
@@ -287,6 +288,12 @@ export default function RiskMonitor() {
   };
 
   const resetKs = async () => {
+    // Clear the previous engagement's report. It was only cleared when THIS
+    // component started another engage, so after a reset it lingered in state
+    // — and if the switch was later engaged elsewhere (the risk.py route, or
+    // another operator), polling flipped ksEngaged true and these stale counts
+    // rendered as if they described the new engagement. Caught in review on #64.
+    setKsReport(null);
     const code = resetCode.trim();
     if (!code) {
       setKsError("Enter the kill-switch reset authorization code.");
@@ -504,29 +511,21 @@ export default function RiskMonitor() {
                         </span>
                       ) : (
                         (() => {
-                          // "Flattened N" is not a safe thing to say. The
-                          // service counts every non-rejected order, so
-                          // `submitted` (accepted, no fill), `partial`
-                          // (residual exposure) and `cancelled` are all in
-                          // that number. Only `filled` means the position is
-                          // gone. Report what the orders actually did.
-                          const st = (ksReport.flatten_statuses || {}) as Record<string, number>;
-                          const filled = st.filled ?? 0;
-                          const working = Object.entries(st)
-                            .filter(([k]) => k !== "filled")
-                            .map(([k, v]) => `${v} ${k}`);
-                          const sent = ksReport.positions_flattened ?? 0;
+                          // Logic lives in utils/killSwitchReport.ts so it can
+                          // be tested — this rendering is safety-critical and
+                          // was going out uncovered.
+                          const s = summarizeKillSwitchReport(ksReport);
                           return (
                             <span style={{ color: "var(--ink-dim)" }}>
-                              Sent <b style={{ color: "var(--ink)" }}>{sent}</b> closing order(s),
+                              Sent <b style={{ color: "var(--ink)" }}>{s.sent}</b> closing order(s),
                               cancelled <b style={{ color: "var(--ink)" }}>{ksReport.orders_cancelled ?? "?"}</b> open order(s).
                               {" "}
-                              <b style={{ color: filled === sent && sent > 0 ? "var(--green)" : "var(--amber)" }}>
-                                {filled} filled
+                              <b style={{ color: s.allClosed ? "var(--green)" : "var(--amber)" }}>
+                                {s.filled} filled
                               </b>
-                              {working.length > 0 && (
+                              {s.working.length > 0 && (
                                 <span style={{ color: "var(--amber)" }}>
-                                  {" "}— {working.join(", ")}; those positions are NOT closed yet.
+                                  {" "}— {s.working.join(", ")}; those positions are NOT closed yet.
                                   Verify at the broker.
                                 </span>
                               )}

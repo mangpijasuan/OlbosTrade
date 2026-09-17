@@ -95,7 +95,13 @@ async def test_a_broker_failure_reaches_the_caller():
     # its own lie. The errors are what stop it reading as a completed flatten.
     assert out["engaged"] is True
     assert out["positions_flattened"] == 0
-    assert out["errors"] == ["get_positions: connection refused"]
+    # LABEL, not the raw exception. This route has no require_api_key by design
+    # (emergency stop) and the frontend can serve without Basic Auth, so the
+    # response reaches unauthenticated callers; engage() builds these from
+    # str(exc), which carries broker internals and connection strings. The
+    # stage still identifies WHAT failed, which is what the operator needs.
+    assert out["errors"] == ["get_positions"]
+    assert "connection refused" not in str(out["errors"])
 
 
 @pytest.mark.asyncio
@@ -110,6 +116,10 @@ async def test_a_partial_flatten_is_not_rounded_up_to_success():
 
     assert out["positions_flattened"] == 2
     assert len(out["errors"]) == 1
+    assert out["errors"] == ["flatten_TSLA"], (
+        "the symbol must survive sanitising — an operator needs to know WHICH "
+        "position did not flatten; only the exception text is stripped"
+    )
 
 
 @pytest.mark.asyncio
