@@ -81,7 +81,6 @@ export const api = {
   // ── Paper Trading ─────────────────────────────────────────────────────────
   getPositions: () => request("/api/paper-trade/positions"),
   getPortfolio: () => request("/api/paper-trade/portfolio"),
-  toggleStrategy: (strategy: string) => request(`/api/paper-trade/toggle/${strategy}`, { method: "POST" }),
   getTradeHistory: (params?: { limit?: number; status?: string }) => {
     const q = new URLSearchParams();
     if (params?.limit != null) q.set("limit", String(params.limit));
