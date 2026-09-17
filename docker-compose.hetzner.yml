@@ -88,7 +88,34 @@ services:
       resources:
         limits:
           cpus: "1.5"
-          memory: 1500M
+          # 1500M killed this container five times between 2026-09-14 and
+          # 2026-09-17, unnoticed, because `restart: unless-stopped` brought it
+          # back each time:
+          #
+          #   Memory cgroup out of memory: Killed process ... (uvicorn)
+          #   anon-rss:1530596kB   constraint=CONSTRAINT_MEMCG
+          #
+          # CONSTRAINT_MEMCG, not the host: the machine is a CX33 with 7771M
+          # and had gigabytes free through every one of those kills. The
+          # container was strangled by its own cap while the box sat idle.
+          #
+          # This is headroom, NOT a diagnosis. At rest the backend sits around
+          # 322M, so something grows it ~1.2G and we do not yet know whether
+          # that is a leak or one heavy job — in one case it went from a
+          # restart to dead in two minutes. Install the sampler to find out:
+          #
+          #     bash deploy/hetzner/install_mem_sampler.sh
+          #
+          # It is NOT installed by this file or by update.sh — it is a host
+          # cron, same as install_backup_cron.sh. Until someone runs it there
+          # is no memory history, and this cap is a guess with headroom rather
+          # than a fix. If kills continue at 3000M, the number was never the
+          # problem and raising it again will not help.
+          #
+          # Budget (see tests/test_hetzner_memory_budget.py): this file's
+          # limits total 4024M. ibkr-gateway and olbos-caddy share the host
+          # from other compose projects and are not counted here.
+          memory: 3000M
     logging:
       driver: "json-file"
       options:

@@ -42,6 +42,57 @@ export function apiAuthHeaders(extra?: HeadersInit): HeadersInit {
   return headers;
 }
 
+/**
+ * An HTTP failure, with the status kept as a field rather than baked into a
+ * string.
+ *
+ * Callers need to branch on it: a 403 from a mutate route means the operator
+ * API key is missing or stale and the fix is to re-enter it, which is a wholly
+ * different message from "the broker rejected this order". Parsing that back
+ * out of "API error 403: Forbidden" is not something call sites should be
+ * doing.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/**
+ * Build an ApiError from a failed response, preferring the server's own words.
+ *
+ * FastAPI puts the useful half in {"detail": ...}; res.statusText is
+ * "Forbidden", which tells an operator nothing they can act on. The body is
+ * read defensively — an error response is not guaranteed to be JSON (nginx
+ * returns HTML for a 502), and a parse failure here would replace a real
+ * status with an unrelated SyntaxError.
+ */
+async function apiError(res: Response): Promise<ApiError> {
+  let detail = "";
+  try {
+    const body = await res.json();
+    if (typeof body?.detail === "string") detail = body.detail;
+    else if (body?.detail) detail = JSON.stringify(body.detail);
+  } catch {
+    /* not JSON — statusText it is */
+  }
+  const why = detail || res.statusText || "request failed";
+  // The status stays IN the message as well as on the field.
+  //
+  // `.status` is the right thing to branch on and callers are being moved to
+  // it, but several still classify by substring — RotationReviewPanel keys
+  // 403/423/409/404 to four different "nothing was closed because…" messages,
+  // and TerminalLayout keys 403 to the operator-key hint. A detail-only
+  // message silently downgraded all of those to generic failure text, which
+  // was a regression introduced by this very refactor and caught in review on
+  // PR #64. Keeping the prefix costs nothing and means no caller loses its
+  // meaning on a deploy boundary.
+  return new ApiError(res.status, `${res.status}: ${why}`);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -53,7 +104,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     credentials: "same-origin",
     headers: apiAuthHeaders(options?.headers),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
+  if (!res.ok) throw await apiError(res);
   return res.json();
 }
 

@@ -15,6 +15,7 @@ import ExecutionMonitor from "../trade-desk/execution/ExecutionMonitor";
 import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
 import { useTerminalNav } from "../components/TerminalNavContext";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
+import { canClosePosition, isCloseableType, isDbOnly } from "../utils/closeablePosition";
 import { Button } from "../components/ui";
 import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
 import { tint } from "../utils/tint";
@@ -494,16 +495,39 @@ export default function TradeDesk({
   const onNav = useTerminalNav();
   const [closingId, setClosingId] = useState<string | null>(null);
   const [closeMsg, setCloseMsg] = useState<string | null>(null);
+  const [closeFailed, setCloseFailed] = useState(false);
+
+  /**
+   * Turn a close failure into something the operator can act on.
+   *
+   * The 403 is the one worth naming. /api/trade-desk/close-position requires
+   * X-Api-Key, the browser only sends it when the operator key is in
+   * sessionStorage, and sessionStorage dies with the tab — so the common way
+   * to hit this is simply to have reopened the terminal. The hold-to-confirm
+   * animation still completes normally, which makes a rejected close look
+   * exactly like a dead button.
+   */
+  const closeFailureMessage = (e: any): string => {
+    if (e?.status === 403) {
+      return "operator API key missing or wrong — re-enter it on Risk Monitor " +
+             "(it is session-scoped and is cleared when the tab closes)";
+    }
+    if (e?.status === 429) return "rate limited — wait a moment and hold again";
+    return e?.message || "close failed";
+  };
 
   const closePosition = async (id: string, symbol: string) => {
     setClosingId(id);
     setCloseMsg(null);
+    setCloseFailed(false);
     try {
       const res: any = await api.closePosition(id);
+      setCloseFailed(false);
       setCloseMsg(`${symbol}: ${res.status === "filled" ? "closed" : `order ${res.status}`}`);
       refresh();
     } catch (e: any) {
-      setCloseMsg(`${symbol}: ${e?.message || "close failed"}`);
+      setCloseFailed(true);
+      setCloseMsg(`${symbol}: ${closeFailureMessage(e)}`);
     } finally {
       setClosingId(null);
     }
@@ -515,12 +539,15 @@ export default function TradeDesk({
   const closeUntrackedPosition = async (symbol: string) => {
     setClosingId(symbol);
     setCloseMsg(null);
+    setCloseFailed(false);
     try {
       const res: any = await api.closeUntrackedPosition(symbol);
+      setCloseFailed(false);
       setCloseMsg(`${symbol}: ${res.status === "filled" ? "closed" : `order ${res.status}`}`);
       refresh();
     } catch (e: any) {
-      setCloseMsg(`${symbol}: ${e?.message || "close failed"}`);
+      setCloseFailed(true);
+      setCloseMsg(`${symbol}: ${closeFailureMessage(e)}`);
     } finally {
       setClosingId(null);
     }
@@ -675,10 +702,20 @@ export default function TradeDesk({
         {tab === "positions" && (
           <div>
             {closeMsg && (
-              <div style={{
-                padding: "8px 16px", fontFamily: "var(--mono)", fontSize: 11,
-                color: "var(--amber)", borderBottom: "1px solid var(--line-dim)",
-              }}>
+              // Sticky, not static: this sits above the table, so a result for
+              // a row further down used to render off-screen. A rejected close
+              // then looked identical to a button that did nothing — the hold
+              // animation completes either way.
+              <div
+                role={closeFailed ? "alert" : "status"}
+                style={{
+                  position: "sticky", top: 0, zIndex: 2,
+                  padding: "8px 16px", fontFamily: "var(--mono)", fontSize: 11,
+                  color: closeFailed ? "var(--red)" : "var(--green)",
+                  background: "var(--bg)",
+                  borderBottom: `1px solid ${closeFailed ? "var(--red)" : "var(--line-dim)"}`,
+                }}
+              >
                 {closeMsg}
               </div>
             )}
@@ -701,8 +738,13 @@ export default function TradeDesk({
                 // to silently show a fabricated "+$0" instead of the real
                 // "unavailable" state MFE/MAE already show correctly below.
                 const pnl: number | null | undefined = p.unrealized_pnl;
-                const isEquity = p.spread_type === "equity_long" || p.spread_type === "equity_short";
-                const canClose = isEquity && !!p.id;
+                // Both halves live in utils/closeablePosition.ts, which is
+                // pinned to close_position()'s allowlist by a test. This gate
+                // was equity-only and had not moved when the backend gained
+                // options support, so every options row rendered the "close
+                // via broker" placeholder and offered no button at all — which
+                // an operator reads as a button that does nothing.
+                const canClose = canClosePosition(p);
                 // A broker position with no matching DB Trade row (e.g. an
                 // order-placement timeout that filled after the app already
                 // gave up on it) — asset_type now comes from the broker's
@@ -742,7 +784,9 @@ export default function TradeDesk({
                         />
                       ) : (
                         <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>
-                          {isEquity ? "no trade id" : "close via broker"}
+                          {isDbOnly(p)
+                            ? "not at broker"
+                            : isCloseableType(p) ? "no trade id" : "close via broker"}
                         </span>
                       )}
                     </td>

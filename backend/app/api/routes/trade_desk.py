@@ -387,6 +387,20 @@ async def get_kill_switch():
     return {"engaged": _is_kill_switch_active()}
 
 
+def _sanitize_kill_switch_errors(errors: list) -> list[str]:
+    """Reduce engage()'s raw error strings to a safe, still-useful label.
+
+    engage() formats these as "<stage>_<symbol>: <str(exc)>" — the stage and
+    symbol are operationally necessary (which position did not flatten), the
+    exception text is not, and on an unauthenticated route it is a disclosure.
+    Keep everything up to the first colon; drop the rest.
+    """
+    out: list[str] = []
+    for e in errors or []:
+        label = str(e).split(":", 1)[0].strip()
+        out.append(label or "unknown_error")
+    return out
+
 @router.post("/kill-switch")
 async def set_kill_switch(body: KillSwitchRequest):
     """
@@ -398,8 +412,37 @@ async def set_kill_switch(body: KillSwitchRequest):
     """
     if body.engaged:
         _kill_switch.set()
-        await kill_switch_service.engage("manual via trade-desk API")
+        result = await kill_switch_service.engage("manual via trade-desk API")
         logger.warning("KILL SWITCH ENGAGED via API — all order submission halted")
+        # Return what engage() actually DID, not just that it ran. Engaging is
+        # the only bulk-flatten path this app has, and the report is the only
+        # evidence the flatten happened: engage() attempts every step even when
+        # an earlier one fails, so it can pause the scheduler, fail to reach
+        # the broker, and still come back a "success". Worse, a second engage
+        # on an already-engaged switch returns at the top having flattened
+        # NOTHING. Collapsing all of that to {"engaged": true} told an operator
+        # watching positions stay open that the close-all had worked.
+        return {
+            "engaged": _is_kill_switch_active(),
+            "already_engaged": result.get("status") == "already_engaged",
+            "positions_flattened": result.get("positions_flattened", 0),
+            # positions_flattened counts every non-rejected order, including
+            # `submitted` (no fill yet), `partial` (residual exposure) and
+            # `cancelled`. Only `filled` means the position is actually gone,
+            # so the per-status tally travels with it — reporting the count
+            # alone would tell an operator the book is flat when it is not.
+            "flatten_statuses": result.get("flatten_statuses", {}),
+            "orders_cancelled": result.get("orders_cancelled", 0),
+            # Error LABELS, not raw exception text. This endpoint has no
+            # require_api_key by design (emergency stop), and the frontend can
+            # serve without Basic Auth when DASH_USER/DASH_PASS are blank — so
+            # an unauthenticated caller reaches this response. engage() builds
+            # its errors from str(exc), which carries broker internals,
+            # database DSNs and stack detail. The operator needs to know THAT
+            # something failed and roughly where; the full text belongs in the
+            # server log, which is already written by engage().
+            "errors": _sanitize_kill_switch_errors(result.get("errors", [])),
+        }
     else:
         result = await kill_switch_service.reset(body.authorization_code or "")
         if not result.get("reset"):
