@@ -264,6 +264,7 @@ export const api = {
     request(`/api/trade-desk/approve/${id}`, { method: "POST" }),
   rejectSignal:        (id: string) =>
     request(`/api/trade-desk/reject/${id}`, { method: "POST" }),
+  rejectAllPending:    () => request("/api/trade-desk/reject-all", { method: "POST" }),
   getExecutionLog:     () => request("/api/trade-desk/execution-log"),
 
   // ── Mode Analytics ──────────────────────────────────────────────────────────
