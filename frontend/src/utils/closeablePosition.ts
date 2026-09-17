@@ -23,6 +23,24 @@ export const CLOSEABLE_SPREAD_TYPES = [
 export interface ClosablePositionish {
   spread_type?: string | null;
   id?: string | null;
+  /** "db_only" = an open DB Trade row with no matching broker position. */
+  source?: string | null;
+}
+
+/**
+ * True for a row the broker is not actually holding.
+ *
+ * paper_trade.py emits these for open Trade rows with no matching broker
+ * position. They carry a real id and a real spread_type, so every other check
+ * here passes — and a "close" for a position that does not exist is an OPENING
+ * trade in the opposite direction.
+ *
+ * The backend refuses these on both paths now (close_equity_trade has since
+ * 2026-08-26, close_options_trade as of PR #64), so this is the second line,
+ * not the only one. Its job is to not offer an action that can only fail.
+ */
+export function isDbOnly(p: ClosablePositionish): boolean {
+  return (p.source || "").toLowerCase() === "db_only";
 }
 
 export function normalizeSpreadType(p: ClosablePositionish): string {
@@ -47,5 +65,5 @@ export function isCloseableType(p: ClosablePositionish): boolean {
  * instead.
  */
 export function canClosePosition(p: ClosablePositionish): boolean {
-  return isCloseableType(p) && !!p.id;
+  return isCloseableType(p) && !!p.id && !isDbOnly(p);
 }

@@ -15,7 +15,7 @@ import ExecutionMonitor from "../trade-desk/execution/ExecutionMonitor";
 import type { TradeDeskTab } from "../trade-desk/TradeDeskTabs";
 import { useTerminalNav } from "../components/TerminalNavContext";
 import HoldToConfirmButton from "../components/HoldToConfirmButton";
-import { canClosePosition, isCloseableType } from "../utils/closeablePosition";
+import { canClosePosition, isCloseableType, isDbOnly } from "../utils/closeablePosition";
 import { Button } from "../components/ui";
 import ManualTradePanel from "../trade-desk/orders/ManualTradePanel";
 import { tint } from "../utils/tint";
@@ -784,7 +784,9 @@ export default function TradeDesk({
                         />
                       ) : (
                         <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--ink-faint)" }}>
-                          {isCloseableType(p) ? "no trade id" : "close via broker"}
+                          {isDbOnly(p)
+                            ? "not at broker"
+                            : isCloseableType(p) ? "no trade id" : "close via broker"}
                         </span>
                       )}
                     </td>

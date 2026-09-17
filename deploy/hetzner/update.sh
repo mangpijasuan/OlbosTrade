@@ -53,10 +53,32 @@ echo "[5/5] Reclaiming build cache..."
 #
 # Non-fatal: the deploy succeeded at step 4. `set -e` is on, and failing the
 # whole run over cleanup would report a working deployment as broken.
-docker builder prune -af  || echo "      ⚠ build cache prune failed — check 'docker system df'"
-docker image   prune -f   || echo "      ⚠ dangling image prune failed"
-echo "      ✅ Reclaimed"
-docker system df
+# `--filter until=72h`, not a bare -af. `docker builder prune` operates on the
+# DEFAULT BUILDER's cache, which is shared by every compose project on this
+# host — not just OlbosTrade. The --no-cache argument for discarding our own
+# layers says nothing about a sibling project's cache, and nuking it would
+# force expensive full rebuilds elsewhere. 72h clears the accumulation (our
+# garbage is regenerated every deploy and is never reused) while sparing
+# anything a neighbour has touched recently. Caught in review on PR #64.
+CLEANUP_OK=1
+docker builder prune -af --filter until=72h \
+  || { CLEANUP_OK=0; echo "      ⚠ build cache prune failed"; }
+docker image prune -f \
+  || { CLEANUP_OK=0; echo "      ⚠ dangling image prune failed"; }
+
+# `|| true`: set -euo pipefail is on and this is a diagnostic. An unguarded
+# failure here would exit non-zero and report a SUCCESSFUL deploy as failed —
+# the exact thing the guards above exist to prevent.
+docker system df || true
+
+# Say what happened. An unconditional "✅ Reclaimed" after two failed prunes
+# tells the operator the disk problem is handled when nothing was freed.
+if [ "$CLEANUP_OK" -eq 1 ]; then
+  echo "      ✅ Reclaimed"
+else
+  echo "      ⚠ Cleanup INCOMPLETE — deploy is fine, but disk was not reclaimed."
+  echo "        Check the 'docker system df' output above."
+fi
 
 echo ""
 echo "  ✅ Update complete"

@@ -412,6 +412,12 @@ async def set_kill_switch(body: KillSwitchRequest):
             "engaged": _is_kill_switch_active(),
             "already_engaged": result.get("status") == "already_engaged",
             "positions_flattened": result.get("positions_flattened", 0),
+            # positions_flattened counts every non-rejected order, including
+            # `submitted` (no fill yet), `partial` (residual exposure) and
+            # `cancelled`. Only `filled` means the position is actually gone,
+            # so the per-status tally travels with it — reporting the count
+            # alone would tell an operator the book is flat when it is not.
+            "flatten_statuses": result.get("flatten_statuses", {}),
             "orders_cancelled": result.get("orders_cancelled", 0),
             "errors": result.get("errors", []),
         }

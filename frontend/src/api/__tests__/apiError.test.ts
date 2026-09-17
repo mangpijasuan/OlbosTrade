@@ -61,7 +61,11 @@ describe("a failed call keeps the status as a field", () => {
     // The field is the point: a message-substring check would pass for a
     // plain Error and leave every call site unable to branch.
     expect(err.status).toBe(403);
-    expect(err.message).toBe("Invalid or missing API key");
+    // Detail AND the status. The status stays in the text because callers that
+    // classify by substring (RotationReviewPanel's 403/423/409/404 branches,
+    // TerminalLayout's 403) would otherwise silently fall through to generic
+    // failure text — a regression this refactor introduced and review caught.
+    expect(err.message).toBe("403: Invalid or missing API key");
   });
 
   it("falls back to statusText when the body is not JSON (nginx 502 HTML)", async () => {
@@ -71,7 +75,7 @@ describe("a failed call keeps the status as a field", () => {
 
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(502);
-    expect(err.message).toBe("Bad Gateway");
+    expect(err.message).toBe("502: Bad Gateway");
     // A parse failure must not surface as a SyntaxError in place of the status.
     expect(err.name).toBe("ApiError");
   });
@@ -83,6 +87,7 @@ describe("a failed call keeps the status as a field", () => {
 
     expect(err.status).toBe(422);
     expect(err.message).toContain("bad id");
+    expect(err.message).toContain("422");
     expect(err.message).not.toContain("[object Object]");
   });
 

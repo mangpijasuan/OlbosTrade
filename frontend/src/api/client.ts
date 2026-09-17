@@ -79,7 +79,18 @@ async function apiError(res: Response): Promise<ApiError> {
   } catch {
     /* not JSON — statusText it is */
   }
-  return new ApiError(res.status, detail || res.statusText || `HTTP ${res.status}`);
+  const why = detail || res.statusText || "request failed";
+  // The status stays IN the message as well as on the field.
+  //
+  // `.status` is the right thing to branch on and callers are being moved to
+  // it, but several still classify by substring — RotationReviewPanel keys
+  // 403/423/409/404 to four different "nothing was closed because…" messages,
+  // and TerminalLayout keys 403 to the operator-key hint. A detail-only
+  // message silently downgraded all of those to generic failure text, which
+  // was a regression introduced by this very refactor and caught in review on
+  // PR #64. Keeping the prefix costs nothing and means no caller loses its
+  // meaning on a deploy boundary.
+  return new ApiError(res.status, `${res.status}: ${why}`);
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

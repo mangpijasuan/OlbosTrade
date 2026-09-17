@@ -19,6 +19,7 @@ import {
   CLOSEABLE_SPREAD_TYPES,
   canClosePosition,
   isCloseableType,
+  isDbOnly,
   isEquityPosition,
 } from "../closeablePosition";
 
@@ -60,5 +61,41 @@ describe("isEquityPosition", () => {
     expect(isEquityPosition({ spread_type: "put" })).toBe(false);
     // Still closeable — just not an equity.
     expect(isCloseableType({ spread_type: "put" })).toBe(true);
+  });
+});
+
+describe("DB-only rows are never offered a close", () => {
+  // paper_trade.py emits these for an open Trade row with no matching broker
+  // position. They carry a real id and a real spread_type, so every other
+  // check passes — and "closing" a position that is not held is an OPENING
+  // trade in the other direction. close_options_trade() read its strikes
+  // straight from the DB row and submitted blind until PR #64 added a
+  // live-position guard; this is the second line of that defence.
+  it("withholds the button for a db_only options row", () => {
+    expect(canClosePosition({ spread_type: "put", id: "t1", source: "db_only" })).toBe(false);
+    expect(canClosePosition({ spread_type: "call", id: "t1", source: "db_only" })).toBe(false);
+  });
+
+  it("withholds it for a db_only equity row too", () => {
+    expect(canClosePosition({ spread_type: "equity_long", id: "t1", source: "db_only" })).toBe(false);
+  });
+
+  it("still allows rows the broker actually holds", () => {
+    expect(canClosePosition({ spread_type: "put", id: "t1" })).toBe(true);
+    expect(canClosePosition({ spread_type: "put", id: "t1", source: "broker" })).toBe(true);
+    expect(canClosePosition({ spread_type: "put", id: "t1", source: null })).toBe(true);
+  });
+
+  it("identifies db_only regardless of case", () => {
+    expect(isDbOnly({ source: "DB_ONLY" })).toBe(true);
+    expect(isDbOnly({ source: "db_only" })).toBe(true);
+    expect(isDbOnly({ source: "" })).toBe(false);
+    expect(isDbOnly({})).toBe(false);
+  });
+
+  it("leaves the TYPE check alone — db_only is about holding, not type", () => {
+    // The placeholder text distinguishes these: "not at broker" vs the
+    // type-based "close via broker", so the two must stay separable.
+    expect(isCloseableType({ spread_type: "put", source: "db_only" })).toBe(true);
   });
 });

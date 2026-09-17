@@ -397,6 +397,39 @@ async def close_options_trade(
         time_in_force="DAY",
     )
 
+    # Refuse to "close" something the broker is not holding.
+    #
+    # Everything above is read from the DB Trade row, and a closing combo for a
+    # position that does not exist is an OPENING trade in the opposite
+    # direction — it creates exposure instead of removing it. The positions
+    # feed emits DB-only rows (source="db_only", tracked=True, from
+    # paper_trade.py) for open Trade rows with no matching broker position, and
+    # those reach this function with a perfectly valid-looking id and strikes.
+    #
+    # close_equity_trade() has guarded this since 2026-08-26, when DB/broker
+    # quantity drift was root-caused in production; it sources side and size
+    # from get_equity_positions() and raises if the symbol is already flat.
+    # This path had no equivalent. Caught in review on PR #64.
+    #
+    # The check is deliberately coarse — any live, non-zero option position on
+    # this underlying. It catches "there is nothing here", which is the actual
+    # hazard, without trying to match leg-by-leg: strike and expiration types
+    # vary across broker adapters, and an over-strict comparison would refuse
+    # legitimate risk-REDUCING closes, which is its own harm.
+    live = await broker.get_positions()
+    has_live_option = any(
+        getattr(p, "asset_type", "option") == "option"
+        and p.underlying == ticker
+        and int(p.quantity or 0) != 0
+        for p in live
+    )
+    if not has_live_option:
+        raise RuntimeError(
+            f"{ticker} has no live options position at the broker — nothing to "
+            f"close (trade_id={trade_id}). The DB row is open but the broker is "
+            f"flat; submitting this combo would OPEN a position, not close one."
+        )
+
     cancelled = await broker.cancel_open_orders(ticker)
     result = await ibkr_coordinator.submit(
         Priority.P0,

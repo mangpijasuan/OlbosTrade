@@ -296,7 +296,12 @@ function TickerStrip({ onToggle, sidebarExpanded, isMobile }: {
       })
       .catch((err: any) => {
         const msg = String(err?.message || err || "");
-        const denied = msg.includes("403") || msg.toLowerCase().includes("forbidden");
+        // Prefer ApiError.status; the substring check stays as a fallback for
+        // anything that is not an ApiError (a network failure, a throw from
+        // outside the client).
+        const denied = err?.status === 403
+          || msg.includes("403")
+          || msg.toLowerCase().includes("forbidden");
         // Lead with the mode still in force. "Change failed" alone leaves the
         // operator to infer the current state, which is the thing they most
         // need to be certain about.

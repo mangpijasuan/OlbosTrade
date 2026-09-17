@@ -121,3 +121,37 @@ async def test_engage_still_sets_the_local_mirror():
 
     assert td._kill_switch.is_set()
     engage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_the_per_status_tally_reaches_the_caller():
+    """"Flattened N" is not a safe claim; the statuses are what make it checkable.
+
+    positions_flattened counts every non-rejected order, so `submitted`
+    (accepted, no fill yet), `partial` (residual exposure the caller MUST
+    handle) and `cancelled` all land in it. Only `filled` means the position is
+    gone. Reporting the count alone told an operator the book was flat while
+    orders were still working — caught in review on PR #64.
+    """
+    engage = _engage_returning({
+        "positions_flattened": 3,
+        "flatten_statuses": {"filled": 1, "submitted": 1, "partial": 1},
+        "orders_cancelled": 0,
+        "errors": [],
+    })
+    with patch.object(td.kill_switch_service, "engage", engage):
+        out = await set_kill_switch(KillSwitchRequest(engaged=True))
+
+    assert out["positions_flattened"] == 3
+    assert out["flatten_statuses"] == {"filled": 1, "submitted": 1, "partial": 1}
+    # The distinction that matters: three orders went out, one position closed.
+    assert out["flatten_statuses"]["filled"] == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_statuses_do_not_break_the_response():
+    """An older service payload must not 500 the route."""
+    engage = _engage_returning({"positions_flattened": 1, "orders_cancelled": 0, "errors": []})
+    with patch.object(td.kill_switch_service, "engage", engage):
+        out = await set_kill_switch(KillSwitchRequest(engaged=True))
+    assert out["flatten_statuses"] == {}

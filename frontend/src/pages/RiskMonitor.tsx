@@ -273,6 +273,13 @@ export default function RiskMonitor() {
       // faith.
       const res: any = await api.setTradeDeskKillSwitch(true);
       setKsReport(res);
+      // Trust the POST's own answer for engaged state before the refresh.
+      // loadKs() swallows its errors, so a failed follow-up GET used to leave
+      // `ks` null — and since the report renders inside the ksEngaged branch,
+      // the flatten result vanished even though the switch WAS engaged and the
+      // response already said so authoritatively. The GET is a best-effort
+      // refresh, not the source of truth for a call that just succeeded.
+      if (res && typeof res.engaged === "boolean") setKs(res);
       await loadKs();
     }
     catch (e: any) { setKsError(e?.message || "Failed to engage kill switch"); }
@@ -496,10 +503,36 @@ export default function RiskMonitor() {
                           first if you need positions closed.
                         </span>
                       ) : (
-                        <span style={{ color: "var(--ink-dim)" }}>
-                          Flattened <b style={{ color: "var(--ink)" }}>{ksReport.positions_flattened ?? "?"}</b> position(s),
-                          cancelled <b style={{ color: "var(--ink)" }}>{ksReport.orders_cancelled ?? "?"}</b> order(s).
-                        </span>
+                        (() => {
+                          // "Flattened N" is not a safe thing to say. The
+                          // service counts every non-rejected order, so
+                          // `submitted` (accepted, no fill), `partial`
+                          // (residual exposure) and `cancelled` are all in
+                          // that number. Only `filled` means the position is
+                          // gone. Report what the orders actually did.
+                          const st = (ksReport.flatten_statuses || {}) as Record<string, number>;
+                          const filled = st.filled ?? 0;
+                          const working = Object.entries(st)
+                            .filter(([k]) => k !== "filled")
+                            .map(([k, v]) => `${v} ${k}`);
+                          const sent = ksReport.positions_flattened ?? 0;
+                          return (
+                            <span style={{ color: "var(--ink-dim)" }}>
+                              Sent <b style={{ color: "var(--ink)" }}>{sent}</b> closing order(s),
+                              cancelled <b style={{ color: "var(--ink)" }}>{ksReport.orders_cancelled ?? "?"}</b> open order(s).
+                              {" "}
+                              <b style={{ color: filled === sent && sent > 0 ? "var(--green)" : "var(--amber)" }}>
+                                {filled} filled
+                              </b>
+                              {working.length > 0 && (
+                                <span style={{ color: "var(--amber)" }}>
+                                  {" "}— {working.join(", ")}; those positions are NOT closed yet.
+                                  Verify at the broker.
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()
                       )}
                       {Array.isArray(ksReport.errors) && ksReport.errors.length > 0 && (
                         <div style={{ color: "var(--red)", marginTop: 6 }}>

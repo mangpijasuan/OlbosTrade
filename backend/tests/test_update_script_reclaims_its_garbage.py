@@ -49,13 +49,29 @@ UPDATE_SH = REPO / "deploy" / "hetzner" / "update.sh"
 
 
 def executable_lines() -> list[str]:
-    """update.sh with comment lines and blanks removed — what bash actually runs."""
-    out = []
+    """update.sh as bash sees it: comments and blanks dropped, backslash-continued
+    lines joined.
+
+    Joining matters. A prune written across a continuation puts the command on
+    one physical line and its `|| { ... }` guard on the next, so a per-line
+    check for `||` would report the guard missing on a script that has it —
+    and a per-line check for a flag would miss one moved past the break. Both
+    are false readings of a correct file, which is the same class of error as
+    a guard matching its own prose.
+    """
+    out: list[str] = []
+    pending = ""
     for line in UPDATE_SH.read_text().splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        out.append(stripped)
+        if stripped.endswith("\\"):
+            pending += stripped[:-1].rstrip() + " "
+            continue
+        out.append((pending + stripped).strip())
+        pending = ""
+    if pending:
+        out.append(pending.strip())
     return out
 
 
@@ -76,12 +92,25 @@ def test_the_script_was_actually_parsed():
 
 
 def test_a_no_cache_build_is_followed_by_a_cache_prune():
-    build = index_of(r"docker compose .*build .*--no-cache")
-    if build is None:
+    # --no-cache is detected SEPARATELY from the build command. Keying the skip
+    # off an unparseable build line means a formatting change — wrapping the
+    # build across a continuation, reordering its flags — silently disables
+    # this guard instead of failing it. Fail-open in a test that exists to
+    # catch a 40GB disk leak is worse than no test, because it reads as
+    # covered. Caught in review on PR #64.
+    uses_no_cache = any("--no-cache" in l for l in executable_lines())
+    if not uses_no_cache:
         # Dropping --no-cache is a legitimate fix for the same problem: the
         # cache would then be USED rather than orphaned. Nothing to guard.
         import pytest
         pytest.skip("update.sh no longer builds with --no-cache")
+
+    build = index_of(r"docker compose .*build")
+    assert build is not None, (
+        "update.sh passes --no-cache but no `docker compose ... build` line "
+        "could be located. The guard below orders the prune against the build, "
+        "so an unparseable build line must fail here rather than skip."
+    )
 
     prune = index_of(r"docker\s+builder\s+prune")
     assert prune is not None, (
@@ -99,7 +128,14 @@ def test_a_no_cache_build_is_followed_by_a_cache_prune():
 
 def test_image_prune_stays_dangling_only():
     lines = executable_lines()
-    greedy = [l for l in lines if re.search(r"docker\s+image\s+prune\s+(-\w*a|--all)", l)]
+    # Any option position, not just the first. `docker image prune -f -a` is
+    # the same destructive command and the old pattern — which anchored `-a`
+    # immediately after `prune` — let it through. Caught in review on PR #64.
+    greedy = [
+        l for l in lines
+        if re.search(r"docker\s+image\s+prune\b", l)
+        and re.search(r"(?:^|\s)(?:--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)", l)
+    ]
     assert not greedy, (
         f"update.sh runs an image prune with -a: {greedy}. That evicts every "
         f"image without a RUNNING container, and this host carries other "
