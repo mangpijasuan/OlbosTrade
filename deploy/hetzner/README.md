@@ -118,6 +118,15 @@ curl -s https://trading.yourdomain.com/api/guardrails/status
 
 Open **https://trading.yourdomain.com** in your browser.
 
+**Without a domain**, the frontend is also published directly on the host at
+port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
+`http://<YOUR_HETZNER_IP>:8080/terminal`. That number comes from the
+`ports: ["8080:3000"]` entry on the `frontend` service in
+`docker-compose.hetzner.yml`; if you change it there, change it here. The
+backend is NOT published to the host — it is reachable only over the internal
+Docker network, which is why `curl localhost:8000` on the server returns
+nothing and `docker exec olbostrade-backend curl localhost:8000/health` works.
+
 ### 8. Set up automated backups
 
 `backup_db.sh` dumps the database daily but does nothing until its cron

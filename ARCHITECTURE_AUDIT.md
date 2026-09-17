@@ -89,7 +89,17 @@ once reviewed.
 | Frontend type check (`tsc --noEmit`) | **Clean** — no errors |
 | Frontend test suite (`vitest`) | **Green** — 9 files / 64 tests pass |
 | Frontend production build | **Succeeds** — see bundle-size note below |
-| Production server (`46.224.0.213:8081`) | **Healthy** — `/api/health` ok, kill switch clear, no new errors in `docker logs` beyond pre-existing IBKR market-data-subscription warnings (unrelated to app code) |
+| Production server (`46.224.0.213:8080`) | **Healthy** — `/api/health` ok, kill switch clear, no new errors in `docker logs` beyond pre-existing IBKR market-data-subscription warnings (unrelated to app code) |
+
+> **Correction (2026-09-17):** the production row above read `:8081` until
+> today. The published port has been `8080:3000` in `docker-compose.hetzner.yml`
+> since that file was first committed, and the running server publishes 8080 —
+> so this line was wrong when written, not stale. It cost real time during an
+> outage: the operator's bookmark pointed at `:8081`, the app appeared dead from
+> the browser, and the wrong port also led the investigation toward "the server
+> config has diverged from the repo" when it had not — this document had.
+> `backend/tests/test_docs_use_the_published_port.py` now fails on any doc that
+> names a port the compose file does not publish.
 
 **But "runs smoothly" and "safe for real capital" are different questions.**
 The six P0 findings from the 2026-07-16 pass were genuinely fixed (verified
