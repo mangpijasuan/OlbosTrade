@@ -94,8 +94,9 @@ async def test_fetch_portfolio_state_fail_closed():
 async def test_kill_switch_get_set():
     td._kill_switch.clear()
     assert (await get_kill_switch())["engaged"] is False
-    with patch.object(td.kill_switch_service, "engage", new=AsyncMock()), \
-         patch.object(td.kill_switch_service, "reset", new=AsyncMock()):
+    with patch.object(td.kill_switch_service, "engage", new=AsyncMock(return_value={})), \
+         patch.object(td.kill_switch_service, "reset",
+                      new=AsyncMock(return_value={"reset": True})):
         out = await set_kill_switch(KillSwitchRequest(engaged=True))
         assert out["engaged"] is True
         await set_kill_switch(KillSwitchRequest(engaged=False))
