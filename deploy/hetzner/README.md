@@ -51,6 +51,16 @@ Fill in these required values:
 |----------|--------------|
 | `OLBOSTRADE_DB_PASSWORD` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `OLBOS_API_KEY` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `TRUSTED_PROXY_SECRET` | `openssl rand -hex 32` |
+
+`TRUSTED_PROXY_SECRET` is a shared secret between nginx and the backend, and
+the stack will not start without it — `docker-compose.hetzner.yml` declares it
+`${TRUSTED_PROXY_SECRET:?...}`, so Compose aborts rather than booting into a
+state where the login rate limiter cannot tell callers apart. nginx stamps it
+onto every proxied request; the backend honours `X-Forwarded-For` only when
+that header matches, and otherwise falls back to the socket peer. It has to be
+set on BOTH the backend and frontend services, which the compose file already
+does from this one variable — set it once here.
 
 `OLBOSTRADE_DB_PASSWORD` is the database password variable referenced by
 `docker-compose.hetzner.yml` — it authenticates as the `olbosquant` role
@@ -129,6 +139,14 @@ bash deploy/hetzner/update.sh
 ```
 
 This pulls latest code, rebuilds, restarts, and runs any new migrations.
+
+**Upgrading a stack created before `TRUSTED_PROXY_SECRET` existed:** add it to
+`backend/.env.prod` before running `update.sh`, or Compose refuses to start and
+the app goes down on what looks like a routine update:
+
+```bash
+echo "TRUSTED_PROXY_SECRET=$(openssl rand -hex 32)" >> backend/.env.prod
+```
 
 ---
 

@@ -219,7 +219,19 @@ class TestTheRunningStackCanSeeTheCaller:
             "Remove the port, or scope the trusted proxies."
         )
 
-    UVICORN_FLAGS = ("--host", "--port", "--workers", "--loop", "--access-log")
+    #: (flag, required value); None means a bare flag that takes no value.
+    #:
+    #: The VALUE is the invariant, not the flag. `"--workers" in source` is
+    #: satisfied by `--workers 2` — the precise regression the docstring below
+    #: calls out as the one that hurts quietly. This guard asserted the label
+    #: and not the value until Copilot caught it on PR #63.
+    UVICORN_FLAGS = (
+        ("--host", "0.0.0.0"),
+        ("--port", "8000"),
+        ("--workers", "1"),
+        ("--loop", "uvloop"),
+        ("--access-log", None),
+    )
 
     def test_the_uvicorn_flags_reach_uvicorn_however_they_get_there(self):
         """Guards the invariant, not the mechanism that currently satisfies it.
@@ -241,12 +253,29 @@ class TestTheRunningStackCanSeeTheCaller:
         source = block if overrides else read("backend/Dockerfile")
         where = "the compose command: override" if overrides else "backend/Dockerfile"
 
-        for flag in self.UVICORN_FLAGS:
-            assert flag in source, (
+        # Both carriers tokenise alike once quotes, commas and line
+        # continuations are gone: the Dockerfile's JSON exec form
+        # ("--workers", "1") and a compose shell string (--workers 1).
+        tokens = re.sub(r"""["',\\]""", " ", source).split()
+
+        for flag, value in self.UVICORN_FLAGS:
+            at = [i for i, t in enumerate(tokens) if t == flag]
+            assert at, (
                 f"{flag} is missing from {where}. `command:` replaces the image "
                 f"CMD wholesale, so an override must repeat every flag the "
                 f"Dockerfile sets."
             )
+            if value is None:
+                continue
+            # Every occurrence, not just the first: a second one further down
+            # is what actually reaches uvicorn.
+            for i in at:
+                actual = tokens[i + 1] if i + 1 < len(tokens) else None
+                assert actual == value, (
+                    f"{where} passes `{flag} {actual}`, not `{flag} {value}`. "
+                    f"A presence check on {flag} alone passes for any value, "
+                    f"which is how a wrong one ships unnoticed."
+                )
 
 
 class TestStacksThatExposeTheBackendDoNotTrustTheHeader:
