@@ -251,8 +251,20 @@ def _resolve_one(row, hist, max_hold_days: int):
     a conservative tie-break rather than assuming the best case for a day
     we only have a high/low/close for, not an intraday path.
 
-    Returns (status, exit_price, resolved_at, days_elapsed, mfe_pct,
-    mae_pct) or None if still unresolved within the bars available.
+    Returns (status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct,
+    mfe_full_pct, mae_full_pct, full_window_days) or None if still unresolved
+    within the bars available.
+
+    RESOLUTION IS UNCHANGED by the uncensored excursions. status, exit_price,
+    resolved_at and days_elapsed are exactly what they were — they define the
+    trade's result under the rules as they stand, and redefining them would
+    silently reinterpret every historical row.
+
+    full_window_days is how many bars the uncensored measurement actually
+    covered. A signal resolved yesterday has a day or two of history, so its
+    "uncensored" excursion is itself censored — by data availability rather
+    than by the target. Callers must require a complete window before
+    aggregating, or this just moves the censoring somewhere less visible.
     """
     entry_date = row.generated_at.date()
     action = row.action
@@ -260,8 +272,19 @@ def _resolve_one(row, hist, max_hold_days: int):
     stop = float(row.stop_price)
     target = float(row.target_price)
 
+    # Censored at resolution — meaning deliberately unchanged, so rows written
+    # before and after this change stay comparable on max_favorable_pct.
     mfe_pct = 0.0
     mae_pct = 0.0
+    # Measured across the whole window regardless of when resolution happened.
+    # This is what _censoring_ceiling_r() exists to work around: the walk used
+    # to RETURN at the target touch, so a target_hit row recorded that the
+    # signal reached 2.0R and never whether it would have gone on to 3.0R, and
+    # every counterfactual above the nearest hit target became unanswerable.
+    mfe_full_pct = 0.0
+    mae_full_pct = 0.0
+
+    resolution = None
     days_elapsed = 0
 
     for ts, bar in hist.iterrows():
@@ -278,17 +301,62 @@ def _resolve_one(row, hist, max_hold_days: int):
             fav, adv = (entry - low) / entry, (entry - high) / entry
             stop_hit, target_hit = high >= stop, low <= target
 
-        mfe_pct = max(mfe_pct, fav)
-        mae_pct = min(mae_pct, adv)
+        mfe_full_pct = max(mfe_full_pct, fav)
+        mae_full_pct = min(mae_full_pct, adv)
 
-        if stop_hit:
-            return "stop_hit", stop, _to_utc(ts), days_elapsed, mfe_pct, mae_pct
-        if target_hit:
-            return "target_hit", target, _to_utc(ts), days_elapsed, mfe_pct, mae_pct
+        if resolution is None:
+            mfe_pct = max(mfe_pct, fav)
+            mae_pct = min(mae_pct, adv)
+            # Same order, same stop-wins tie-break as before.
+            if stop_hit:
+                resolution = ("stop_hit", stop, _to_utc(ts), days_elapsed,
+                              mfe_pct, mae_pct)
+            elif target_hit:
+                resolution = ("target_hit", target, _to_utc(ts), days_elapsed,
+                              mfe_pct, mae_pct)
+            elif days_elapsed >= max_hold_days:
+                resolution = ("expired", close, _to_utc(ts), days_elapsed,
+                              mfe_pct, mae_pct)
+
+        # A FIXED window for every row. "To the end of available history"
+        # would give an old signal a longer look than a recent one and make
+        # the two incomparable.
         if days_elapsed >= max_hold_days:
-            return "expired", close, _to_utc(ts), days_elapsed, mfe_pct, mae_pct
+            break
 
-    return None
+    if resolution is None:
+        return None
+    return (*resolution, mfe_full_pct, mae_full_pct, days_elapsed)
+
+
+def _resolved_payload(row_id, resolution) -> dict:
+    """Map a _resolve_one result onto the columns it is written to.
+
+    Extracted so the MAPPING is testable. It is the part that fails silently:
+    the censored and uncensored excursions are floats of the same shape, and
+    swapping them would launder a truncated number into the column whose
+    entire purpose is to be untruncated, with nothing to catch it. Mutation
+    testing found exactly that hole while this was inline.
+    """
+    (status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct,
+     mfe_full_pct, mae_full_pct, full_window_days) = resolution
+    return {
+        "id": row_id,
+        "status": status,
+        "exit_price": Decimal(str(round(exit_price, 4))),
+        "resolved_at": resolved_at,
+        "days_to_resolve": days_elapsed,
+        # CENSORED at resolution. Unchanged meaning.
+        "max_favorable_pct": Decimal(str(round(mfe_pct, 4))),
+        "max_adverse_pct": Decimal(str(round(mae_pct, 4))),
+        # UNCENSORED, over a fixed max_hold_days window. NULL on every row
+        # resolved before this shipped; that NULL separates measurable rows
+        # from unmeasurable ones and must never be backfilled from the
+        # censored value.
+        "mfe_full_pct": Decimal(str(round(mfe_full_pct, 4))),
+        "mae_full_pct": Decimal(str(round(mae_full_pct, 4))),
+        "full_window_days": full_window_days,
+    }
 
 
 async def check_pending_outcomes(
@@ -413,17 +481,8 @@ async def check_pending_outcomes(
             if resolution is None:
                 summary["still_pending"] += 1
                 continue
-            status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct = resolution
-            summary[status] += 1
-            resolved_payloads.append({
-                "id": row.id,
-                "status": status,
-                "exit_price": Decimal(str(round(exit_price, 4))),
-                "resolved_at": resolved_at,
-                "days_to_resolve": days_elapsed,
-                "max_favorable_pct": Decimal(str(round(mfe_pct, 4))),
-                "max_adverse_pct": Decimal(str(round(mae_pct, 4))),
-            })
+            summary[resolution[0]] += 1
+            resolved_payloads.append(_resolved_payload(row.id, resolution))
 
         if len(checked_ids) >= _FLUSH_EVERY:
             await _flush()
@@ -508,14 +567,41 @@ def _realised_r(o: dict) -> Optional[float]:
     return move / risk
 
 
+def _is_uncensored(o: dict, max_hold_days: int = DEFAULT_MAX_HOLD_DAYS) -> bool:
+    """True when this row's excursion was measured over a COMPLETE window.
+
+    Two ways a row fails this. It predates the uncensoring fix, so
+    mfe_full_pct is NULL and nothing can recover it — the excursion past the
+    target was never recorded and the bars are gone. Or it resolved so
+    recently that fewer than max_hold_days bars existed when it was measured,
+    which is censoring by data availability rather than by the target: the
+    same understatement wearing different clothes.
+    """
+    if o.get("mfe_full_pct") is None:
+        return False
+    window = o.get("full_window_days")
+    return window is not None and int(window) >= max_hold_days
+
+
 def _mfe_r(o: dict) -> Optional[float]:
     """Max favourable excursion in R — how far it went before it turned.
 
-    max_favorable_pct is a fraction OF ENTRY (see _resolve_one), so it has to
+    Prefers the UNCENSORED excursion when the row has a complete one. For a
+    target_hit row the censored value is capped at its own target, so it says
+    the signal reached 2.0R and stays silent on whether it would have reached
+    3.0R — which is the only thing a target-placement question is asking.
+
+    Falls back to max_favorable_pct for rows written before the fix. Those
+    rows understate winners, so an aggregate mixing the two is conservative
+    about how far the system runs, never optimistic. _censoring_ceiling_r()
+    is what stops the counterfactual over-claiming on that mix.
+
+    Both columns are a fraction OF ENTRY (see _resolve_one), so either has to
     be taken back to price before it can be divided by risk.
     """
     risk = _risk_per_share(o)
-    mfe, entry = o.get("max_favorable_pct"), o.get("entry_price")
+    entry = o.get("entry_price")
+    mfe = o.get("mfe_full_pct") if _is_uncensored(o) else o.get("max_favorable_pct")
     if risk is None or mfe is None or entry is None:
         return None
     return (float(mfe) * float(entry)) / risk
@@ -557,10 +643,17 @@ def _censoring_ceiling_r(outcomes: list[dict]) -> float:
     stop_hit and expired rows are NOT censored — the walk continued past any
     favourable excursion to the stop or the horizon — so the limit is set by
     the nearest target among the rows that did hit one.
+
+    A target_hit row with a COMPLETE uncensored excursion no longer
+    constrains this: the walk continued past its target, so it does record
+    whether the move went on to 3.0R. Only rows still carrying a censored MFE
+    set the limit, which means the ceiling lifts on its own as uncensored
+    rows accumulate — and stays put while pre-fix rows are still in the
+    sample, because those genuinely cannot answer.
     """
     hit_distances = [
         d for d in (_target_distance_r(o) for o in outcomes
-                    if o.get("status") == "target_hit")
+                    if o.get("status") == "target_hit" and not _is_uncensored(o))
         if d is not None
     ]
     return min(hit_distances) if hit_distances else float("inf")
