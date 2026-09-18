@@ -546,6 +546,139 @@ def _confidence_buckets(outcomes: list[dict]) -> dict:
 # won. These functions measure the signals themselves instead of the
 # subset that happened to resolve decisively.
 
+async def enrich_incomplete_excursions(
+    max_hold_days: int = DEFAULT_MAX_HOLD_DAYS,
+    budget_s: float = 60.0,
+) -> dict:
+    """Fill in the full-window excursions of rows that resolved too early to have one.
+
+    WHY THIS EXISTS. check_pending_outcomes() selects `status == "pending"` and
+    writes the resolved row the moment a barrier is touched — correctly, because
+    the operator needs the outcome now, not in three weeks. But a signal that
+    resolves on day 2 is measured over the two bars that existed at that moment,
+    so it lands with full_window_days == 2 and _is_uncensored() rejects it
+    forever. It is never selected again.
+
+    Without this pass the uncensoring is decorative: ordinary early winners —
+    which is most winners — would never feed _mfe_r or lift the censoring
+    ceiling, and the ceiling would sit where it always was. Raised in review on
+    PR #65.
+
+    RESOLUTION IS NEVER TOUCHED. Only mfe_full_pct, mae_full_pct and
+    full_window_days are written. status, exit_price, resolved_at and
+    days_to_resolve keep whatever the original pass decided; re-deciding them
+    later against more data would silently rewrite history, and the first
+    barrier touch does not change just because more bars arrived.
+
+    This is also where pre-existing rows get their excursions. Migration 0031
+    deliberately backfilled nothing — recovering a true excursion needs price
+    history re-fetched per ticker, which is a job rather than a migration. This
+    is that job, and it runs incrementally instead of as one enormous pass.
+
+    TERMINATION. A row is eligible while more bars might still change the
+    answer:
+
+      * full_window_days IS NULL — never measured (pre-0031, or written before
+        this pass existed). Tried once.
+      * full_window_days < max_hold_days AND the signal is younger than the
+        margin — more bars are still arriving.
+
+    Past the margin, whatever window the data supports is the final answer, so
+    the row stops being selected even if it never reached max_hold_days. A
+    delisted ticker or a gap in history would otherwise be retried forever.
+
+    The margin is calendar days against a trading-day window, so it carries
+    slack: 2x covers weekends and holidays comfortably without pulling in rows
+    that genuinely still have bars coming.
+    """
+    import time as _time
+    from datetime import timedelta
+
+    from sqlalchemy import or_, select, update
+    from app.core.database import AsyncSessionLocal
+    from app.models.signal_outcome import SignalOutcome
+
+    started = _time.monotonic()
+    summary = {
+        "candidates": 0, "enriched": 0, "completed": 0,
+        "tickers_covered": 0, "truncated": False, "elapsed_s": 0.0,
+    }
+
+    now = datetime.now(timezone.utc)
+    margin_cutoff = now - timedelta(days=max_hold_days * 2)
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(
+            select(SignalOutcome).where(
+                SignalOutcome.status != "pending",
+                or_(
+                    SignalOutcome.full_window_days.is_(None),
+                    SignalOutcome.full_window_days < max_hold_days,
+                ),
+            )
+        )).scalars().all()
+
+    candidates = [
+        r for r in rows
+        if r.full_window_days is None or r.generated_at > margin_cutoff
+    ]
+    summary["candidates"] = len(candidates)
+    if not candidates:
+        summary["elapsed_s"] = round(_time.monotonic() - started, 1)
+        return summary
+
+    by_ticker: dict[str, list] = {}
+    for r in candidates:
+        by_ticker.setdefault(r.ticker, []).append(r)
+
+    # Oldest first, same rationale as check_pending_outcomes: a run that is cut
+    # short should have made progress on the longest-waiting rows.
+    ordered = sorted(by_ticker.items(),
+                     key=lambda kv: (min(r.generated_at for r in kv[1]), kv[0]))
+
+    payloads: list[dict] = []
+    for ticker, trows in ordered:
+        if _time.monotonic() - started > budget_s:
+            summary["truncated"] = True
+            break
+        try:
+            hist = await _fetch_daily_bars(ticker, min(r.generated_at for r in trows))
+        except Exception as exc:
+            logger.warning("enrich_incomplete_excursions: bars fetch failed for %s: %s",
+                           ticker, exc)
+            continue
+        if hist is None or hist.empty:
+            continue
+        summary["tickers_covered"] += 1
+
+        for row in trows:
+            res = _resolve_one(row, hist, max_hold_days)
+            if res is None:
+                continue
+            *_resolution, mfe_full_pct, mae_full_pct, window = res
+            if row.full_window_days is not None and window <= int(row.full_window_days):
+                continue          # no new bars — nothing to say
+            payloads.append({
+                "id": row.id,
+                "mfe_full_pct": Decimal(str(round(mfe_full_pct, 4))),
+                "mae_full_pct": Decimal(str(round(mae_full_pct, 4))),
+                "full_window_days": window,
+            })
+            if window >= max_hold_days:
+                summary["completed"] += 1
+
+    if payloads:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                for i in range(0, len(payloads), _WRITE_CHUNK):
+                    await session.execute(update(SignalOutcome), payloads[i:i + _WRITE_CHUNK])
+        summary["enriched"] = len(payloads)
+
+    summary["elapsed_s"] = round(_time.monotonic() - started, 1)
+    logger.info("excursion enrichment: %s", summary)
+    return summary
+
+
 def _risk_per_share(o: dict) -> Optional[float]:
     """1R in price terms. None when the row cannot support the maths."""
     entry, stop = o.get("entry_price"), o.get("stop_price")
