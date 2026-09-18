@@ -41,6 +41,14 @@ async def _load_outcomes() -> list[dict]:
             "target_move_pct":   float(r.target_move_pct) if r.target_move_pct is not None else None,
             "max_favorable_pct": float(r.max_favorable_pct) if r.max_favorable_pct is not None else None,
             "max_adverse_pct":   float(r.max_adverse_pct) if r.max_adverse_pct is not None else None,
+            # Without these, _is_uncensored() is False for every row this
+            # endpoint serves, so _mfe_r silently falls back to the censored
+            # excursion and _censoring_ceiling_r never lifts — the uncensoring
+            # work would be invisible here while looking fine in the database.
+            # Raised in review on PR #65.
+            "mfe_full_pct":      float(r.mfe_full_pct) if r.mfe_full_pct is not None else None,
+            "mae_full_pct":      float(r.mae_full_pct) if r.mae_full_pct is not None else None,
+            "full_window_days":  r.full_window_days,
             "regime":            r.regime,
         }
         for r in rows

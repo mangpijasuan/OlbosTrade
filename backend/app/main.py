@@ -2341,6 +2341,33 @@ async def _check_signal_outcomes() -> None:
             summary["truncated"], summary["elapsed_s"],
         )
 
+    # Second pass: fill in full-window excursions for rows that resolved before
+    # enough bars existed to measure one. The pass above writes a resolution the
+    # moment a barrier is touched — right for the operator, but it means a
+    # signal that resolved on day 2 was measured over two bars and would be
+    # rejected as incomplete forever, because nothing selects a resolved row
+    # again. Without this, uncensored MFE never accumulates and the censoring
+    # ceiling never lifts.
+    #
+    # Its own budget, and failures are swallowed: this is an enrichment of data
+    # that is already correct, so it must never take the outcome pass down with
+    # it.
+    try:
+        from app.services.signal_outcome_tracker import enrich_incomplete_excursions
+        enriched = await enrich_incomplete_excursions(
+            budget_s=SIGNAL_OUTCOMES_DEADLINE_S,
+        )
+        if enriched["enriched"] > 0:
+            logger.info(
+                "Excursion enrichment: candidates=%d enriched=%d completed=%d "
+                "tickers=%d truncated=%s elapsed=%.1fs",
+                enriched["candidates"], enriched["enriched"],
+                enriched["completed"], enriched["tickers_covered"],
+                enriched["truncated"], enriched["elapsed_s"],
+            )
+    except Exception as exc:
+        logger.warning("Excursion enrichment failed (outcomes are unaffected): %s", exc)
+
 
 async def _reconcile_positions() -> None:
     """Periodic broker/DB reconciliation — position_reconciler.py's own

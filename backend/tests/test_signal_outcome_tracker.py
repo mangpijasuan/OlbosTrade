@@ -222,18 +222,23 @@ def test_resolve_one_buy_hits_target():
         ("2026-01-06", 102, 99, 101),
         ("2026-01-07", 109, 100, 108.5),   # target crossed
     ])
-    status, exit_price, resolved_at, days, mfe, mae = _resolve_one(row, hist, max_hold_days=20)
+    status, exit_price, resolved_at, days, mfe, mae, *_exc = _resolve_one(row, hist, max_hold_days=20)
     assert status == "target_hit"
     assert exit_price == 108
     assert days == 2
 
 
+# _resolve_one returns nine values since the MFE-uncensoring fix: the six
+# resolution values asserted here, plus the uncensored excursions and the bars
+# actually observed. `*_exc` keeps these tests focused on resolution — which
+# deliberately did NOT change — while the new half is covered in
+# test_mfe_is_not_censored_at_the_target.py.
 def test_resolve_one_buy_hits_stop():
     row = _row(action="BUY", entry=100, stop=96, target=108)
     hist = _bars([
         ("2026-01-06", 101, 95, 96.5),   # stop crossed
     ])
-    status, exit_price, resolved_at, days, mfe, mae = _resolve_one(row, hist, max_hold_days=20)
+    status, exit_price, resolved_at, days, mfe, mae, *_exc = _resolve_one(row, hist, max_hold_days=20)
     assert status == "stop_hit"
     assert exit_price == 96
     assert days == 1
@@ -283,7 +288,7 @@ def test_resolve_one_expires_after_max_hold_days():
         ("2026-01-03", 102, 99, 101.0),
         ("2026-01-04", 102, 100, 101.5),
     ])
-    status, exit_price, resolved_at, days, mfe, mae = _resolve_one(row, hist, max_hold_days=3)
+    status, exit_price, resolved_at, days, mfe, mae, *_exc = _resolve_one(row, hist, max_hold_days=3)
     assert status == "expired"
     assert exit_price == 101.5
     assert days == 3
@@ -308,7 +313,7 @@ def test_resolve_one_tracks_mfe_mae():
     ])
     # Neither target (120) nor stop (90) is ever crossed — force resolution
     # via expiry on day 2 so mfe/mae can be read from the return value.
-    status, _, _, _, mfe, mae = _resolve_one(row, hist, max_hold_days=2)
+    status, _, _, _, mfe, mae, *_exc = _resolve_one(row, hist, max_hold_days=2)
     assert status == "expired"
     assert mfe == pytest.approx(0.05)
     assert mae == pytest.approx(-0.03)

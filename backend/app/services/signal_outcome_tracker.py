@@ -251,8 +251,20 @@ def _resolve_one(row, hist, max_hold_days: int):
     a conservative tie-break rather than assuming the best case for a day
     we only have a high/low/close for, not an intraday path.
 
-    Returns (status, exit_price, resolved_at, days_elapsed, mfe_pct,
-    mae_pct) or None if still unresolved within the bars available.
+    Returns (status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct,
+    mfe_full_pct, mae_full_pct, full_window_days) or None if still unresolved
+    within the bars available.
+
+    RESOLUTION IS UNCHANGED by the uncensored excursions. status, exit_price,
+    resolved_at and days_elapsed are exactly what they were — they define the
+    trade's result under the rules as they stand, and redefining them would
+    silently reinterpret every historical row.
+
+    full_window_days is how many bars the uncensored measurement actually
+    covered. A signal resolved yesterday has a day or two of history, so its
+    "uncensored" excursion is itself censored — by data availability rather
+    than by the target. Callers must require a complete window before
+    aggregating, or this just moves the censoring somewhere less visible.
     """
     entry_date = row.generated_at.date()
     action = row.action
@@ -260,8 +272,19 @@ def _resolve_one(row, hist, max_hold_days: int):
     stop = float(row.stop_price)
     target = float(row.target_price)
 
+    # Censored at resolution — meaning deliberately unchanged, so rows written
+    # before and after this change stay comparable on max_favorable_pct.
     mfe_pct = 0.0
     mae_pct = 0.0
+    # Measured across the whole window regardless of when resolution happened.
+    # This is what _censoring_ceiling_r() exists to work around: the walk used
+    # to RETURN at the target touch, so a target_hit row recorded that the
+    # signal reached 2.0R and never whether it would have gone on to 3.0R, and
+    # every counterfactual above the nearest hit target became unanswerable.
+    mfe_full_pct = 0.0
+    mae_full_pct = 0.0
+
+    resolution = None
     days_elapsed = 0
 
     for ts, bar in hist.iterrows():
@@ -278,17 +301,62 @@ def _resolve_one(row, hist, max_hold_days: int):
             fav, adv = (entry - low) / entry, (entry - high) / entry
             stop_hit, target_hit = high >= stop, low <= target
 
-        mfe_pct = max(mfe_pct, fav)
-        mae_pct = min(mae_pct, adv)
+        mfe_full_pct = max(mfe_full_pct, fav)
+        mae_full_pct = min(mae_full_pct, adv)
 
-        if stop_hit:
-            return "stop_hit", stop, _to_utc(ts), days_elapsed, mfe_pct, mae_pct
-        if target_hit:
-            return "target_hit", target, _to_utc(ts), days_elapsed, mfe_pct, mae_pct
+        if resolution is None:
+            mfe_pct = max(mfe_pct, fav)
+            mae_pct = min(mae_pct, adv)
+            # Same order, same stop-wins tie-break as before.
+            if stop_hit:
+                resolution = ("stop_hit", stop, _to_utc(ts), days_elapsed,
+                              mfe_pct, mae_pct)
+            elif target_hit:
+                resolution = ("target_hit", target, _to_utc(ts), days_elapsed,
+                              mfe_pct, mae_pct)
+            elif days_elapsed >= max_hold_days:
+                resolution = ("expired", close, _to_utc(ts), days_elapsed,
+                              mfe_pct, mae_pct)
+
+        # A FIXED window for every row. "To the end of available history"
+        # would give an old signal a longer look than a recent one and make
+        # the two incomparable.
         if days_elapsed >= max_hold_days:
-            return "expired", close, _to_utc(ts), days_elapsed, mfe_pct, mae_pct
+            break
 
-    return None
+    if resolution is None:
+        return None
+    return (*resolution, mfe_full_pct, mae_full_pct, days_elapsed)
+
+
+def _resolved_payload(row_id, resolution) -> dict:
+    """Map a _resolve_one result onto the columns it is written to.
+
+    Extracted so the MAPPING is testable. It is the part that fails silently:
+    the censored and uncensored excursions are floats of the same shape, and
+    swapping them would launder a truncated number into the column whose
+    entire purpose is to be untruncated, with nothing to catch it. Mutation
+    testing found exactly that hole while this was inline.
+    """
+    (status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct,
+     mfe_full_pct, mae_full_pct, full_window_days) = resolution
+    return {
+        "id": row_id,
+        "status": status,
+        "exit_price": Decimal(str(round(exit_price, 4))),
+        "resolved_at": resolved_at,
+        "days_to_resolve": days_elapsed,
+        # CENSORED at resolution. Unchanged meaning.
+        "max_favorable_pct": Decimal(str(round(mfe_pct, 4))),
+        "max_adverse_pct": Decimal(str(round(mae_pct, 4))),
+        # UNCENSORED, over a fixed max_hold_days window. NULL on every row
+        # resolved before this shipped; that NULL separates measurable rows
+        # from unmeasurable ones and must never be backfilled from the
+        # censored value.
+        "mfe_full_pct": Decimal(str(round(mfe_full_pct, 4))),
+        "mae_full_pct": Decimal(str(round(mae_full_pct, 4))),
+        "full_window_days": full_window_days,
+    }
 
 
 async def check_pending_outcomes(
@@ -413,17 +481,8 @@ async def check_pending_outcomes(
             if resolution is None:
                 summary["still_pending"] += 1
                 continue
-            status, exit_price, resolved_at, days_elapsed, mfe_pct, mae_pct = resolution
-            summary[status] += 1
-            resolved_payloads.append({
-                "id": row.id,
-                "status": status,
-                "exit_price": Decimal(str(round(exit_price, 4))),
-                "resolved_at": resolved_at,
-                "days_to_resolve": days_elapsed,
-                "max_favorable_pct": Decimal(str(round(mfe_pct, 4))),
-                "max_adverse_pct": Decimal(str(round(mae_pct, 4))),
-            })
+            summary[resolution[0]] += 1
+            resolved_payloads.append(_resolved_payload(row.id, resolution))
 
         if len(checked_ids) >= _FLUSH_EVERY:
             await _flush()
@@ -487,6 +546,139 @@ def _confidence_buckets(outcomes: list[dict]) -> dict:
 # won. These functions measure the signals themselves instead of the
 # subset that happened to resolve decisively.
 
+async def enrich_incomplete_excursions(
+    max_hold_days: int = DEFAULT_MAX_HOLD_DAYS,
+    budget_s: float = 60.0,
+) -> dict:
+    """Fill in the full-window excursions of rows that resolved too early to have one.
+
+    WHY THIS EXISTS. check_pending_outcomes() selects `status == "pending"` and
+    writes the resolved row the moment a barrier is touched — correctly, because
+    the operator needs the outcome now, not in three weeks. But a signal that
+    resolves on day 2 is measured over the two bars that existed at that moment,
+    so it lands with full_window_days == 2 and _is_uncensored() rejects it
+    forever. It is never selected again.
+
+    Without this pass the uncensoring is decorative: ordinary early winners —
+    which is most winners — would never feed _mfe_r or lift the censoring
+    ceiling, and the ceiling would sit where it always was. Raised in review on
+    PR #65.
+
+    RESOLUTION IS NEVER TOUCHED. Only mfe_full_pct, mae_full_pct and
+    full_window_days are written. status, exit_price, resolved_at and
+    days_to_resolve keep whatever the original pass decided; re-deciding them
+    later against more data would silently rewrite history, and the first
+    barrier touch does not change just because more bars arrived.
+
+    This is also where pre-existing rows get their excursions. Migration 0031
+    deliberately backfilled nothing — recovering a true excursion needs price
+    history re-fetched per ticker, which is a job rather than a migration. This
+    is that job, and it runs incrementally instead of as one enormous pass.
+
+    TERMINATION. A row is eligible while more bars might still change the
+    answer:
+
+      * full_window_days IS NULL — never measured (pre-0031, or written before
+        this pass existed). Tried once.
+      * full_window_days < max_hold_days AND the signal is younger than the
+        margin — more bars are still arriving.
+
+    Past the margin, whatever window the data supports is the final answer, so
+    the row stops being selected even if it never reached max_hold_days. A
+    delisted ticker or a gap in history would otherwise be retried forever.
+
+    The margin is calendar days against a trading-day window, so it carries
+    slack: 2x covers weekends and holidays comfortably without pulling in rows
+    that genuinely still have bars coming.
+    """
+    import time as _time
+    from datetime import timedelta
+
+    from sqlalchemy import or_, select, update
+    from app.core.database import AsyncSessionLocal
+    from app.models.signal_outcome import SignalOutcome
+
+    started = _time.monotonic()
+    summary = {
+        "candidates": 0, "enriched": 0, "completed": 0,
+        "tickers_covered": 0, "truncated": False, "elapsed_s": 0.0,
+    }
+
+    now = datetime.now(timezone.utc)
+    margin_cutoff = now - timedelta(days=max_hold_days * 2)
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(
+            select(SignalOutcome).where(
+                SignalOutcome.status != "pending",
+                or_(
+                    SignalOutcome.full_window_days.is_(None),
+                    SignalOutcome.full_window_days < max_hold_days,
+                ),
+            )
+        )).scalars().all()
+
+    candidates = [
+        r for r in rows
+        if r.full_window_days is None or r.generated_at > margin_cutoff
+    ]
+    summary["candidates"] = len(candidates)
+    if not candidates:
+        summary["elapsed_s"] = round(_time.monotonic() - started, 1)
+        return summary
+
+    by_ticker: dict[str, list] = {}
+    for r in candidates:
+        by_ticker.setdefault(r.ticker, []).append(r)
+
+    # Oldest first, same rationale as check_pending_outcomes: a run that is cut
+    # short should have made progress on the longest-waiting rows.
+    ordered = sorted(by_ticker.items(),
+                     key=lambda kv: (min(r.generated_at for r in kv[1]), kv[0]))
+
+    payloads: list[dict] = []
+    for ticker, trows in ordered:
+        if _time.monotonic() - started > budget_s:
+            summary["truncated"] = True
+            break
+        try:
+            hist = await _fetch_daily_bars(ticker, min(r.generated_at for r in trows))
+        except Exception as exc:
+            logger.warning("enrich_incomplete_excursions: bars fetch failed for %s: %s",
+                           ticker, exc)
+            continue
+        if hist is None or hist.empty:
+            continue
+        summary["tickers_covered"] += 1
+
+        for row in trows:
+            res = _resolve_one(row, hist, max_hold_days)
+            if res is None:
+                continue
+            *_resolution, mfe_full_pct, mae_full_pct, window = res
+            if row.full_window_days is not None and window <= int(row.full_window_days):
+                continue          # no new bars — nothing to say
+            payloads.append({
+                "id": row.id,
+                "mfe_full_pct": Decimal(str(round(mfe_full_pct, 4))),
+                "mae_full_pct": Decimal(str(round(mae_full_pct, 4))),
+                "full_window_days": window,
+            })
+            if window >= max_hold_days:
+                summary["completed"] += 1
+
+    if payloads:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                for i in range(0, len(payloads), _WRITE_CHUNK):
+                    await session.execute(update(SignalOutcome), payloads[i:i + _WRITE_CHUNK])
+        summary["enriched"] = len(payloads)
+
+    summary["elapsed_s"] = round(_time.monotonic() - started, 1)
+    logger.info("excursion enrichment: %s", summary)
+    return summary
+
+
 def _risk_per_share(o: dict) -> Optional[float]:
     """1R in price terms. None when the row cannot support the maths."""
     entry, stop = o.get("entry_price"), o.get("stop_price")
@@ -508,14 +700,41 @@ def _realised_r(o: dict) -> Optional[float]:
     return move / risk
 
 
+def _is_uncensored(o: dict, max_hold_days: int = DEFAULT_MAX_HOLD_DAYS) -> bool:
+    """True when this row's excursion was measured over a COMPLETE window.
+
+    Two ways a row fails this. It predates the uncensoring fix, so
+    mfe_full_pct is NULL and nothing can recover it — the excursion past the
+    target was never recorded and the bars are gone. Or it resolved so
+    recently that fewer than max_hold_days bars existed when it was measured,
+    which is censoring by data availability rather than by the target: the
+    same understatement wearing different clothes.
+    """
+    if o.get("mfe_full_pct") is None:
+        return False
+    window = o.get("full_window_days")
+    return window is not None and int(window) >= max_hold_days
+
+
 def _mfe_r(o: dict) -> Optional[float]:
     """Max favourable excursion in R — how far it went before it turned.
 
-    max_favorable_pct is a fraction OF ENTRY (see _resolve_one), so it has to
+    Prefers the UNCENSORED excursion when the row has a complete one. For a
+    target_hit row the censored value is capped at its own target, so it says
+    the signal reached 2.0R and stays silent on whether it would have reached
+    3.0R — which is the only thing a target-placement question is asking.
+
+    Falls back to max_favorable_pct for rows written before the fix. Those
+    rows understate winners, so an aggregate mixing the two is conservative
+    about how far the system runs, never optimistic. _censoring_ceiling_r()
+    is what stops the counterfactual over-claiming on that mix.
+
+    Both columns are a fraction OF ENTRY (see _resolve_one), so either has to
     be taken back to price before it can be divided by risk.
     """
     risk = _risk_per_share(o)
-    mfe, entry = o.get("max_favorable_pct"), o.get("entry_price")
+    entry = o.get("entry_price")
+    mfe = o.get("mfe_full_pct") if _is_uncensored(o) else o.get("max_favorable_pct")
     if risk is None or mfe is None or entry is None:
         return None
     return (float(mfe) * float(entry)) / risk
@@ -557,10 +776,17 @@ def _censoring_ceiling_r(outcomes: list[dict]) -> float:
     stop_hit and expired rows are NOT censored — the walk continued past any
     favourable excursion to the stop or the horizon — so the limit is set by
     the nearest target among the rows that did hit one.
+
+    A target_hit row with a COMPLETE uncensored excursion no longer
+    constrains this: the walk continued past its target, so it does record
+    whether the move went on to 3.0R. Only rows still carrying a censored MFE
+    set the limit, which means the ceiling lifts on its own as uncensored
+    rows accumulate — and stays put while pre-fix rows are still in the
+    sample, because those genuinely cannot answer.
     """
     hit_distances = [
         d for d in (_target_distance_r(o) for o in outcomes
-                    if o.get("status") == "target_hit")
+                    if o.get("status") == "target_hit" and not _is_uncensored(o))
         if d is not None
     ]
     return min(hit_distances) if hit_distances else float("inf")
