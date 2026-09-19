@@ -196,6 +196,69 @@ def test_nothing_is_published_to_the_public_interface():
     )
 
 
+#: `<SOME_PLACEHOLDER>:port`, the form a deploy guide uses for an address the
+#: reader substitutes. IP_PORT above only matches literal dotted quads, so
+#: every one of these was invisible to it.
+PLACEHOLDER_HOST_PORT = re.compile(r"<[A-Za-z0-9_-]+>:(\d{2,5})\b")
+
+
+def readme_prose_placeholder_ports() -> list[tuple[int, int, str]]:
+    """(line_no, port, line) for `<PLACEHOLDER>:port` outside fenced code.
+
+    Prose only, and the exclusion is the whole design. Step 7b's verification
+    command MUST name the address — its job is to prove the port is shut, and
+    it reports success by failing to connect. Prose is where "go here to reach
+    the app" lives, which is the claim that goes false when a bind changes.
+
+    The residual gap is real and stated rather than papered over: an
+    instruction hidden inside a ``` block would not be caught. Closing that
+    would mean flagging the one command that legitimately names the address,
+    and a guard that cries wolf on its own verification step gets deleted.
+    """
+    found: list[tuple[int, int, str]] = []
+    in_fence = False
+    for n, line in enumerate(DEPLOY_README.read_text().splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for port in PLACEHOLDER_HOST_PORT.findall(line):
+            found.append((n, int(port), line.strip()))
+    return found
+
+
+def test_the_readme_prose_does_not_advertise_a_loopback_port_publicly():
+    """Prose must not send a reader to `<server-ip>:PORT` for a loopback port.
+
+    Sourcery caught this on #67 and it is the third time in this run of PRs
+    that I have fixed a defect in one place and left it standing in another.
+    Step 7b was rewritten to say the bind is loopback while step 7 went on
+    telling an operator without a domain to open `http://<YOUR_HETZNER_IP>:8080`
+    — which, after the bind, is a connection that hangs.
+
+    It escaped every existing check because IP_PORT matches dotted quads only,
+    and a deploy guide naturally writes the address as a placeholder. So the
+    guard that exists to catch "the docs name an address that does not answer"
+    was blind to the entire form the docs actually use.
+    """
+    loopback = loopback_only_ports()
+    wrong = [
+        (n, port, line) for n, port, line in readme_prose_placeholder_ports()
+        if port in loopback
+    ]
+    assert not wrong, (
+        f"deploy/hetzner/README.md prose points a reader at a placeholder host "
+        f"address on port(s) {sorted(loopback)}, which compose binds to "
+        f"loopback — so that address does not answer from anywhere but the "
+        f"server itself:\n"
+        + "\n".join(f"  line {n} → :{port}\n      {line}" for n, port, line in wrong)
+        + "\n\nPoint it at the HTTPS domain, or at the SSH tunnel "
+          "(`ssh -L <port>:localhost:<port> root@<server>`, then "
+          "http://localhost:<port>)."
+    )
+
+
 def test_the_readme_tells_an_operator_how_to_reach_the_app():
     """The original gap was not "the port was wrong" — it was that NO doc named
     a working way in, so a wrong one went unchallenged for months.

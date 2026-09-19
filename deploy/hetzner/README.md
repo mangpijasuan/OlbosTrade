@@ -159,30 +159,33 @@ curl -s https://trade.olbos.us/api/guardrails/status
 
 Open **https://trade.olbos.us** in your browser.
 
-**Without a domain**, the frontend is also published directly on the host at
-port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
-`http://<YOUR_HETZNER_IP>:8080/terminal`.
+**Without a domain — or when the domain is down — there is no public port to
+open.** Earlier revisions of this guide sent you to the server's own address on
+port 8080; that stopped being true when the frontend's host port moved to a
+loopback bind
+(`ports: ["127.0.0.1:8080:3000"]`, see step 7b). Port 8080 now answers only from
+*on* the server, so reaching it from your laptop means an SSH tunnel:
 
-> ⚠️ **That path is plain HTTP. Do not enter the Operator API Key over it.**
-> The key is your `SECRET_KEY`, it authorises closing positions and changing
-> execution mode, and on `http://` it crosses the network in clear text. The
-> same port serves without Basic Auth unless **both** `DASH_USER` and
-> `DASH_PASS` are set — one alone leaves it open (see step 3b) — so treat it as
-> read-only triage: useful for confirming the stack is up during an incident,
-> not for operating it.
+```bash
+ssh -L 8080:localhost:8080 root@<YOUR_HETZNER_IP>
+# then open http://localhost:8080 — terminal at http://localhost:8080/terminal
+```
+
+> The browser says `http://`, and that is fine here: the traffic never touches
+> the network unencrypted, because SSH carries it. This is the one route on
+> which entering the Operator API Key (`SECRET_KEY`) or the
+> `DASH_USER`/`DASH_PASS` credentials is safe without HTTPS — and it is safe
+> *because of the tunnel*, not because the URL looks local.
 >
-> Now that `https://trade.olbos.us` exists, use it — it is the correct answer
-> to this, and step 7b closes `:8080` entirely. If the domain is unavailable,
-> tunnel instead:
-> ```bash
-> ssh -L 8080:localhost:8080 root@<YOUR_HETZNER_IP>
-> # then open http://localhost:8080 — traffic rides the SSH tunnel
-> ``` That number comes from the
-`ports: ["8080:3000"]` entry on the `frontend` service in
-`docker-compose.hetzner.yml`; if you change it there, change it here. The
-backend is NOT published to the host — it is reachable only over the internal
-Docker network, which is why `curl localhost:8000` on the server returns
-nothing and `docker exec olbostrade-backend curl localhost:8000/health` works.
+> Prefer `https://trade.olbos.us` whenever it is up. The tunnel is for when it
+> is not: a broken Caddy config, an expired certificate, a DNS problem.
+
+The port number comes from the `ports:` entry on the `frontend` service in
+`docker-compose.hetzner.yml`; if you change it there, change it here — and keep
+the `127.0.0.1:` prefix, which is what makes it private. The backend is NOT
+published to the host at all — it is reachable only over the internal Docker
+network, which is why `curl localhost:8000` on the server returns nothing and
+`docker exec olbostrade-backend curl localhost:8000/health` works.
 
 ### 7b. Close the direct HTTP port
 
