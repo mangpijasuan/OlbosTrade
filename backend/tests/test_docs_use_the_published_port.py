@@ -225,8 +225,14 @@ def test_every_https_url_in_the_readme_points_at_that_domain():
 
 def test_no_placeholder_domain_survives_the_rename():
     """A half-finished rename is worse than either state on its own."""
+    # deploy/ plus the env templates at the repo root. A placeholder hostname
+    # in .env.example misleads exactly as much as one in the README, and the
+    # original scan stopped at deploy/hetzner.
+    targets = list((REPO / "deploy").rglob("*"))
+    targets += [REPO / ".env.example", REPO / ".env.prod.example"]
+
     stale = []
-    for path in (REPO / "deploy" / "hetzner").rglob("*"):
+    for path in targets:
         if not path.is_file() or path.suffix in {".sql", ".png"}:
             continue
         try:

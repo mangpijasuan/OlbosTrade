@@ -166,9 +166,10 @@ port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
 > ⚠️ **That path is plain HTTP. Do not enter the Operator API Key over it.**
 > The key is your `SECRET_KEY`, it authorises closing positions and changing
 > execution mode, and on `http://` it crosses the network in clear text. The
-> same port also serves without Basic Auth when `DASH_USER`/`DASH_PASS` are
-> unset, so treat it as read-only triage — useful for confirming the stack is
-> up during an incident, not for operating it.
+> same port serves without Basic Auth unless **both** `DASH_USER` and
+> `DASH_PASS` are set — one alone leaves it open (see step 3b) — so treat it as
+> read-only triage: useful for confirming the stack is up during an incident,
+> not for operating it.
 >
 > Now that `https://trade.olbos.us` exists, use it — it is the correct answer
 > to this, and step 7b closes `:8080` entirely. If the domain is unavailable,
