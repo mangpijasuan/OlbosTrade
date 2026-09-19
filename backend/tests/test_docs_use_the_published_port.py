@@ -178,14 +178,48 @@ def test_the_caddy_site_block_was_found():
     )
 
 
+#: Hosts the README may legitimately reference that Caddy does not serve.
+EXTERNAL_HOSTS = {"github.com"}
+
+
+def readme_https_hosts() -> set[str]:
+    """Every host the README tells an operator to reach over HTTPS."""
+    return {
+        h for h in re.findall(r"https://([A-Za-z0-9.-]+)", DEPLOY_README.read_text())
+        if h not in EXTERNAL_HOSTS
+    }
+
+
 def test_the_deploy_readme_names_the_domain_caddy_serves():
     domain = caddy_site_domain()
-    readme = DEPLOY_README.read_text()
-    assert domain in readme, (
-        f"Caddyfile.snippet serves {domain!r} but deploy/hetzner/README.md "
-        f"never mentions it. The README is what an operator follows; if it "
-        f"names a different host they will curl something that does not "
-        f"answer and conclude the deploy failed when it did not."
+    assert domain in readme_https_hosts(), (
+        f"Caddyfile.snippet serves {domain!r} but no https:// URL in "
+        f"deploy/hetzner/README.md points there. The README is what an "
+        f"operator follows; if it names a different host they will curl "
+        f"something that does not answer and conclude the deploy failed when "
+        f"it did not."
+    )
+
+
+def test_every_https_url_in_the_readme_points_at_that_domain():
+    r"""Not just "the domain appears somewhere".
+
+    The first version asserted `domain in readme`, which passes while the
+    actual `Open https://...` line names a different host — the domain still
+    occurs in the architecture diagram and the DNS row. That is the same
+    "appears anywhere" weakness as the bare \b(\d{4,5})\b scan two tests up,
+    and it would have missed precisely the drift this guard exists for.
+    Raised in review on PR #66.
+
+    Checking every URL rather than one specific line also survives rewording:
+    a guard pinned to exact prose fails on an edit that changed nothing real.
+    """
+    domain = caddy_site_domain()
+    wrong = readme_https_hosts() - {domain}
+    assert not wrong, (
+        f"deploy/hetzner/README.md sends operators to {sorted(wrong)} over "
+        f"HTTPS, but Caddy only serves {domain!r}. Those URLs answer nothing. "
+        f"If one of them is a genuine external link, add it to EXTERNAL_HOSTS."
     )
 
 

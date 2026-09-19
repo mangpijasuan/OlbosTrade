@@ -78,9 +78,24 @@ grep -E '^(DASH_USER|DASH_PASS|AUTH_ENABLED)=' backend/.env.prod
 Until now this instance has been reachable only as an unadvertised `IP:8080`,
 which is obscurity, not access control. A domain removes even that.
 
-If `DASH_USER`/`DASH_PASS` are blank **and** `AUTH_ENABLED` is false, the
-frontend serves the whole terminal — kill switch, position closing, execution
-mode — to anyone who resolves the name. Set one of them first:
+**Both** `DASH_USER` *and* `DASH_PASS` must be non-empty. The entrypoint gates
+on `[ -n "$DASH_USER" ] && [ -n "$DASH_PASS" ]` — set only one and Basic Auth
+is silently off while the config *looks* filled in. Treat exactly-one-set as a
+failed check, not a partial win.
+
+If Basic Auth is off **and** `AUTH_ENABLED` is false, the frontend serves the
+whole terminal — kill switch, position closing, execution mode — to anyone who
+resolves the name. Confirm which state you are in from the container's own
+report rather than from the env file:
+
+```bash
+docker logs olbostrade-frontend 2>&1 | grep -iE "Dashboard auth|DASH_USER"
+```
+
+`Dashboard auth ENABLED` means both were set. The `WARNING: DASH_USER/DASH_PASS
+not set` line means the app is open — including when you filled in one of them.
+
+Set one of these first:
 
 * `DASH_USER`/`DASH_PASS` put nginx Basic Auth in front of everything,
   including `/api` (see `frontend/docker-entrypoint.sh`). Simplest.
@@ -171,10 +186,34 @@ nothing and `docker exec olbostrade-backend curl localhost:8000/health` works.
 ### 7b. Close the direct HTTP port
 
 Once HTTPS works, the published `:8080` is no longer needed — Caddy reaches the
-frontend over the Docker network, not the host port:
+frontend over the Docker network, not the host port.
+
+> **`ufw deny 8080` does NOT close it.** Docker publishes ports with its own
+> DNAT and FORWARD rules, which are traversed before UFW's, so a published
+> container port stays reachable from the internet no matter what `ufw status`
+> says. An earlier revision of this guide recommended exactly that, which is
+> worse than saying nothing — it reads as done.
+
+Bind the publication to loopback instead. In `docker-compose.hetzner.yml`, on
+the `frontend` service:
+
+```yaml
+    ports:
+      - "127.0.0.1:8080:3000"      # was "8080:3000"
+```
+
+Then `bash deploy/hetzner/update.sh`. Docker now listens only on the loopback
+interface, so nothing external can reach it and no firewall rule is involved.
+The SSH tunnel below still works, because it connects from *on* the host.
+
+**Verify from another machine, not from the server** — checking locally
+succeeds either way and proves nothing:
 
 ```bash
-ufw deny 8080
+# from your laptop
+curl --connect-timeout 5 -sS -o /dev/null http://<YOUR_HETZNER_IP>:8080 \
+  && echo "STILL REACHABLE — not closed" \
+  || echo "closed"
 curl -sI https://trade.olbos.us | head -3     # still fine
 ```
 
@@ -185,8 +224,8 @@ over `http://` and the key crosses the network in clear text. Closing the port
 removes the unsafe path rather than relying on everyone remembering which URL
 they are on.
 
-Keep it closed unless the domain is down and you need direct triage — in which
-case prefer a tunnel, which needs no firewall change:
+For direct triage when the domain is down, tunnel — this works with the
+loopback binding above and needs no change to expose anything:
 
 ```bash
 ssh -L 8080:localhost:8080 root@<YOUR_HETZNER_IP>
