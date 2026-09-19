@@ -189,23 +189,40 @@ nothing and `docker exec olbostrade-backend curl localhost:8000/health` works.
 Once HTTPS works, the published `:8080` is no longer needed — Caddy reaches the
 frontend over the Docker network, not the host port.
 
+Do this **after** step 7 passes, not before: until Caddy serves the domain,
+`:8080` is the only way in, and closing it first locks you out of your own
+server.
+
+It is more urgent than it looks once Basic Auth is on. HTTP Basic sends
+`user:password` base64-encoded, which is reversible by anyone reading the
+traffic — so a `DASH_USER`/`DASH_PASS` prompt served over plain `http://` leaks
+the credentials it exists to enforce.
+
 > **`ufw deny 8080` does NOT close it.** Docker publishes ports with its own
 > DNAT and FORWARD rules, which are traversed before UFW's, so a published
 > container port stays reachable from the internet no matter what `ufw status`
 > says. An earlier revision of this guide recommended exactly that, which is
 > worse than saying nothing — it reads as done.
 
-Bind the publication to loopback instead. In `docker-compose.hetzner.yml`, on
-the `frontend` service:
+The bind is loopback, and it is **already in the repo** —
+`docker-compose.hetzner.yml` carries `ports: ["127.0.0.1:8080:3000"]` on the
+`frontend` service. Docker then listens only on the loopback interface, so
+nothing external can reach it and no firewall rule is involved. The SSH tunnel
+below still works, because it connects from *on* the host.
 
-```yaml
-    ports:
-      - "127.0.0.1:8080:3000"      # was "8080:3000"
+Earlier revisions of this guide told you to make that edit on the server. Do
+not: `update.sh` begins with `git pull origin main`, so a local modification to
+a tracked file either stops the next deploy with a conflict or gets reverted
+without anyone noticing. Pull it instead:
+
+```bash
+cd /opt/olbostrade && git pull origin main
+set -a; source backend/.env.prod; set +a
+docker compose -f docker-compose.hetzner.yml up -d frontend
 ```
 
-Then `bash deploy/hetzner/update.sh`. Docker now listens only on the loopback
-interface, so nothing external can reach it and no firewall rule is involved.
-The SSH tunnel below still works, because it connects from *on* the host.
+`up -d` is enough — changing `ports:` recreates the container, and no rebuild is
+needed for a binding change.
 
 **Verify from another machine, not from the server** — checking locally
 succeeds either way and proves nothing:

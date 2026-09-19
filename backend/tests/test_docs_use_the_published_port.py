@@ -40,9 +40,25 @@ IP_PORT = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})\b")
 
 PRIVATE_PREFIXES = ("127.", "0.", "10.", "192.168.", "172.16.", "172.17.", "255.")
 
+#: Bind addresses that expose a port to the host only, never to the network.
+LOOPBACK_PREFIXES = ("127.", "localhost")
 
-def published_host_ports() -> set[int]:
-    """Host ports the Hetzner stack publishes, from `ports:` entries.
+
+#: A `ports:` entry, with the OPTIONAL bind address captured separately.
+#: Compose accepts "8080:3000" (all interfaces) and "127.0.0.1:8080:3000"
+#: (loopback only). Those two mean opposite things for everything below, so
+#: the bind address cannot be folded into the port.
+PORT_ENTRY = re.compile(
+    r'^\s*-\s*"?(?:(?P<bind>\d{1,3}(?:\.\d{1,3}){3}):)?'
+    r'(?P<host>\d{2,5}):(?P<container>\d{2,5})"?\s*$'
+)
+
+
+def compose_port_entries() -> list[tuple[str, int]]:
+    """(bind address, host port) for every `ports:` entry in the Hetzner stack.
+
+    Bind address is "" when Compose was given none, which means 0.0.0.0 — every
+    interface, including the public one.
 
     Comments are stripped: the `ports:` block carries an explanatory comment
     naming the URL, and this repo has already shipped one guard that matched
@@ -52,12 +68,31 @@ def published_host_ports() -> set[int]:
         l for l in COMPOSE.read_text().splitlines()
         if not l.lstrip().startswith("#")
     ]
-    ports: set[int] = set()
+    entries: list[tuple[str, int]] = []
     for line in lines:
-        m = re.match(r'^\s*-\s*"?(\d{2,5}):(\d{2,5})"?\s*$', line)
+        m = PORT_ENTRY.match(line)
         if m:
-            ports.add(int(m.group(1)))
-    return ports
+            entries.append((m.group("bind") or "", int(m.group("host"))))
+    return entries
+
+
+def publicly_published_ports() -> set[int]:
+    """Host ports reachable from OFF the machine.
+
+    A loopback-bound entry publishes a port on 127.0.0.1 only. Calling that
+    "published" is what would let a doc go on advertising
+    `http://<public-ip>:8080` after the bind closed it — the precise drift this
+    module exists to catch, just pointing the other way.
+    """
+    return {port for bind, port in compose_port_entries()
+            if not bind.startswith(LOOPBACK_PREFIXES)}
+
+
+def loopback_only_ports() -> set[int]:
+    """Host ports bound to 127.x — reachable from on the host, e.g. via an SSH
+    tunnel, and from nowhere else."""
+    return {port for bind, port in compose_port_entries()
+            if bind.startswith(LOOPBACK_PREFIXES)}
 
 
 def markdown_files() -> list[Path]:
@@ -84,50 +119,131 @@ def documented_ip_ports() -> list[tuple[Path, int, int, str]]:
 
 
 def test_the_compose_ports_were_actually_parsed():
-    """Guards the guard: an empty set makes every membership check below fail
-    loudly rather than pass vacuously — but an empty set of DOC references
-    would make them pass, so both sides are checked."""
-    ports = published_host_ports()
-    assert ports, (
-        "no published host ports parsed from docker-compose.hetzner.yml. Either "
-        "the stack stopped publishing any port, or the `ports:` shape changed "
-        "and this test can no longer see it."
+    """Guards the guard: if the `ports:` shape changes and the regex stops
+    matching, every set below silently empties and the membership checks pass
+    vacuously. Asserting on ENTRIES rather than on public ports is deliberate —
+    binding everything to loopback is a legitimate end state that empties
+    publicly_published_ports() honestly, and this assertion must not fire on
+    it."""
+    entries = compose_port_entries()
+    assert entries, (
+        "no `ports:` entries parsed from docker-compose.hetzner.yml. Either the "
+        "stack stopped publishing anything at all, or the entry shape changed "
+        "and this test can no longer see it. If a bind address was added in a "
+        "form PORT_ENTRY does not match, fix the regex — do not delete this."
     )
 
 
 def test_every_documented_ip_port_is_one_the_stack_publishes():
-    published = published_host_ports()
+    """A public `IP:port` in the docs must be reachable at that address.
+
+    Loopback-bound ports do not count. `127.0.0.1:8080:3000` answers only from
+    on the host, so a doc line naming `<public-ip>:8080` sends a reader to a
+    connection that hangs — the same failure as the original `:8081`, reached
+    from the other direction: the port is right and the reachability is not.
+    """
+    published = publicly_published_ports()
+    loopback = loopback_only_ports()
     wrong = [
         (str(p.relative_to(REPO)), n, port, line)
         for p, n, port, line in documented_ip_ports()
         if port not in published
     ]
     assert not wrong, (
-        "these docs name a port the Hetzner stack does not publish "
-        f"(published: {sorted(published)}):\n"
+        "these docs name a public IP:port the Hetzner stack does not serve "
+        f"there (publicly published: {sorted(published)}; loopback-only: "
+        f"{sorted(loopback)}):\n"
         + "\n".join(f"  {f}:{n} → :{port}\n      {line}" for f, n, port, line in wrong)
-        + "\n\nA wrong port here reads as a dead app. On 2026-09-17 it sent an "
-          "outage investigation toward the server's config when the document "
-          "was what had drifted."
+        + "\n\nIf the port is in the loopback-only list, the fix is to stop "
+          "advertising it at a public address — point the line at the HTTPS "
+          "domain, or document the SSH tunnel. A wrong URL here reads as a dead "
+          "app: on 2026-09-17 it sent an outage investigation toward the "
+          "server's config when the document was what had drifted."
     )
 
 
-def test_the_direct_access_port_is_documented_somewhere():
-    """The original gap: :8081 was wrong AND nothing named the right one."""
-    published = published_host_ports()
+def test_nothing_is_published_to_the_public_interface():
+    """The frontend's host port must stay bound to loopback.
+
+    This is an invariant, not a preference. Caddy reaches the frontend over
+    docker_default, so a public bind adds no capability — it only adds a
+    plain-HTTP route into the same app. Two things make that route worse than
+    it looks: HTTP Basic sends DASH_USER/DASH_PASS base64-encoded (reversible
+    by anyone reading the traffic), and the Trade Desk's own 403 message asks
+    the operator to paste SECRET_KEY on the Risk Monitor page.
+
+    Written because mutation testing found the gap: reverting compose to
+    "8080:3000" passed every other test in this file, while deploy README's
+    step 7b went on asserting the bind was loopback. Prose claiming a config
+    value with nothing checking it is the exact defect this module exists for,
+    reproduced by the module's own author.
+
+    `ufw deny 8080` is NOT an acceptable substitute and does not satisfy this
+    test, deliberately: Docker's DNAT and FORWARD rules run before UFW's, so a
+    published port stays reachable whatever `ufw status` reports.
+
+    If a port genuinely must be public one day, change this test in the same
+    commit that changes compose, and say in the message why the exposure is
+    acceptable. Do not delete it to make a deploy go through.
+    """
+    public = publicly_published_ports()
+    assert not public, (
+        f"docker-compose.hetzner.yml publishes {sorted(public)} on ALL "
+        f"interfaces. Bind to loopback instead — `127.0.0.1:<port>:<container>` "
+        f"— so the port answers only from on the host. An SSH tunnel "
+        f"(`ssh -L <port>:localhost:<port> root@<server>`) still reaches it, "
+        f"and Caddy never needed the host port at all."
+    )
+
+
+def test_the_readme_tells_an_operator_how_to_reach_the_app():
+    """The original gap was not "the port was wrong" — it was that NO doc named
+    a working way in, so a wrong one went unchallenged for months.
+
+    What counts as a working way in depends on what compose publishes, so this
+    asserts the direction rather than a fixed answer:
+
+      * anything public  → the README must name one of those ports
+      * loopback only    → the README must document the tunnel, because that is
+                           now the only direct route, and it must name the
+                           HTTPS domain as the primary one
+    """
+    published = publicly_published_ports()
+    loopback = loopback_only_ports()
     readme = (REPO / "deploy" / "hetzner" / "README.md").read_text()
-    # `:8080`, not a bare 8080. A loose \b(\d{4,5})\b scan is satisfied by the
-    # number appearing anywhere at all — including inside a quoted
-    # `ports: ["8080:3000"]` example — which is the difference between "the
-    # README tells an operator the URL" and "the digits occur in this file".
-    # Mutation-testing caught exactly that: gutting the URL prose left this
-    # passing.
-    named = {int(m) for m in re.findall(r":(\d{4,5})\b", readme)}
-    assert published & named, (
-        f"deploy/hetzner/README.md names none of the published host ports "
-        f"{sorted(published)}. An operator deploying without a domain has "
-        f"nowhere to find the direct URL but a comment inside the compose file "
-        f"— which is how :8081 survived in the audit doc unchallenged."
+
+    if published:
+        # `:8080`, not a bare 8080. A loose \b(\d{4,5})\b scan is satisfied by
+        # the number appearing anywhere at all — including inside a quoted
+        # `ports: ["8080:3000"]` example — which is the difference between "the
+        # README tells an operator the URL" and "the digits occur in this
+        # file". Mutation-testing caught exactly that: gutting the URL prose
+        # left the earlier version passing.
+        named = {int(m) for m in re.findall(r":(\d{4,5})\b", readme)}
+        assert published & named, (
+            f"deploy/hetzner/README.md names none of the publicly published "
+            f"host ports {sorted(published)}. An operator deploying without a "
+            f"domain has nowhere to find the direct URL but a comment inside "
+            f"the compose file — which is how :8081 survived unchallenged."
+        )
+        return
+
+    assert loopback, (
+        "compose publishes nothing publicly AND nothing on loopback, so there "
+        "is no direct route into the frontend at all. If that is intended, this "
+        "test needs rewriting deliberately rather than deleting."
+    )
+    for port in sorted(loopback):
+        assert re.search(rf"ssh\s+-L\s+{port}:localhost:{port}\b", readme), (
+            f"port {port} is bound to loopback, so the ONLY direct route in is "
+            f"an SSH tunnel — and deploy/hetzner/README.md does not show one "
+            f"(`ssh -L {port}:localhost:{port} ...`). Closing the public port "
+            f"without documenting the replacement leaves an operator locked "
+            f"out during an incident, which is worse than the exposure it fixed."
+        )
+    assert re.search(r"https://" + re.escape(caddy_site_domain()), readme), (
+        "nothing is published publicly, so HTTPS via Caddy is the primary way "
+        "in, and the README must name that URL."
     )
 
 

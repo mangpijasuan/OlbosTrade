@@ -151,11 +151,22 @@ services:
       # request came through this proxy and its X-Forwarded-For can be
       # believed. See backend/app/api/rate_limit.py client_ip(), issue #60.
       - "TRUSTED_PROXY_SECRET=${TRUSTED_PROXY_SECRET:?set TRUSTED_PROXY_SECRET in backend/.env.prod, generated with openssl rand -hex 32}"
-    # Publish a host port for direct IP access (http://<server-ip>:8080) when no
-    # domain is set up. Caddy (when used) still reaches it over the internal
-    # network; this just additionally exposes it on the host.
+    # Bound to LOOPBACK, not 0.0.0.0. Caddy reaches this container over the
+    # docker_default network, not through the host port, so publishing it
+    # publicly buys nothing and costs a plain-HTTP route into the same app —
+    # one on which DASH_USER/DASH_PASS credentials travel base64-encoded and
+    # the Trade Desk's own 403 message invites an operator to paste SECRET_KEY.
+    #
+    # Do NOT "fix" this back to "8080:3000" to regain direct IP access, and do
+    # not reach for `ufw deny 8080` as the alternative: Docker's DNAT and
+    # FORWARD rules are traversed before UFW's, so a published port stays
+    # reachable whatever `ufw status` reports. The loopback bind removes the
+    # exposure at the listener, which is the only layer that actually holds.
+    #
+    # Direct access still works, over SSH, from on the host:
+    #   ssh -L 8080:localhost:8080 root@<server-ip>   # then http://localhost:8080
     ports:
-      - "8080:3000"
+      - "127.0.0.1:8080:3000"
     depends_on:
       backend:
         condition: service_healthy
