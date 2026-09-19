@@ -24,15 +24,21 @@ set -a
 source backend/.env.prod
 set +a
 
-# Confirm the docker_default network exists (created by OlbosTerminal's Caddy stack)
-CADDY_NETWORK=$(docker network ls --format '{{.Name}}' | grep -E '^docker_default$' | head -1)
-if [[ -z "$CADDY_NETWORK" ]]; then
-  echo "❌  Docker network not found."
-  echo "    Make sure the OlbosTerminal app is running first:"
-  echo "    cd /root/OlbosTerminal && bash deploy/hetzner/up.sh"
-  exit 1
+# docker_default is declared `external: true` in the compose file, so Compose
+# will NOT create it — it errors out instead. It is external on purpose:
+# ibkr-gateway belongs to a separate compose project and sits on this network,
+# and IBKR_HOST=ibkr-gateway resolves over it, so `docker compose down` here
+# must never remove it.
+#
+# It used to be created by the OlbosTerminal stack. That application has been
+# deleted, so nothing recreates it if it is ever removed — hence creating it
+# here rather than telling the operator to start a project that no longer
+# exists, which is what this block said until 2026-09-19.
+if ! docker network ls --format '{{.Name}}' | grep -qE '^docker_default$'; then
+  echo "      docker_default missing — creating it"
+  docker network create docker_default
 fi
-echo "      Using network: $CADDY_NETWORK"
+echo "      Using network: docker_default"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  OlbosTrade — Starting on Hetzner"
@@ -63,38 +69,27 @@ echo "[3/4] Running database migrations..."
 docker exec olbostrade-backend python3 -m alembic upgrade head
 echo "      ✅ Migrations applied"
 
-# ── 4. Add OlbosTrade to Caddy ────────────────────────────────────────────────
-# NOTE: the host path and container name for the sibling Caddy stack have
-# varied across servers/setups in practice. The values below are a best
-# guess — if `docker exec olbos-caddy ...` fails, find the real ones with:
-#   docker ps --format '{{.Names}}' | grep -i caddy
-#   docker inspect <that-name> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
-echo "[4/4] Caddy configuration..."
-CADDYFILE=/root/OlbosTerminal/docker/Caddyfile
-
-if grep -q "olbostrade-backend" "$CADDYFILE" 2>/dev/null; then
-  echo "      ✅ Caddy already configured for OlbosTrade"
+# ── 4. Confirm Caddy is serving ───────────────────────────────────────────────
+# Nothing to paste any more: deploy/hetzner/Caddyfile is a tracked file in this
+# repo, mounted read-only into the `caddy` service by the compose file above.
+# Until 2026-09-19 this step printed a snippet for the operator to copy into a
+# different project's Caddyfile, which is why the config and the app could
+# disagree at all.
+echo "[4/4] Checking Caddy..."
+if docker exec olbostrade-caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+  echo "      ✅ Caddy running with a valid config"
 else
-  echo ""
-  echo "  ⚠️  ACTION REQUIRED — update Caddy for the renamed containers:"
-  echo ""
-  echo "  Edit: $CADDYFILE"
-  echo "  (if that path doesn't exist, see the NOTE above this section in"
-  echo "  deploy/hetzner/up.sh for how to find the real one)"
-  echo "  Replace any legacy backend/frontend container names with the"
-  echo "  block below (it already names the deployment domain):"
-  echo ""
-  cat deploy/hetzner/Caddyfile.snippet
-  echo ""
-  echo "  Then reload Caddy:"
-  echo "    docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile"
+  echo "      ⚠️  Caddy is not running, or its config did not validate."
+  echo "         docker logs olbostrade-caddy --tail 50"
+  echo "         Reload after fixing deploy/hetzner/Caddyfile in git:"
+  echo "           docker exec olbostrade-caddy caddy reload --config /etc/caddy/Caddyfile"
 fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✅ OlbosTrade is running"
 echo ""
-echo "  Next: add the Caddyfile block above,"
-echo "  point trade.olbos.us → this server's IP,"
+echo "  Next: point trade.olbos.us → this server's IP"
+echo "  (DNS-only — disable any CDN proxy, ACME must reach this host),"
 echo "  then open https://trade.olbos.us"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
