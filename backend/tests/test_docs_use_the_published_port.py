@@ -40,16 +40,29 @@ IP_PORT = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})\b")
 
 PRIVATE_PREFIXES = ("127.", "0.", "10.", "192.168.", "172.16.", "172.17.", "255.")
 
-#: Bind addresses that expose a port to the host only, never to the network.
-LOOPBACK_PREFIXES = ("127.", "localhost")
+def is_loopback_bind(bind: str) -> bool:
+    """Does this `ports:` bind address expose the port to the host only?
+
+    Compose accepts more than a dotted quad here — `localhost:8080:3000` and
+    `[::1]:8080:3000` are both valid and both loopback. An earlier version of
+    this module listed "localhost" in a prefix tuple while the entry regex
+    could only ever produce a dotted quad, so that arm was unreachable: it
+    read as coverage and was not. Caught by Copilot on #67.
+    """
+    b = bind.strip().strip("[]").lower()
+    return b.startswith("127.") or b == "localhost" or b == "::1"
 
 
 #: A `ports:` entry, with the OPTIONAL bind address captured separately.
 #: Compose accepts "8080:3000" (all interfaces) and "127.0.0.1:8080:3000"
 #: (loopback only). Those two mean opposite things for everything below, so
 #: the bind address cannot be folded into the port.
+#: The bind may be a dotted quad, a hostname, or a bracketed IPv6 literal.
+#: Anchored on the host:container pair at the end, so "8080:3000" (no bind)
+#: still parses: the engine tries bind="8080", finds no second colon pair
+#: after it, and backtracks.
 PORT_ENTRY = re.compile(
-    r'^\s*-\s*"?(?:(?P<bind>\d{1,3}(?:\.\d{1,3}){3}):)?'
+    r'^\s*-\s*"?(?:(?P<bind>\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._-]+):)?'
     r'(?P<host>\d{2,5}):(?P<container>\d{2,5})"?\s*$'
 )
 
@@ -85,14 +98,14 @@ def publicly_published_ports() -> set[int]:
     module exists to catch, just pointing the other way.
     """
     return {port for bind, port in compose_port_entries()
-            if not bind.startswith(LOOPBACK_PREFIXES)}
+            if not is_loopback_bind(bind)}
 
 
 def loopback_only_ports() -> set[int]:
     """Host ports bound to 127.x — reachable from on the host, e.g. via an SSH
     tunnel, and from nowhere else."""
     return {port for bind, port in compose_port_entries()
-            if bind.startswith(LOOPBACK_PREFIXES)}
+            if is_loopback_bind(bind)}
 
 
 def markdown_files() -> list[Path]:
@@ -116,6 +129,48 @@ def documented_ip_ports() -> list[tuple[Path, int, int, str]]:
                     continue
                 found.append((path, n, int(port), line.strip()))
     return found
+
+
+def test_the_port_entry_parser_handles_every_bind_form_compose_accepts():
+    """Compose's bind address is not always a dotted quad.
+
+    Written because the first version of PORT_ENTRY matched dotted quads only
+    while is_loopback_bind's predecessor also listed "localhost" — an arm the
+    regex could never reach. A `localhost:8080:3000` entry would have failed
+    to parse at all, and with another entry present to keep
+    compose_port_entries() non-empty, guard-the-guard would not have fired:
+    the port would simply vanish from both the public and loopback sets, so
+    nothing would require a tunnel for it and nothing would flag it as public.
+
+    Asserting on the parser directly rather than only through the compose file
+    is deliberate: the file holds one entry today, so every branch here is
+    otherwise untested.
+    """
+    cases = [
+        ('      - "8080:3000"',                 "",            8080, False),
+        ('      - "127.0.0.1:8080:3000"',       "127.0.0.1",   8080, True),
+        ('      - "127.1.2.3:9000:3000"',       "127.1.2.3",   9000, True),
+        ('      - "localhost:8080:3000"',       "localhost",   8080, True),
+        ('      - "[::1]:8080:3000"',           "[::1]",       8080, True),
+        ('      - "0.0.0.0:8080:3000"',         "0.0.0.0",     8080, False),
+        ('      - "10.0.0.5:8080:3000"',        "10.0.0.5",    8080, False),
+        ('      - 8080:3000',                   "",            8080, False),
+    ]
+    for line, want_bind, want_port, want_loopback in cases:
+        m = PORT_ENTRY.match(line)
+        assert m is not None, f"PORT_ENTRY did not match a valid entry: {line!r}"
+        assert (m.group("bind") or "") == want_bind, (
+            f"{line!r}: bind parsed as {m.group('bind')!r}, expected {want_bind!r}"
+        )
+        assert int(m.group("host")) == want_port, (
+            f"{line!r}: host port parsed as {m.group('host')!r}"
+        )
+        assert is_loopback_bind(m.group("bind") or "") is want_loopback, (
+            f"{line!r}: is_loopback_bind({(m.group('bind') or '')!r}) should be "
+            f"{want_loopback}. Misclassifying here is silent: the port drops out "
+            f"of both the public and the loopback set, so nothing requires a "
+            f"tunnel for it and nothing flags it as exposed."
+        )
 
 
 def test_the_compose_ports_were_actually_parsed():
@@ -163,7 +218,15 @@ def test_every_documented_ip_port_is_one_the_stack_publishes():
 
 
 def test_nothing_is_published_to_the_public_interface():
-    """The frontend's host port must stay bound to loopback.
+    """NO service in the Hetzner stack may publish a port on all interfaces.
+
+    The scope is the whole compose file, not just the frontend. Copilot caught
+    the docstring claiming the narrower invariant on #67, which matters because
+    the next person to add a `ports:` entry would read the docstring, assume
+    only the frontend was constrained, and be surprised by the failure — or
+    worse, narrow the assertion to match the prose and quietly reopen the stack
+    to public binds. The broad form is the one worth keeping: every service
+    here is reached either through Caddy or from on the host.
 
     This is an invariant, not a preference. Caddy reaches the frontend over
     docker_default, so a public bind adds no capability — it only adds a
