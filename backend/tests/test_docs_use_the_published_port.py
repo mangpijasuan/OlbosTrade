@@ -129,3 +129,81 @@ def test_the_direct_access_port_is_documented_somewhere():
         f"nowhere to find the direct URL but a comment inside the compose file "
         f"— which is how :8081 survived in the audit doc unchallenged."
     )
+
+
+# ── The domain half of the same problem ──────────────────────────────────────
+#
+# The port drift (`:8081` in the audit doc against `8080:3000` in compose) had a
+# twin waiting: the Caddy site block and the README's "open this URL" line live
+# in different files with nothing tying them together. Rename one and the other
+# sends an operator to a host that answers nothing — during an incident, which
+# is the only time anyone reads a deploy guide.
+
+CADDY_SNIPPET = REPO / "deploy" / "hetzner" / "Caddyfile.snippet"
+DEPLOY_README = REPO / "deploy" / "hetzner" / "README.md"
+
+
+def caddy_site_domain() -> str:
+    """The hostname Caddy actually serves, from its site block.
+
+    On parsing: the snippet's header comment names the domain in prose, so a
+    loose scan would match the explanation instead of the directive.
+
+    What prevents that is the ANCHORED regex — the whole line must be
+    `<domain> {` — not the comment stripping. Mutation testing: delete the
+    site block, keep the comment, disable the stripping, and this still
+    returns "" correctly.
+
+    Worth stating plainly because I claimed the opposite here, and twice
+    before in this file's sibling guards, each time writing the justification
+    before testing it. The stripping stays as defence in depth against a
+    future comment that is itself a bare `something.tld {` line; it is not
+    what is holding today. Loosening the regex is what would break this.
+    """
+    lines = [l for l in CADDY_SNIPPET.read_text().splitlines()
+             if not l.lstrip().startswith("#")]
+    for line in lines:
+        m = re.match(r"^\s*([A-Za-z0-9.-]+\.[A-Za-z]{2,})\s*\{\s*$", line)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def test_the_caddy_site_block_was_found():
+    """Guards the guard: an empty domain makes the comparison vacuous."""
+    assert caddy_site_domain(), (
+        "no site block parsed out of Caddyfile.snippet. Either the snippet "
+        "changed shape or it no longer declares a site — the comparison below "
+        "would otherwise pass against nothing."
+    )
+
+
+def test_the_deploy_readme_names_the_domain_caddy_serves():
+    domain = caddy_site_domain()
+    readme = DEPLOY_README.read_text()
+    assert domain in readme, (
+        f"Caddyfile.snippet serves {domain!r} but deploy/hetzner/README.md "
+        f"never mentions it. The README is what an operator follows; if it "
+        f"names a different host they will curl something that does not "
+        f"answer and conclude the deploy failed when it did not."
+    )
+
+
+def test_no_placeholder_domain_survives_the_rename():
+    """A half-finished rename is worse than either state on its own."""
+    stale = []
+    for path in (REPO / "deploy" / "hetzner").rglob("*"):
+        if not path.is_file() or path.suffix in {".sql", ".png"}:
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            if "yourdomain" in line:
+                stale.append(f"{path.relative_to(REPO)}:{n}")
+    assert not stale, (
+        f"placeholder domains still present after the rename: {stale}. Mixed "
+        f"real and placeholder hostnames in one deploy guide is the worst of "
+        f"both — a reader cannot tell which lines they are meant to edit."
+    )

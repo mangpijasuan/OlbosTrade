@@ -82,7 +82,7 @@ else
   echo "  (if that path doesn't exist, see the NOTE above this section in"
   echo "  deploy/hetzner/up.sh for how to find the real one)"
   echo "  Replace any legacy backend/frontend container names with the"
-  echo "  block below (replace trading.yourdomain.com with your subdomain):"
+  echo "  block below (it already names the deployment domain):"
   echo ""
   cat deploy/hetzner/Caddyfile.snippet
   echo ""
@@ -95,6 +95,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  ✅ OlbosTrade is running"
 echo ""
 echo "  Next: add the Caddyfile block above,"
-echo "  point trading.yourdomain.com → this server's IP,"
-echo "  then open https://trading.yourdomain.com"
+echo "  point trade.olbos.us → this server's IP,"
+echo "  then open https://trade.olbos.us"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

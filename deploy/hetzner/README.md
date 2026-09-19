@@ -10,8 +10,8 @@ Internet
     │
     ▼
  Caddy (olbos-caddy container, ports 80/443)
-    ├── olbos.yourdomain.com      → olbos-backend / olbos-frontend
-    └── trading.yourdomain.com   → olbostrade-backend / olbostrade-frontend
+    ├── olbos.<the other app>     → olbos-backend / olbos-frontend
+    └── trade.olbos.us          → olbostrade-backend / olbostrade-frontend
                                        │
                                   olbostrade-db (postgres)
                                   olbostrade-redis
@@ -69,11 +69,33 @@ database. The password value itself is unchanged from before the rename.
 
 Leave `DATABASE_URL` and `REDIS_URL` blank — docker-compose fills them in.
 
+### 3b. Before you point a public name at this — check it needs a password
+
+```bash
+grep -E '^(DASH_USER|DASH_PASS|AUTH_ENABLED)=' backend/.env.prod
+```
+
+Until now this instance has been reachable only as an unadvertised `IP:8080`,
+which is obscurity, not access control. A domain removes even that.
+
+If `DASH_USER`/`DASH_PASS` are blank **and** `AUTH_ENABLED` is false, the
+frontend serves the whole terminal — kill switch, position closing, execution
+mode — to anyone who resolves the name. Set one of them first:
+
+* `DASH_USER`/`DASH_PASS` put nginx Basic Auth in front of everything,
+  including `/api` (see `frontend/docker-entrypoint.sh`). Simplest.
+* `AUTH_ENABLED=true` uses real accounts from `scripts/create_user.py`.
+
+These are not interchangeable with `SECRET_KEY`. That one guards *mutating*
+API routes and is entered per-session in the browser; it does nothing to stop
+someone reading the terminal, and the kill-switch engage route deliberately
+does not require it at all.
+
 ### 4. Add a DNS record
 
 At your domain registrar, add an A record:
 ```
-trading.yourdomain.com  →  <YOUR_HETZNER_IP>
+trade.olbos.us  →  <YOUR_HETZNER_IP>
 ```
 
 Wait ~60 seconds for DNS to propagate.
@@ -103,7 +125,11 @@ docker ps --format '{{.Names}}' | grep -i caddy
 docker inspect <name-from-above> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
 ```
 
-Add the block from `deploy/hetzner/Caddyfile.snippet` (replace `trading.yourdomain.com`).
+Add the block from `deploy/hetzner/Caddyfile.snippet` verbatim — it already
+names `trade.olbos.us`.
+
+Caddy obtains its certificate over the ACME **HTTP** challenge, so port 80
+must be reachable. UFW is active on this host; check with `ufw status`.
 
 Then reload Caddy (no downtime for the olbos app):
 ```bash
@@ -112,11 +138,11 @@ docker exec olbos-caddy caddy reload --config /etc/caddy/Caddyfile
 
 ### 7. Verify
 ```bash
-curl -s https://trading.yourdomain.com/api/guardrails/status
+curl -s https://trade.olbos.us/api/guardrails/status
 # → {"trading_allowed":true,"trading_mode":"normal",...}
 ```
 
-Open **https://trading.yourdomain.com** in your browser.
+Open **https://trade.olbos.us** in your browser.
 
 **Without a domain**, the frontend is also published directly on the host at
 port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
@@ -129,7 +155,9 @@ port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
 > unset, so treat it as read-only triage — useful for confirming the stack is
 > up during an incident, not for operating it.
 >
-> For anything that needs the key, use the HTTPS domain above, or tunnel:
+> Now that `https://trade.olbos.us` exists, use it — it is the correct answer
+> to this, and step 7b closes `:8080` entirely. If the domain is unavailable,
+> tunnel instead:
 > ```bash
 > ssh -L 8080:localhost:8080 root@<YOUR_HETZNER_IP>
 > # then open http://localhost:8080 — traffic rides the SSH tunnel
@@ -139,6 +167,30 @@ port **8080** — `http://<YOUR_HETZNER_IP>:8080`, terminal at
 backend is NOT published to the host — it is reachable only over the internal
 Docker network, which is why `curl localhost:8000` on the server returns
 nothing and `docker exec olbostrade-backend curl localhost:8000/health` works.
+
+### 7b. Close the direct HTTP port
+
+Once HTTPS works, the published `:8080` is no longer needed — Caddy reaches the
+frontend over the Docker network, not the host port:
+
+```bash
+ufw deny 8080
+curl -sI https://trade.olbos.us | head -3     # still fine
+```
+
+This matters beyond tidiness. While `:8080` is open there is a plain-HTTP route
+into the same app, and the Trade Desk's own 403 message tells an operator to go
+enter the Operator API Key (`SECRET_KEY`) on the Risk Monitor page. Follow that
+over `http://` and the key crosses the network in clear text. Closing the port
+removes the unsafe path rather than relying on everyone remembering which URL
+they are on.
+
+Keep it closed unless the domain is down and you need direct triage — in which
+case prefer a tunnel, which needs no firewall change:
+
+```bash
+ssh -L 8080:localhost:8080 root@<YOUR_HETZNER_IP>
+```
 
 ### 8. Set up automated backups
 
