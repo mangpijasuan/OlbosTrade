@@ -3,7 +3,10 @@
 # `docker inspect <caddy-container> --format '{{range .Mounts}}...'` —
 # this path is NOT guaranteed to match on every server).
 # It adds OlbosTrade as a second site on the same Caddy instance.
-# Replace trading.yourdomain.com with your actual subdomain.
+# The domain is trade.olbos.us — this repo deploys one instance, so the
+# snippet names it rather than leaving a placeholder to be edited by
+# hand. A wrong hostname in these docs already cost an afternoon during
+# the 2026-09-17 outage; see the correction note in ARCHITECTURE_AUDIT.md.
 #
 # Everything routes through the frontend container's own nginx (port 3000 —
 # see frontend/docker-entrypoint.sh), which already does the real routing:
@@ -15,6 +18,6 @@
 # documented as covering "the whole app". A prior version of this snippet
 # did exactly that.
 
-trading.yourdomain.com {
+trade.olbos.us {
 	reverse_proxy olbostrade-frontend:3000
 }
